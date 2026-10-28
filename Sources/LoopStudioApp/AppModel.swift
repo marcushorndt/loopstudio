@@ -1157,7 +1157,7 @@ final class AppModel {
         }
         let compiled = RenderPlan.compile(p, bank: bank, session: simulation, units: host.units, arrangementEnds: ends)
         plan = compiled
-        warnings = compiled.warnings
+        warnings = simulation.warnings + compiled.warnings
         updateLiveTarget()
         updateMetronome()
         let next = Renderer(plan: compiled, reusing: renderer)

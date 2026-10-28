@@ -82,13 +82,21 @@ extension Project {
 /// - A launch and a follow action on the same tick: the launch wins.
 public enum SessionSimulator {
     public static let eventLimit = 100_000
+    /// The smallest per-track share of `eventLimit`.
+    public static let trackMinimum = 2_000
     static let chainLimit = 8
 
     public static func run(_ project: Project, horizon: Tick) -> SessionSimulation {
         var events: [SessionEvent] = []
         var warnings: [String] = []
 
-        for track in project.allTracks where !track.slots.isEmpty {
+        // Every track gets its own share of the event budget, so one fast follow chain cannot
+        // use it all and silence the tracks after it.
+        let launched = Set(project.launches.map(\.track))
+        let active = project.allTracks.filter { !$0.slots.isEmpty && launched.contains($0.id) }
+        let budget = max(trackMinimum, eventLimit / max(1, active.count))
+
+        for track in active {
             let launches = project.launches
                 .filter { $0.track == track.id }
                 .map { (launch: $0, at: project.quantizedStart(of: $0)) }
@@ -96,8 +104,8 @@ public enum SessionSimulator {
                 .sorted { ($0.element.at, $0.offset) < ($1.element.at, $1.offset) }
                 .map(\.element)
             guard !launches.isEmpty else { continue }
-            simulate(track, launches: launches, project: project, horizon: horizon, events: &events, warnings: &warnings)
-            if events.count >= eventLimit { break }
+            simulate(track, launches: launches, project: project, horizon: horizon, limit: events.count + budget,
+                     events: &events, warnings: &warnings)
         }
         events.sort { ($0.startTick, $0.track.description) < ($1.startTick, $1.track.description) }
         return SessionSimulation(events: events, warnings: warnings)
@@ -111,7 +119,7 @@ public enum SessionSimulator {
     }
 
     private static func simulate(_ track: Track, launches: [(launch: Launch, at: Tick)], project: Project, horizon: Tick,
-                                 events: inout [SessionEvent], warnings: inout [String]) {
+                                 limit: Int, events: inout [SessionEvent], warnings: inout [String]) {
         var playing: Playing?
         var startCounts: [Int: Int] = [:]
         var next = 0
@@ -159,7 +167,7 @@ public enum SessionSimulator {
             playing = Playing(slot: slot, eventIndex: events.count - 1, followTick: followTick, outcome: outcome)
         }
 
-        while events.count < eventLimit {
+        while events.count < limit {
             let nextLaunch = next < launches.count ? launches[next] : nil
             if let p = playing, let ft = p.followTick, ft < horizon, nextLaunch == nil || ft < nextLaunch!.at {
                 switch p.outcome {
@@ -190,6 +198,11 @@ public enum SessionSimulator {
                 break
             }
         }
-        if events.count >= eventLimit { warnings.append("track \"\(track.name)\": too many events; the schedule is cut off") }
+        if events.count >= limit {
+            // Stop the track where its budget ran out instead of letting the last clip run to the horizon.
+            if let ft = playing?.followTick { end(at: ft) }
+            let cut = events.last.map(\.endTick.rawValue) ?? 0
+            warnings.append("track \"\(track.name)\": too many follow actions; the schedule stops at tick \(cut)")
+        }
     }
 }

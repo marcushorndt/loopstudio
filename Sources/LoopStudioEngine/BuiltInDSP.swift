@@ -2,8 +2,8 @@ import Foundation
 import LoopStudioCore
 
 /// A built-in effect. `process` works in place on one stereo block and uses only memory from `init`.
-/// `configure` runs on the control thread and may be called while the audio thread runs `process`;
-/// it writes plain numbers only, so a block can see an old or a new value, never a broken one.
+/// `configure` writes plain numbers and allocates nothing. Once an effect has run, only the audio thread
+/// calls it (for automation, and for the knob values of a new renderer on its first block).
 public class DSPEffect: @unchecked Sendable {
     public let sampleRate: Double
     let spec: EffectSpec

@@ -302,3 +302,16 @@ private let ownVolume = ParameterAddress(node: ParameterAddress.ownTrack, parame
     #expect(rig.project.findClip(c.id)?.clip.automationLength == nil)
     #expect(throws: CommandError.self) { try Command.setClipAutomationLength(clip: c.id, length: 10).apply(to: &rig.project) }
 }
+
+@Test func musicalLengthsParseAndFormat() {
+    let bar: Int64 = 3_840
+    #expect(MusicalLength.parse("4:2:0", ticksPerBar: bar) == Tick(4 * 3_840 + 2 * 960))
+    #expect(MusicalLength.parse("0:1:1", ticksPerBar: bar) == Tick(960 + 240))
+    #expect(MusicalLength.parse("16", ticksPerBar: bar) == Tick(16 * 3_840))
+    #expect(MusicalLength.parse("2.3", ticksPerBar: bar) == Tick(2 * 3_840 + 3 * 960))
+    #expect(MusicalLength.parse("0:0:0", ticksPerBar: bar) == nil)
+    #expect(MusicalLength.parse("a:1", ticksPerBar: bar) == nil)
+    #expect(MusicalLength.parse("1:2:3:4", ticksPerBar: bar) == nil)
+    #expect(MusicalLength.format(Tick(4 * 3_840 + 2 * 960 + 240), ticksPerBar: bar) == "4:2:1")
+    #expect(MusicalLength.parse(MusicalLength.format(Tick(9_840), ticksPerBar: bar), ticksPerBar: bar) == Tick(9_840))
+}

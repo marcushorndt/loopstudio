@@ -346,6 +346,16 @@ private struct ClipLanesPanel: View {
     let tint: Color
 
     private var cycle: Tick { clip.automationCycle }
+    @State private var lengthText = ""
+
+    private func commitLength() {
+        if let ticks = MusicalLength.parse(lengthText, ticksPerBar: model.barTicks), ticks.rawValue >= Tick.perQuarter / 4 {
+            model.apply(.setClipAutomationLength(clip: clip.id, length: ticks))
+        } else {
+            model.status = "Enter a length as bars:beats:sixteenths, for example 4:2:0"
+        }
+        lengthText = MusicalLength.format(clip.automationCycle, ticksPerBar: model.barTicks)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -365,14 +375,17 @@ private struct ClipLanesPanel: View {
             .toggleStyle(.checkbox)
             .help("Linked: the automation loops with the clip. Unlinked: it has its own length, for example 16 bars over a 1-bar loop.")
             if !linked {
-                Stepper(value: Binding(get: { bars }, set: { v in
+                TextField("bars:beats:16ths", text: $lengthText)
+                    .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced)).frame(width: 78)
+                    .onSubmit { commitLength() }
+                    .onAppear { lengthText = MusicalLength.format(cycle, ticksPerBar: model.barTicks) }
+                    .onChange(of: cycle) { lengthText = MusicalLength.format(cycle, ticksPerBar: model.barTicks) }
+                    .help("Length of the automation as bars:beats:sixteenths, for example 4:2:0 or 0:1:1. Press Return.")
+                Stepper("", value: Binding(get: { bars }, set: { v in
                     let ticks = Int64((max(0.25, v) * Double(model.barTicks)).rounded())
                     model.apply(.setClipAutomationLength(clip: clip.id, length: Tick(ticks)), key: "autolen\(clip.id)")
-                }), in: 0.25...512, step: bars < 1 ? 0.25 : 1) {
-                    Text(bars == bars.rounded() ? "\(Int(bars)) bar" + (bars == 1 ? "" : "s") : String(format: "%.2f bars", bars))
-                        .font(.system(size: 11, design: .monospaced))
-                }
-                .controlSize(.small)
+                }), in: 0.25...512, step: bars < 1 ? 0.25 : 1)
+                .labelsHidden().controlSize(.small)
                 Menu("Presets") {
                     ForEach([1, 2, 4, 8, 16, 32, 64], id: \.self) { n in
                         Button("\(n) bar" + (n == 1 ? "" : "s")) {

@@ -83,3 +83,25 @@ public struct TimeSignatureChange: Hashable, Codable, Sendable {
         self.signature = signature
     }
 }
+
+/// A length written as bars:beats:sixteenths, like "4:2:0" or "0:1:1". Beats are quarter notes.
+public enum MusicalLength {
+    /// Parses "bars", "bars:beats" or "bars:beats:sixteenths" (dots work too). `nil` for text that is not
+    /// a length, or for zero.
+    public static func parse(_ text: String, ticksPerBar: Int64) -> Tick? {
+        let parts = text.split(whereSeparator: { $0 == ":" || $0 == "." }).map { $0.trimmingCharacters(in: .whitespaces) }
+        guard (1...3).contains(parts.count) else { return nil }
+        let numbers = parts.compactMap { Int64($0) }
+        guard numbers.count == parts.count, numbers.allSatisfy({ $0 >= 0 && $0 < 100_000 }) else { return nil }
+        let values = numbers + Array(repeating: 0, count: 3 - numbers.count)
+        let ticks = values[0] * ticksPerBar + values[1] * Tick.perQuarter + values[2] * (Tick.perQuarter / 4)
+        return ticks > 0 ? Tick(ticks) : nil
+    }
+
+    /// "bars:beats:sixteenths", rounded down to a sixteenth.
+    public static func format(_ length: Tick, ticksPerBar: Int64) -> String {
+        let t = max(0, length.rawValue)
+        let bars = t / max(1, ticksPerBar), rest = t % max(1, ticksPerBar)
+        return "\(bars):\(rest / Tick.perQuarter):\((rest % Tick.perQuarter) / (Tick.perQuarter / 4))"
+    }
+}

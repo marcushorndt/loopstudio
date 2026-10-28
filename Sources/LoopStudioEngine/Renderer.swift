@@ -24,13 +24,20 @@ public final class Renderer {
         let unit: AudioUnitEffect?
         let bypassed: Bool
         let auto: [(key: String, lane: AutoLane)]
+        /// The knob value of each automated key without automation. It comes back when no curve covers the frame.
+        let base: [Double?]
         var live: [String: Double]
         /// Automated Audio Unit parameters, keyed by their address.
         let unitAuto: [(address: AUParameterAddress, lane: AutoLane)]
         init(effect: DSPEffect?, unit: AudioUnitEffect?, bypassed: Bool, auto: [String: AutoLane], params: [String: Double]) {
             self.effect = effect; self.unit = unit; self.bypassed = bypassed
-            self.auto = auto.map { ($0.key, $0.value) }.sorted { $0.0 < $1.0 }
-            self.live = params
+            let sorted = auto.map { ($0.key, $0.value) }.sorted { $0.0 < $1.0 }
+            self.auto = sorted
+            self.base = sorted.map { key, _ in params[key] ?? effect?.spec.params.first { $0.key == key }?.def }
+            // Every key present and the storage owned by this slot, so the audio thread never grows or copies it.
+            var live = Dictionary(uniqueKeysWithValues: params.map { ($0.key, $0.value) })
+            for (i, (key, _)) in sorted.enumerated() where live[key] == nil { live[key] = base[i] ?? 0 }
+            self.live = live
             self.unitAuto = auto.compactMap { key, lane in
                 guard key.hasPrefix("au."), let address = AUParameterAddress(key.dropFirst(3)) else { return nil }
                 return (address, lane)
@@ -317,8 +324,9 @@ public final class Renderer {
         guard !slot.auto.isEmpty else { effect.process(l, r, frames: frames); return }
         eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
             var changed = false
-            for (key, lane) in slot.auto {
-                if let v = lane.value(at: grid, sessionOffset: sessionOffset), slot.live[key] != Double(v) { slot.live[key] = Double(v); changed = true }
+            for (i, (key, lane)) in slot.auto.enumerated() {
+                guard let v = lane.value(at: grid, sessionOffset: sessionOffset).map(Double.init) ?? slot.base[i] else { continue }
+                if slot.live[key] != v { slot.live[key] = v; changed = true }
             }
             if changed { effect.configure(slot.live) }
             effect.process(l + offset, r + offset, frames: count)

@@ -315,3 +315,21 @@ private let ownVolume = ParameterAddress(node: ParameterAddress.ownTrack, parame
     #expect(MusicalLength.format(Tick(4 * 3_840 + 2 * 960 + 240), ticksPerBar: bar) == "4:2:1")
     #expect(MusicalLength.parse(MusicalLength.format(Tick(9_840), ticksPerBar: bar), ticksPerBar: bar) == Tick(9_840))
 }
+
+@Test func effectKnobReturnsWhenClipAutomationEnds() throws {
+    var rig = Rig()
+    // A gain-like check through the filter: the clip closes the low-pass for its first bar only.
+    var filter = BuiltInEffects.makeSlot("filter")!
+    filter.params = ["cutoff": 20_000]
+    try Command.insertDevice(track: rig.track.id, device: filter, index: nil).apply(to: &rig.project)
+    let id = rig.track.clips[0].id
+    try Command.setClipRange(clip: id, start: 0, length: 3_840).apply(to: &rig.project)
+    try Command.setClipAutomation(clip: id, target: ParameterAddress(node: filter.id.rawValue, parameter: "cutoff"),
+                                  points: [AutomationPoint(tick: 0, value: 30)]).apply(to: &rig.project)
+    guard case .audio(var c) = rig.project.tracks[0].clips[0] else { Issue.record("no clip"); return }
+    c.id = ClipID(); c.start = 3_840; c.lanes = nil
+    try Command.insertClip(track: rig.track.id, clip: .audio(c)).apply(to: &rig.project)
+    let audio = rig.render()
+    #expect(rms(audio.left[20_000..<90_000]) < 0.05, "inside the clip: 440 Hz is filtered away")
+    #expect(rms(audio.left[110_000..<180_000]) > 0.3, "after it: the knob is back at 20 kHz")
+}

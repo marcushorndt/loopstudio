@@ -121,6 +121,8 @@ struct NodePlan {
     /// Delay on the output connection and on each tap, from plugin delay compensation.
     var outputDelay = 0
     var tapDelays: [Int] = []
+    /// How late this node's sound is after its fader, from the plugins on its way there.
+    var arrival = 0
 }
 
 /// Everything the renderer needs, compiled from a project. Immutable; built off the audio thread.

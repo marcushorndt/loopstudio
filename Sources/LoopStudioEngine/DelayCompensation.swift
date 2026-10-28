@@ -1,3 +1,4 @@
+import LoopStudioCore
 import Foundation
 
 /// A plain delay in frames for a stereo signal. Used on the connections of the mix graph, so that
@@ -47,6 +48,11 @@ extension RenderPlan {
     ///
     /// A track that takes another track as input and also plays its own clips cannot be fully aligned:
     /// its own clips count as arriving at once.
+    /// How many frames the sound of `track` is late after its fader, from plugin latency on its way there.
+    public func arrival(of track: TrackID) -> Int {
+        trackOrder.firstIndex(of: track).map { nodes[$0].arrival } ?? 0
+    }
+
     mutating func applyDelayCompensation() {
         let count = nodes.count
         var incoming = [[Int]](repeating: [], count: count)
@@ -63,6 +69,7 @@ extension RenderPlan {
             arrival[i] = arrivalIn[i] + nodes[i].latency
         }
         for i in 0..<count {
+            nodes[i].arrival = arrival[i]
             if let o = nodes[i].output { nodes[i].outputDelay = max(0, arrivalIn[o] - arrival[i]) }
             for k in nodes[i].sends.indices { nodes[i].sends[k].delay = max(0, arrivalIn[nodes[i].sends[k].target] - arrival[i]) }
             nodes[i].tapDelays = nodes[i].taps.map { max(0, arrivalIn[$0] - arrival[i]) }

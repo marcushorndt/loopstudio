@@ -24,6 +24,7 @@ extension AppModel {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 let writer = try CaptureWriter(url: folder.appendingPathComponent("\(nextTakeName()).caf"), sampleRate: sampleRate, channels: 2)
                 resampleWriter = writer
+                resampleLatency = plan?.arrival(of: source) ?? 0
                 engine.startCapture(track: source, into: writer)
             } catch {
                 status = "Cannot record: \(error.localizedDescription)"
@@ -72,8 +73,10 @@ extension AppModel {
         recordTrackID = nil
         guard let asset = importAudio(url) else { status = "Could not import the recording"; return }
         let sr = sampleRate
-        let start = project.tempoMap.tick(atFrame: Frame(first), sampleRate: sr)
-        let end = project.tempoMap.tick(atFrame: Frame(first + result.frames), sampleRate: sr)
+        // The source's plugins made its sound late; the take moves back by as much.
+        let at = max(0, first - Int64(resampleLatency))
+        let start = project.tempoMap.tick(atFrame: Frame(at), sampleRate: sr)
+        let end = project.tempoMap.tick(atFrame: Frame(at + result.frames), sampleRate: sr)
         var clip = project.makeAudioClip(asset: asset.id, start: start, length: Tick(max(1, end.rawValue - start.rawValue)))
         clip.loop = false
         clip.warpMode = .off

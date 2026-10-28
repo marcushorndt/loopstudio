@@ -368,6 +368,7 @@ private func raw(_ plan: RenderPlan, frames: Int, block: Int = 4096) -> [Float] 
     let out = raw(plan, frames: 2_000)
     #expect(out[0] == 0.5 && out[255] == 0.5, "only Slow, whose plugin delay is not simulated here")
     #expect(out[256] == 1.0, "Fast now arrives 256 frames later and lines up")
+    #expect(plan.arrival(of: slow) == 256 && plan.arrival(of: fast) == 0, "a resampled take of Slow moves back by 256")
 }
 
 @Test func compensationDoesNotDependOnBlockSize() {

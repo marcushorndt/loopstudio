@@ -120,6 +120,8 @@ final class AppModel {
     @ObservationIgnored let audioRecorder = AudioInputRecorder()
     /// Records another track's sound (the track's "Audio From"), straight from the renderer.
     @ObservationIgnored var resampleWriter: CaptureWriter?
+    /// Plugin latency of the track that a resampling take records, in frames.
+    @ObservationIgnored var resampleLatency = 0
     var recordingAudio = false
     var recordTrackID: TrackID?
     /// Timeline frame minus session frame when a MIDI take began. Turns its session-clock stamps into timeline frames.
@@ -169,7 +171,7 @@ final class AppModel {
     /// No fsync per edit, so a fader drag never waits for the disk; an app crash still keeps the file.
     @ObservationIgnored private var journal: Journal?
     @ObservationIgnored private var warpRounds = 0
-    @ObservationIgnored private var plan: RenderPlan?
+    @ObservationIgnored private(set) var plan: RenderPlan?
     @ObservationIgnored private var renderer: Renderer?
     @ObservationIgnored private var performance: [Launch] = []
     @ObservationIgnored private var undoStack: [Command] = []

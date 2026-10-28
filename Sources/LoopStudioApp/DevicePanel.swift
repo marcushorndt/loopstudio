@@ -2,12 +2,22 @@ import LoopStudioCore
 import SwiftUI
 
 /// A rotary knob. Drag up or down to change it, double-click to reset.
+/// What a knob needs to offer automation in its right-click menu.
+struct KnobAutomation {
+    var hasCurve: Bool
+    var laneShown: Bool
+    var toggleLane: () -> Void
+    var clear: () -> Void
+}
+
 struct Knob: View {
     let param: EffectParam
     let value: Double
     let tint: Color
     let onChange: (Double) -> Void
     let onReset: () -> Void
+    /// Automation of this knob: nil hides the menu entries (a knob with no automation target).
+    var automation: KnobAutomation? = nil
     @State private var startPosition: Double?
 
     var body: some View {
@@ -47,6 +57,19 @@ struct Knob: View {
             if param.choices.isEmpty { Text(param.format(value)).font(.system(size: 10, design: .monospaced)) }
         }
         .frame(width: 66)
+        .overlay(alignment: .topTrailing) {
+            if automation?.hasCurve == true {
+                Circle().fill(Theme.track(0)).frame(width: 6, height: 6).padding(4).help("Automated")
+            }
+        }
+        .contextMenu {
+            if let automation {
+                Button(automation.laneShown ? "Hide Automation Curve" : "Show Automation Curve", action: automation.toggleLane)
+                Button("Clear Automation", action: automation.clear).disabled(!automation.hasCurve)
+                Divider()
+            }
+            Button("Reset to Default", action: onReset)
+        }
     }
 }
 
@@ -60,6 +83,7 @@ struct DeviceChainView: View {
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(track.name).font(.headline)
+                        AutomationLanesMenu(track: track, title: "Automate").menuStyle(.borderlessButton).fixedSize()
                         Text(track.kind == .master ? "Master" : track.kind.rawValue.capitalized).font(.caption).foregroundStyle(Theme.dim)
                         if track.devices.isEmpty {
                             Text("Drag an effect here\nor double-click it in the sidebar.").font(.caption).foregroundStyle(Theme.dim).padding(.top, 6)
@@ -102,6 +126,15 @@ private struct DeviceCard: View {
         .frame(width: 170, height: 60, alignment: .topLeading)
     }
 
+    private func knobAutomation(_ param: EffectParam) -> KnobAutomation {
+        let address = ParameterAddress(node: device.id.rawValue, parameter: param.key)
+        return KnobAutomation(
+            hasCurve: track.automation.contains { $0.target == address && !$0.points.isEmpty },
+            laneShown: model.isLaneShown(track, address),
+            toggleLane: { model.toggleLaneAndReveal(track, address) },
+            clear: { model.apply(.setAutomation(track: track.id, target: address, points: [])) })
+    }
+
     var body: some View {
         let spec = device.format == "builtin" ? BuiltInEffects.spec(device.identifier) : nil
         VStack(alignment: .leading, spacing: 6) {
@@ -123,7 +156,8 @@ private struct DeviceCard: View {
                     ForEach(spec.params, id: \.key) { param in
                         Knob(param: param, value: device.params[param.key] ?? param.def, tint: Theme.accent,
                              onChange: { model.setDeviceParam(track.id, device.id, param.key, param.clamp($0)) },
-                             onReset: { model.setDeviceParam(track.id, device.id, param.key, nil) })
+                             onReset: { model.setDeviceParam(track.id, device.id, param.key, nil) },
+                             automation: knobAutomation(param))
                     }
                 }
                 .opacity(device.bypassed ? 0.4 : 1)

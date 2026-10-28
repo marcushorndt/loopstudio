@@ -37,8 +37,11 @@ private struct ClipPanel: View {
         if let id = model.selectedClip, let (trackID, clip) = model.project.findClip(id), let track = model.project.track(trackID) {
             let slotRow = track.slots.firstIndex { $0?.clip.id == id }
             HStack(alignment: .top, spacing: 14) {
-                properties(clip, track: track)
+                ScrollView { properties(clip, track: track) }
                     .frame(width: 270)
+                if let row = slotRow, let slot = track.slots[row] {
+                    ScrollView { FollowEditor(track: track, row: row, slot: slot) }.frame(width: 300)
+                }
                 VStack(alignment: .leading, spacing: 6) {
                     if case .midi(let m) = clip {
                         PianoRoll(clip: m, tint: Theme.track(track.colorIndex))
@@ -48,15 +51,16 @@ private struct ClipPanel: View {
                     Text(model.clipName(clip)).font(.headline)
                     if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                         let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
-                        WaveformView(peaks: peaks, color: Theme.track(track.colorIndex), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
-                            .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: Theme.radius))
+                        if a.warpMode != .off {
+                            WarpEditor(clip: a, asset: asset, peaks: peaks, tint: Theme.track(track.colorIndex))
+                        } else {
+                            WaveformView(peaks: peaks, color: Theme.track(track.colorIndex), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
+                                .background(Theme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.radius))
+                        }
                     } else {
                         Spacer()
                     }
                     }
-                }
-                if let row = slotRow, let slot = track.slots[row] {
-                    FollowEditor(track: track, row: row, slot: slot).frame(width: 300)
                 }
             }
             .padding(10)
@@ -69,7 +73,11 @@ private struct ClipPanel: View {
     @ViewBuilder
     private func properties(_ clip: Clip, track: Track) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Clip").font(.caption.bold()).foregroundStyle(Theme.dim)
+            HStack {
+                Text("Clip").font(.caption.bold()).foregroundStyle(Theme.dim)
+                Spacer()
+                AutomationLanesMenu(track: track, title: "Automate").menuStyle(.borderlessButton).fixedSize()
+            }
             switch clip {
             case .audio(let a):
                 Toggle("Loop", isOn: Binding(get: { a.loop }, set: { model.apply(.setClipLoop(clip: a.id, loop: $0)) }))

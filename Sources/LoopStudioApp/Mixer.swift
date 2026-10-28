@@ -117,6 +117,13 @@ struct MixerStrip: View {
             Button("Reset Volume to 0 dB") { model.apply(.setVolume(id: track.id, db: 0)) }
             Button("Center Pan") { model.apply(.setPan(id: track.id, pan: 0)) }
             Divider()
+            Button(model.isLaneShown(track, ParameterAddress(node: track.id.rawValue, parameter: "volume")) ? "Hide Volume Automation" : "Show Volume Automation") {
+                model.toggleLaneAndReveal(track, ParameterAddress(node: track.id.rawValue, parameter: "volume"))
+            }
+            Button(model.isLaneShown(track, ParameterAddress(node: track.id.rawValue, parameter: "pan")) ? "Hide Pan Automation" : "Show Pan Automation") {
+                model.toggleLaneAndReveal(track, ParameterAddress(node: track.id.rawValue, parameter: "pan"))
+            }
+            Divider()
             if !isMaster { TrackMenuItems(track: track) }
         }
         .dropDestination(for: String.self) { items, _ in drop(items) }

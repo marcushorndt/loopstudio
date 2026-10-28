@@ -242,9 +242,10 @@ struct DeviceMenu: View {
 struct AutomationLanesMenu: View {
     @Environment(AppModel.self) private var model
     let track: Track
+    var title = "Automation Lanes"
 
     var body: some View {
-        Menu("Automation Lanes") {
+        Menu(title) {
             Button("Lanes With Points") { model.showAllUsedLanes(track) }
                 .disabled(track.automation.allSatisfy { $0.points.isEmpty })
             Button("Hide All") { model.automationShown[track.id] = nil }.disabled(model.shownLanes(track).isEmpty)

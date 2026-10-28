@@ -382,6 +382,13 @@ final class AppModel {
         automationShown[track.id] = used.isEmpty ? first.map { [$0] } : used
     }
 
+    /// From a knob: shows or hides its curve, and switches to the arrangement so the curve is in view.
+    func toggleLaneAndReveal(_ track: Track, _ address: ParameterAddress) {
+        let show = !isLaneShown(track, address)
+        setLane(track, address, shown: show)
+        if show { viewMode = .arrangement; selectedTrack = track.id }
+    }
+
     func showAllUsedLanes(_ track: Track) {
         automationShown[track.id] = track.automation.filter { !$0.points.isEmpty }.map(\.target)
     }

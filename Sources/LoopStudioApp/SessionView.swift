@@ -14,6 +14,17 @@ struct SessionView: View {
     @State private var mixerX = ScrollPosition()
     @State private var offsetX: CGFloat = 0
     @State private var visibleWidth: CGFloat = 0
+    /// The slots also scroll up and down to show the row the arrow keys select.
+    @State private var slotsY = ScrollPosition()
+    @State private var offsetY: CGFloat = 0
+    @State private var visibleHeight: CGFloat = 0
+
+    private func reveal(row: Int?) {
+        guard let row, row < model.sessionRows, visibleHeight > 0 else { return }
+        let top = 6 + 30 + gap + CGFloat(row) * (slotHeight + gap), bottom = top + slotHeight
+        if top - 36 < offsetY { slotsY.scrollTo(y: max(0, top - 36 - gap)) }
+        else if bottom > offsetY + visibleHeight { slotsY.scrollTo(y: bottom - visibleHeight + gap) }
+    }
 
     private func follow(_ x: CGFloat) {
         guard abs(x - offsetX) > 0.5 else { return }
@@ -55,6 +66,9 @@ struct SessionView: View {
                 }
                 .padding(.horizontal, 6).padding(.top, 6)
             }
+            .scrollPosition($slotsY)
+            .onScrollGeometryChange(for: CGFloat.self, of: \.contentOffset.y) { _, y in offsetY = y }
+            .onScrollGeometryChange(for: CGFloat.self, of: \.containerSize.height) { _, h in visibleHeight = h }
             // Stop buttons stay in view under the slots: tracks, busses and the master.
             HStack(alignment: .top, spacing: gap) {
                 ScrollView(.horizontal) {
@@ -96,6 +110,7 @@ struct SessionView: View {
         .background(Theme.background)
         .dropDestination(for: URL.self) { urls, _ in model.dropOnNewTrack(urls) }
         .onChange(of: model.selectedTrack) { _, id in reveal(id, in: tracks) }
+        .onChange(of: model.selectedSceneRow) { _, row in reveal(row: row) }
     }
 }
 

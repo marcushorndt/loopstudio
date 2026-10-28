@@ -31,6 +31,8 @@ struct ArrangementView: View {
                     }
                     .padding(.horizontal, 8).frame(height: rulerHeight)
                     ForEach(tracks, id: \.id) { ArrangementHeader(track: $0) }
+                    // The master sits at the bottom, as in Live: it holds the master automation.
+                    ArrangementHeader(track: model.project.master)
                     Button { model.addTrack() } label: { Label("Add track", systemImage: "plus").font(.caption) }
                         .buttonStyle(.plain).foregroundStyle(Theme.dim).frame(height: 36)
                 }
@@ -43,6 +45,7 @@ struct ArrangementView: View {
                             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                                 Lane(track: track, index: index, count: tracks.count, width: width)
                             }
+                            Lane(track: model.project.master, index: tracks.count, count: tracks.count, width: width)
                         }
                         SelectionOverlay(tracks: tracks)
                         if let m = marquee {
@@ -101,7 +104,9 @@ private struct ArrangementHeader: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 HStack(spacing: 4) {
-                    pill("S", on: track.solo, tint: Theme.track(5)) { model.apply(.setSolo(id: track.id, solo: !track.solo)) }
+                    if track.kind != .master {
+                        pill("S", on: track.solo, tint: Theme.track(5)) { model.apply(.setSolo(id: track.id, solo: !track.solo)) }
+                    }
                     pill("M", on: track.mute, tint: Theme.accent) { model.apply(.setMute(id: track.id, mute: !track.mute)) }
                     pill("A", on: !model.shownLanes(track).isEmpty, tint: Theme.track(0)) { model.toggleAutomation(track) }
                         .help("Show automation")
@@ -116,7 +121,9 @@ private struct ArrangementHeader: View {
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
         .onTapGesture { model.selectedTrack = track.id }
-        .contextMenu { TrackMenuItems(track: track, showsAutomation: true) }
+        .contextMenu {
+            if track.kind == .master { AutomationLanesMenu(track: track) } else { TrackMenuItems(track: track, showsAutomation: true) }
+        }
         .dropDestination(for: String.self) { items, _ in
             return model.dropDevices(items, on: track.id)
         }

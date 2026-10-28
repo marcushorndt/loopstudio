@@ -391,7 +391,7 @@ final class AppModel {
     }
 
     func rowTop(_ index: Int) -> CGFloat { orderedTracks.prefix(index).reduce(0) { $0 + rowHeight($1) } }
-    var rowsHeight: CGFloat { max(Self.clipRow, orderedTracks.reduce(0) { $0 + rowHeight($1) }) }
+    var rowsHeight: CGFloat { max(Self.clipRow, orderedTracks.reduce(0) { $0 + rowHeight($1) }) + rowHeight(project.master) }
 
     /// The track row at a height measured from the top of the first row.
     func rowIndex(atY y: CGFloat) -> Int {

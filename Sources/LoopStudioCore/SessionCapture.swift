@@ -94,3 +94,21 @@ extension Project {
         return clip.placed(at: first, length: last - first, loop: clip.loops)
     }
 }
+
+extension Project {
+    /// Session events moved from the session clock to the timeline. `shift` is the timeline frame minus the
+    /// session frame now. Since the last loop jump or seek the two clocks differ by this much; events from
+    /// before it land where a continuous take would have put them. Parts before the timeline start go.
+    public func onTimeline(_ events: [SessionEvent], shift: Int64) -> [SessionEvent] {
+        guard shift != 0 else { return events }
+        func move(_ t: Tick) -> Tick {
+            let f = tempoMap.frame(at: t, sampleRate: sampleRate).rawValue + shift
+            return f <= 0 ? Tick(0) : tempoMap.tick(atFrame: Frame(f), sampleRate: sampleRate)
+        }
+        return events.compactMap { e in
+            var e = e
+            e.startTick = move(e.startTick); e.endTick = move(e.endTick)
+            return e.endTick > e.startTick ? e : nil
+        }
+    }
+}

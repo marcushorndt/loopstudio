@@ -100,3 +100,13 @@ private func setup() -> (Project, TrackID) {
     let short = Clip.audio(AudioClip(asset: asset, start: 0, length: 960, loop: false))
     #expect(p.barAligned(short) == short, "less than half a bar stays as it is")
 }
+
+@Test func sessionEventsMoveOntoTheTimeline() {
+    let p = Fixture.baseProject()
+    let bar = p.tempoMap.frame(at: 3_840, sampleRate: p.sampleRate).rawValue
+    let e = SessionEvent(track: TrackID(), slot: 0, clip: ClipID(), startTick: 0, endTick: 3_840, cause: .launch)
+    // Playback began at bar 3 while the session clock began at 0.
+    let moved = p.onTimeline([e], shift: 2 * bar)
+    #expect(moved.map(\.startTick) == [7_680] && moved.map(\.endTick) == [11_520])
+    #expect(p.onTimeline([e], shift: -2 * bar).isEmpty, "a part before the timeline start goes")
+}

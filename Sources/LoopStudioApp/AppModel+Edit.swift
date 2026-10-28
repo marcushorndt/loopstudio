@@ -292,7 +292,9 @@ extension AppModel {
     /// Writes what the Session played into the arrangement, at the times it played (Live's arrangement
     /// record, after the fact), then lets the arrangement play again. One undo step.
     func captureSession() {
-        let commands = project.captureCommands(simulation.events, until: sessionTick)
+        // The performance goes where it played on the timeline, counted back from the playhead.
+        let shift = engine.positionFrame - engine.sessionFrame
+        let commands = project.captureCommands(project.onTimeline(simulation.events, shift: shift), until: currentTick)
         guard !commands.isEmpty else { status = "Nothing to capture: no Session clip has played yet"; return }
         let count = commands.filter { if case .insertClip = $0 { true } else { false } }.count
         apply(.batch(commands: commands))

@@ -93,6 +93,10 @@ struct ArrangementClipMenu: View {
         AppAction.duplicate.button(model, run: act(.duplicate))
         AppAction.deleteSelection.button(model, run: act(.deleteSelection))
         Divider()
+        Button("Edit Clip Automation") { model.openClipAutomation(clip.id) }
+        Button("Move Clip Automation to Track") { model.moveClipAutomationToTrack(clip.id) }
+            .disabled(clip.lanes.allSatisfy { $0.points.isEmpty })
+        Divider()
         AppAction.splitAtPlayhead.button(model, run: act(.splitAtPlayhead))
         AppAction.loopSelection.button(model, title: "Loop Clip") {
             if !model.selectedClips.contains(clip.id) { model.select(clip: clip.id, extend: false) }
@@ -133,7 +137,7 @@ struct LaneMenu: View {
     let track: Track
 
     var body: some View {
-        AppAction.paste.button(model) { model.selectedTrack = track.id; model.pasteClipboard() }
+        AppAction.paste.button(model) { model.selectedTrack = track.id; model.pasteClipboard() }.disabled(model.clipboard.isEmpty)
         AppAction.splitAtPlayhead.button(model) { model.selectedTrack = track.id; model.selectedClips = []; model.splitAtPlayhead() }
         if track.kind == .midi {
             Button("New MIDI Clip at Playhead") { model.createMIDIClip(track: track.id, at: model.snap(model.currentTick)) }
@@ -174,6 +178,7 @@ struct SlotMenu: View {
             Button("Stop Track") { model.stopTrack(track.id) }
             Divider()
             AppAction.duplicate.button(model) { model.duplicateSlot(track: track.id, row: row) }
+            Button("Edit Clip Automation") { model.openClipAutomation(slot.clip.id) }
             AppAction.deleteSelection.button(model, title: "Delete Clip") { model.apply(.setSlot(track: track.id, index: row, slot: nil)) }
             if case .dummy = slot.clip {} else {
                 Button("Insert into Arrangement at Playhead") { model.insertSlotIntoArrangement(track: track.id, row: row) }

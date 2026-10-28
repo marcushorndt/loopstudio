@@ -35,7 +35,7 @@ extension AppModel {
         recording = true
         recordingAudio = true
         updateMetronome()
-        engine.playAfterCountIn(beats: countInBars * 4)
+        engine.playAfterCountIn(beats: countInBars * meter.beats)
         transportPlaying = true
         status = "Recording audio"
     }

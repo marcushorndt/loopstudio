@@ -174,15 +174,17 @@ struct KeyBinding {
 @MainActor
 extension AppAction {
     /// A menu item for the action, with its key shown. Use it in the menu bar and in right-click menus.
+    /// With `run`, the item acts on the right-clicked thing, so the global selection does not disable it.
     @ViewBuilder
     func button(_ model: AppModel, title custom: String? = nil, run: (() -> Void)? = nil) -> some View {
         let label = custom ?? model.title(of: self)
+        let enabled = run != nil || model.isEnabled(self)
         if let b = binding {
             Button(label) { if let run { run() } else { model.perform(self) } }
                 .keyboardShortcut(b.key, modifiers: b.modifiers)
-                .disabled(!model.isEnabled(self))
+                .disabled(!enabled)
         } else {
-            Button(label) { if let run { run() } else { model.perform(self) } }.disabled(!model.isEnabled(self))
+            Button(label) { if let run { run() } else { model.perform(self) } }.disabled(!enabled)
         }
     }
 }

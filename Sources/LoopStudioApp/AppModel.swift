@@ -293,7 +293,7 @@ final class AppModel {
         recorder.begin()
         recording = true
         updateMetronome()
-        engine.playAfterCountIn(beats: countInBars * 4)
+        engine.playAfterCountIn(beats: countInBars * meter.beats)
         transportPlaying = true
         status = "Recording"
     }
@@ -322,9 +322,16 @@ final class AppModel {
 
     func toggleMetronome() { metronomeOn.toggle(); updateMetronome() }
 
+    /// The meter at the song start: beats per bar, and how long one beat is (6/8 counts eighths).
+    var meter: (beats: Int, beatTicks: Int64) {
+        let sig = project.timeSignatures.first?.signature ?? TimeSignature(4, 4)
+        return (sig.numerator, sig.ticksPerBar.rawValue / Int64(max(1, sig.numerator)))
+    }
+
     func updateMetronome() {
-        let beat = Int64((60.0 / max(20, bpm)) * sampleRate)
-        engine.setMetronome(enabled: metronomeOn, beatFrames: beat, beatsPerBar: 4)
+        let quarter = (60.0 / max(20, bpm)) * sampleRate
+        let beat = Int64(quarter * Double(meter.beatTicks) / Double(Tick.perQuarter))
+        engine.setMetronome(enabled: metronomeOn, beatFrames: beat, beatsPerBar: meter.beats)
     }
 
     /// Shift+Space: pause in place, or continue from there.

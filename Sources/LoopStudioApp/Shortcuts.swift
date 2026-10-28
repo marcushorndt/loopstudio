@@ -9,6 +9,7 @@ enum AppAction: String, CaseIterable, Identifiable {
     case record, toggleMetronome, play, pause, stopRewind, stopAllClips, loopSelection, loopToggle, backToArrangement
     case insertAudioTrack, insertMIDITrack, insertReturnTrack, insertGroupTrack, groupTracks, renameTrack, duplicateTrack
     case insertScene, deleteScene, duplicateScene
+    case toggleKeyboardMIDI
     case moveUp, moveDown, moveLeft, moveRight, launchSelected
     case sessionView, arrangementView, switchView, toggleDetail, showShortcuts
 
@@ -23,6 +24,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .record, .toggleMetronome, .play, .pause, .stopRewind, .stopAllClips, .loopSelection, .loopToggle, .backToArrangement: .transport
         case .insertAudioTrack, .insertMIDITrack, .insertReturnTrack, .insertGroupTrack, .groupTracks, .renameTrack, .duplicateTrack: .track
         case .insertScene, .deleteScene, .duplicateScene: .scene
+        case .toggleKeyboardMIDI: .transport
         case .moveUp, .moveDown, .moveLeft, .moveRight, .launchSelected: .navigate
         case .sessionView, .arrangementView, .switchView, .toggleDetail, .showShortcuts: .view
         }
@@ -61,6 +63,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .insertScene: "Insert Scene"
         case .deleteScene: "Delete Scene"
         case .duplicateScene: "Duplicate Scene"
+        case .toggleKeyboardMIDI: "Computer Keyboard as MIDI Keys"
         case .moveUp: "Select Up"
         case .moveDown: "Select Down"
         case .moveLeft: "Select Left"
@@ -101,6 +104,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .groupTracks: KeyBinding("g", .command)
         case .renameTrack: KeyBinding("r", .command)
         case .insertScene: KeyBinding("i", [.command, .shift])
+        case .toggleKeyboardMIDI: KeyBinding("m", [])
         case .moveUp: KeyBinding("\u{F700}", [])
         case .moveDown: KeyBinding("\u{F701}", [])
         case .moveLeft: KeyBinding("\u{F702}", [])
@@ -185,12 +189,41 @@ extension AppAction {
 final class KeyMonitor {
     private var token: Any?
 
+    /// Piano layout on the home row, like Live: A W S E D F T G Y H U J K.
+    private static let piano: [String: Int] = ["a": 0, "w": 1, "s": 2, "e": 3, "d": 4, "f": 5, "t": 6, "g": 7, "y": 8, "h": 9, "u": 10, "j": 11, "k": 12, "o": 13, "l": 14, "p": 15]
+    private var held: [String: UInt8] = [:]
+
     func install(model: AppModel) {
         guard token == nil else { return }
-        token = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak model] event in
-            guard let model, !event.isARepeat else { return event }
+        token = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self, weak model] event in
+            guard let self, let model else { return event }
             // Typing in a text field keeps its keys.
             if NSApp.keyWindow?.firstResponder is NSText { return event }
+            let typed = event.charactersIgnoringModifiers?.lowercased() ?? ""
+            let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
+            if model.keyboardMIDI, plain {
+                if let step = Self.piano[typed] {
+                    if event.type == .keyDown, !event.isARepeat {
+                        let pitch = UInt8(min(127, max(0, 12 * (model.keyboardOctave + 1) + step)))
+                        held[typed] = pitch
+                        model.noteOn(pitch, velocity: UInt8(model.keyboardVelocity))
+                    } else if event.type == .keyUp, let pitch = held.removeValue(forKey: typed) {
+                        model.noteOff(pitch)
+                    }
+                    return nil
+                }
+                if event.type == .keyDown, typed == "z" || typed == "x" {
+                    model.keyboardOctave = min(8, max(-1, model.keyboardOctave + (typed == "x" ? 1 : -1)))
+                    model.status = "Keyboard octave C\(model.keyboardOctave)"
+                    return nil
+                }
+                if event.type == .keyDown, typed == "c" || typed == "v" {
+                    model.keyboardVelocity = min(127, max(1, model.keyboardVelocity + (typed == "v" ? 20 : -20)))
+                    model.status = "Keyboard velocity \(model.keyboardVelocity)"
+                    return nil
+                }
+            }
+            guard event.type == .keyDown, !event.isARepeat else { return event }
             for action in AppAction.allCases {
                 if let b = action.binding, b.isPlain, b.matches(event), model.isEnabled(action) {
                     model.perform(action)

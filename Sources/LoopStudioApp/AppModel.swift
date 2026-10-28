@@ -51,6 +51,10 @@ final class AppModel {
         didSet { UserDefaults.standard.set(sidebarTab.rawValue, forKey: "sidebarTab") }
     }
     var detailOpen = true
+    /// The computer keyboard plays the selected MIDI track.
+    var keyboardMIDI = false
+    var keyboardOctave = 3
+    var keyboardVelocity = 100
     var detailTab: DetailTab = .clip
     var selectedClip: ClipID? {
         didSet { if let c = selectedClip, !selectedClips.contains(c) { selectedClips = [c] } }

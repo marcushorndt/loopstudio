@@ -68,6 +68,9 @@ extension AppModel {
         case .insertScene: insertScene(at: (selectedSceneRow ?? project.tracks.map(\.slots.count).max() ?? 0 - 1) + 1)
         case .deleteScene: if let r = selectedSceneRow { deleteScene(r) }
         case .duplicateScene: if let r = selectedSceneRow { duplicateScene(r) }
+        case .toggleKeyboardMIDI:
+            keyboardMIDI.toggle()
+            status = keyboardMIDI ? "Computer keyboard plays notes (A W S E D F T G Y H U J K, Z/X octave, C/V velocity). Press M to stop." : "Computer keyboard is off."
         case .moveUp: moveSelection(rows: -1, tracks: 0)
         case .moveDown: moveSelection(rows: 1, tracks: 0)
         case .moveLeft: moveSelection(rows: 0, tracks: -1)

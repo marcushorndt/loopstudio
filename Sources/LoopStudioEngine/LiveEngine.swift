@@ -229,7 +229,7 @@ public final class LiveEngine: @unchecked Sendable {
             position += Int64(n)
             sessionPosition += Int64(n)
             done += n
-            if let loop, position >= loop.upperBound { position = loop.lowerBound; renderer.silenceNotes() }
+            if let loop, position >= loop.upperBound { position = loop.lowerBound; renderer.releaseArrangementNotes() }
         }
     }
 

@@ -200,6 +200,11 @@ final class KeyMonitor {
             // Typing in a text field keeps its keys.
             if NSApp.keyWindow?.firstResponder is NSText { return event }
             let typed = event.charactersIgnoringModifiers?.lowercased() ?? ""
+            // Turning the keyboard off releases the notes it still holds.
+            if !model.keyboardMIDI, !held.isEmpty {
+                for pitch in held.values { model.noteOff(pitch) }
+                held.removeAll()
+            }
             let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
             if model.keyboardMIDI, plain {
                 if let step = Self.piano[typed] {

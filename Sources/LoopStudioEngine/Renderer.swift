@@ -16,6 +16,8 @@ public final class Renderer {
     private let peaks: UnsafeMutablePointer<Float>   // per node: largest sample since the last `takePeak`
     /// Session clock minus timeline clock for the block being rendered.
     private var sessionOffset: Int64 = 0
+    /// Per node, 16 channels x 128 pitches: how many arrangement notes are on. The loop wrap releases them.
+    private let held: UnsafeMutablePointer<UInt8>
 
     private final class Slot {
         let effect: DSPEffect?
@@ -89,6 +91,8 @@ public final class Renderer {
         (outPointers + 1).initialize(to: scratchOut + maxBlock)
         peaks = .allocate(capacity: max(1, nodeCount))
         peaks.initialize(repeating: 0, count: max(1, nodeCount))
+        held = .allocate(capacity: max(1, nodeCount) * 2048)
+        held.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
     }
 
     deinit {
@@ -96,6 +100,7 @@ public final class Renderer {
         nodes.deallocate()
         buffers.deallocate()
         peaks.deallocate()
+        held.deallocate()
         scratchIn.deallocate(); scratchOut.deallocate(); inPointers.deallocate(); outPointers.deallocate()
     }
 
@@ -116,9 +121,23 @@ public final class Renderer {
         nodes[node].instrument?.sendMIDI(status, data1, data2)
     }
 
-    /// Releases every note of every hosted instrument. Called on stop, on a jump and when the loop wraps.
+    /// Releases every note of every hosted instrument. Called on stop and on a jump.
     public func silenceNotes() {
         for i in 0..<nodeCount { nodes[i].instrument?.silenceNotes() }
+        held.update(repeating: 0, count: max(1, nodeCount) * 2048)
+    }
+
+    /// Releases only the arrangement notes that are still on. Called when the loop wraps,
+    /// so session clips keep their held notes.
+    public func releaseArrangementNotes() {
+        for i in 0..<nodeCount {
+            let base = held + i * 2048
+            guard let unit = nodes[i].instrument else { continue }
+            for k in 0..<2048 where base[k] > 0 {
+                unit.sendMIDI(0x80 | UInt8(k >> 7), UInt8(k & 127), 0)
+                base[k] = 0
+            }
+        }
     }
 
     private func run(_ unit: AudioUnitEffect, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
@@ -130,7 +149,8 @@ public final class Renderer {
     }
 
     /// Queues the notes of one block. `startFrame` is in the frames of `events`.
-    private func send(_ unit: AudioUnitEffect, _ events: [MIDIEvent], startFrame: Int64, frames: Int) {
+    private func send(_ unit: AudioUnitEffect, _ events: [MIDIEvent], startFrame: Int64, frames: Int,
+                      held: UnsafeMutablePointer<UInt8>? = nil) {
         // First event at or after the block start (events are sorted by frame).
         var lo = 0, hi = events.count
         while lo < hi {
@@ -141,6 +161,11 @@ public final class Renderer {
         while lo < events.count, events[lo].frame < end {
             let e = events[lo]
             unit.sendMIDI(e.status, e.data1, e.data2, sampleOffset: Int(e.frame - startFrame))
+            if let held {
+                let kind = e.status & 0xF0, k = Int(e.status & 0x0F) << 7 | Int(e.data1 & 127)
+                if kind == 0x90 && e.data2 > 0 { held[k] &+= 1 }
+                else if (kind == 0x80 || kind == 0x90), held[k] > 0 { held[k] -= 1 }
+            }
             lo += 1
         }
     }
@@ -182,7 +207,7 @@ public final class Renderer {
             }
             if let instrument = node.instrument {
                 if transport {
-                    send(instrument, node.midi, startFrame: startFrame, frames: frames)
+                    send(instrument, node.midi, startFrame: startFrame, frames: frames, held: held + i * 2048)
                     send(instrument, node.sessionMidi, startFrame: startFrame + sessionOffset, frames: frames)
                 }
                 play(instrument, into: l, r, frames: frames)

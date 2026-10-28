@@ -2,9 +2,8 @@ import LoopStudioCore
 import SwiftUI
 
 private let columnWidth: CGFloat = 128
-private let sceneWidth: CGFloat = 44
 private let slotHeight: CGFloat = 28
-private let gap: CGFloat = 3
+private let gap: CGFloat = 2
 
 struct SessionView: View {
     @Environment(AppModel.self) private var model
@@ -50,7 +49,7 @@ struct SessionView: View {
                 .frame(height: slotHeight)
                 HStack(spacing: gap) {
                     ForEach(busses, id: \.id) { StopButton(track: $0, width: columnWidth) }
-                    StopButton(track: model.project.master, width: sceneWidth + 36)
+                    StopButton(track: model.project.master, width: columnWidth)
                 }
             }
             .padding(.horizontal, 6)
@@ -66,7 +65,7 @@ struct SessionView: View {
                 .scrollPosition($scrollX)
                 HStack(alignment: .bottom, spacing: gap) {
                     ForEach(busses, id: \.id) { MixerStrip(track: $0, isMaster: false, width: columnWidth) }
-                    MixerStrip(track: model.project.master, isMaster: true, width: sceneWidth + 36)
+                    MixerStrip(track: model.project.master, isMaster: true, width: columnWidth)
                 }
             }
             .padding(.horizontal, 6).padding(.bottom, 6)
@@ -86,12 +85,8 @@ private struct TrackColumn: View {
     var body: some View {
         VStack(spacing: gap) {
             header
-            if track.kind == .returnTrack {
-                Color.clear.frame(height: CGFloat(rows) * (slotHeight + gap) - gap)
-                Text("Return").font(.caption).foregroundStyle(Theme.dim).frame(height: slotHeight)
-            } else {
+            // Busses have slots too: a dummy clip there is silent but carries automation.
             ForEach(0..<rows, id: \.self) { row in SlotCell(track: track, row: row) }
-            }
         }
         .frame(width: columnWidth)
     }
@@ -127,9 +122,12 @@ private struct StopButton: View {
 
     var body: some View {
         Button { model.stopClips(of: track) } label: {
-            Image(systemName: "stop.fill").font(.system(size: 9)).foregroundStyle(Theme.dim)
-                .frame(maxWidth: .infinity, minHeight: slotHeight)
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius))
+            HStack(spacing: 0) {
+                Image(systemName: "stop.fill").font(.system(size: 11)).foregroundStyle(Theme.dim).frame(width: 26)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: slotHeight)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
@@ -191,15 +189,23 @@ private struct SlotCell: View {
             .contextMenu { SlotMenu(track: track, row: row) }
         } else {
             Button {
-                if track.kind == .midi { model.createMIDIClip(track: track.id, row: row) } else { model.stopTrack(track.id) }
+                switch track.kind {
+                case .midi: model.createMIDIClip(track: track.id, row: row)
+                default: model.stopClips(of: track)
+                }
             } label: {
-                Image(systemName: track.kind == .midi ? "plus" : "stop.fill").font(.system(size: 8)).foregroundStyle(Theme.dim.opacity(0.5))
-                    .frame(maxWidth: .infinity, minHeight: slotHeight)
+                HStack(spacing: 0) {
+                    Image(systemName: track.kind == .midi ? "plus" : "stop.fill").font(.system(size: 11)).foregroundStyle(Theme.dim.opacity(0.5))
+                        .frame(width: 26)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: slotHeight)
                     .background(Theme.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
             }
 .buttonStyle(.plain)
             .contextMenu { SlotMenu(track: track, row: row) }
-            .help(track.kind == .midi ? "Create an empty MIDI clip" : "Empty slot. Drop an audio file here.")
+            .help(track.kind == .midi ? "Create an empty MIDI clip"
+                  : (track.kind == .audio ? "Empty slot. Drop an audio file here." : "Empty slot. Right-click for a dummy clip: silent, it carries automation."))
         }
     }
 
@@ -248,7 +254,7 @@ private struct SceneColumn: View {
                         Text("\(row + 1)").font(.system(size: 11, design: .monospaced))
                     }
                     .foregroundStyle(Theme.text)
-                    .frame(width: sceneWidth + 36, height: slotHeight)
+                    .frame(width: columnWidth, height: slotHeight)
                     .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 3))
                 }
                 .buttonStyle(.plain)

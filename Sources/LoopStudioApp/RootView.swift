@@ -24,8 +24,8 @@ struct RootView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if model.detailOpen {
-                    Divider().overlay(Theme.line)
-                    DetailPanel().frame(height: 260)
+                    DetailResizeHandle()
+                    DetailPanel().frame(height: model.detailHeight)
                 }
                 StatusBar()
             }
@@ -208,4 +208,25 @@ struct RenameSheet: View {
     }
 
     private func close() { model.renameRequest = nil; model.clipRenameRequest = nil }
+}
+
+/// The line above the inspector. Drag it to make the inspector taller or shorter; the slots above scroll.
+struct DetailResizeHandle: View {
+    @Environment(AppModel.self) private var model
+    @State private var startHeight: CGFloat?
+
+    var body: some View {
+        Rectangle().fill(Theme.line).frame(height: 1)
+            .frame(maxWidth: .infinity, minHeight: 7)
+            .contentShape(Rectangle())
+            .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { g in
+                    if startHeight == nil { startHeight = model.detailHeight }
+                    model.detailHeight = min(640, max(150, (startHeight ?? 260) - g.translation.height))
+                }
+                .onEnded { _ in startHeight = nil })
+            .onTapGesture(count: 2) { model.detailHeight = 260 }
+            .help("Drag to resize the inspector. Double-click resets it.")
+    }
 }

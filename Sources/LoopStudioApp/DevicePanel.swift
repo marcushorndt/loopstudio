@@ -83,7 +83,7 @@ struct DeviceChainView: View {
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(track.name).font(.headline)
-                        AutomationLanesMenu(track: track, title: "Automate").menuStyle(.borderlessButton).fixedSize()
+                        PillMenu(label: "Automate") { AutomationLaneToggles(track: track) }
                         Text(track.kind == .master ? "Master" : track.kind.rawValue.capitalized).font(.caption).foregroundStyle(Theme.dim)
                         if track.devices.isEmpty {
                             Text("Drag an effect here\nor double-click it in the sidebar.").font(.caption).foregroundStyle(Theme.dim).padding(.top, 6)

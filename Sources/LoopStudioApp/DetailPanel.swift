@@ -30,6 +30,46 @@ struct DetailPanel: View {
     }
 }
 
+/// The title row of an inspector column: a small label, and an optional control on the right.
+struct SectionHeader<Trailing: View>: View {
+    let title: String
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(title.uppercased()).font(.system(size: 10, weight: .semibold)).kerning(0.6).foregroundStyle(Theme.dim)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            trailing()
+        }
+        .frame(height: 22)
+    }
+}
+
+extension SectionHeader where Trailing == EmptyView {
+    init(title: String) { self.init(title: title) { EmptyView() } }
+}
+
+/// A quiet, outlined menu button for inspector headers.
+struct PillMenu<Content: View>: View {
+    let label: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        Menu { content() } label: {
+            HStack(spacing: 4) {
+                Text(label).font(.system(size: 11, weight: .medium))
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 8).frame(height: 22)
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+    }
+}
+
 private struct ClipPanel: View {
     @Environment(AppModel.self) private var model
 
@@ -49,9 +89,7 @@ private struct ClipPanel: View {
                     } else if case .dummy(let d) = clip {
                         DummyPanel(clip: d, tint: Theme.track(track.colorIndex))
                     } else {
-                    HStack {
-                        Text(model.clipName(clip)).font(.headline)
-                        Spacer()
+                    SectionHeader(title: model.clipName(clip)) {
                         if case .audio = clip {
                             Picker("", selection: Bindable(model).showClipEnvelope) {
                                 Text("Sample").tag(false)
@@ -86,10 +124,10 @@ private struct ClipPanel: View {
     @ViewBuilder
     private func properties(_ clip: Clip, track: Track) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Clip").font(.caption.bold()).foregroundStyle(Theme.dim)
-                Spacer()
-                AutomationLanesMenu(track: track, title: "Automate").menuStyle(.borderlessButton).fixedSize()
+            SectionHeader(title: "Clip") {
+                if case .dummy = clip { EmptyView() } else {
+                    PillMenu(label: "Automate") { AutomationLaneToggles(track: track) }
+                }
             }
             switch clip {
             case .audio(let a):
@@ -118,7 +156,7 @@ private struct ClipPanel: View {
     /// Level and fades of an audio clip, in their own column.
     private func soundColumn(_ a: AudioClip) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Sound").font(.caption.bold()).foregroundStyle(Theme.dim)
+            SectionHeader(title: "Sound")
             slider("Gain", value: a.gainDb, range: -36...12, format: "%.1f dB") { set(a, gain: $0) }
                 .contextMenu {
                     Button(model.showClipEnvelope ? "Hide Gain Envelope" : "Show Gain Envelope") { model.showClipEnvelope.toggle() }
@@ -212,7 +250,7 @@ private struct FollowEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Launch").font(.caption.bold()).foregroundStyle(Theme.dim)
+            SectionHeader(title: "Launch")
             Picker("Quantize", selection: Binding(get: { slot.quantize }, set: { var s = slot; s.quantize = $0; commit(s) })) {
                 Text("None").tag(LaunchQuantize.none)
                 Text("1 Beat").tag(LaunchQuantize.beat)
@@ -299,25 +337,32 @@ private struct DummyPanel: View {
         let targets = model.project.automationTargets()
         let lanes = shown
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Menu("Lanes (\(lanes.count))") {
-                    Button("Lanes With Curves") { chosen = clip.lanes.map(\.target) }.disabled(clip.lanes.isEmpty)
+            SectionHeader(title: "Automation") {
+                PillMenu(label: lanes.isEmpty ? "Add Parameter" : "Parameters") {
+                    Button("Show Parameters With Curves") { chosen = clip.lanes.map(\.target) }.disabled(clip.lanes.isEmpty)
                     Divider()
                     ForEach(targets, id: \.address) { target in
                         Toggle(target.name, isOn: Binding(get: { lanes.contains(target.address) },
                                                           set: { set(target.address, on: $0) }))
                     }
                 }
-                .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
-                Text("\(clip.lanes.count) curve" + (clip.lanes.count == 1 ? "" : "s")).font(.caption).foregroundStyle(Theme.dim)
-                Spacer()
             }
-            GeometryReader { geo in
-                let rowH = max(70, geo.size.height / CGFloat(max(1, lanes.count)))
-                ScrollView(.vertical) {
-                    VStack(spacing: 2) {
-                        ForEach(lanes, id: \.self) { address in laneRow(address, height: rowH, width: geo.size.width) }
+            if lanes.isEmpty {
+                VStack(spacing: 6) {
+                    Text("No parameter chosen").font(.system(size: 12, weight: .medium))
+                    Text("Use Add Parameter to pick what this clip moves.").font(.system(size: 11)).foregroundStyle(Theme.dim)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+            } else {
+                GeometryReader { geo in
+                    let rowH = max(64, (geo.size.height - CGFloat(lanes.count - 1) * 4) / CGFloat(lanes.count))
+                    ScrollView(.vertical) {
+                        VStack(spacing: 4) {
+                            ForEach(lanes, id: \.self) { address in laneRow(address, height: rowH, width: geo.size.width) }
+                        }
                     }
+                    .scrollDisabled(rowH * CGFloat(lanes.count) <= geo.size.height)
                 }
             }
         }
@@ -333,13 +378,31 @@ private struct DummyPanel: View {
                 model.apply(.setDummyAutomation(clip: clip.id, target: address, points: pts))
             }
             .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
-            .overlay(alignment: .topTrailing) {
-                if !points.isEmpty {
-                    Button { model.apply(.setDummyAutomation(clip: clip.id, target: address, points: [])) } label: {
-                        Image(systemName: "trash").font(.system(size: 9))
-                    }
-                    .buttonStyle(.plain).foregroundStyle(Theme.dim).padding(4).help("Remove this curve")
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
+            .overlay(alignment: .topLeading) {
+                HStack(spacing: 6) {
+                    Text(target.name).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.text)
+                    if points.isEmpty { Text("Click to add points").font(.system(size: 10)).foregroundStyle(Theme.dim) }
                 }
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(Theme.panel.opacity(0.85), in: RoundedRectangle(cornerRadius: Theme.radius))
+                .padding(4)
+                .allowsHitTesting(false)
+            }
+            .overlay(alignment: .topTrailing) {
+                HStack(spacing: 2) {
+                    if !points.isEmpty {
+                        Button { model.apply(.setDummyAutomation(clip: clip.id, target: address, points: [])) } label: {
+                            Image(systemName: "trash").font(.system(size: 10)).frame(width: 20, height: 20)
+                        }
+                        .buttonStyle(.plain).help("Delete this curve")
+                    }
+                    Button { set(address, on: false) } label: {
+                        Image(systemName: "xmark").font(.system(size: 10)).frame(width: 20, height: 20)
+                    }
+                    .buttonStyle(.plain).help("Hide this parameter")
+                }
+                .foregroundStyle(Theme.dim).padding(2)
             }
         }
     }

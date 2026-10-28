@@ -238,6 +238,24 @@ struct DeviceMenu: View {
     }
 }
 
+/// The checkmark items of the lane menu, for use inside any menu.
+struct AutomationLaneToggles: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+
+    var body: some View {
+        Button("Lanes With Points") { model.showAllUsedLanes(track) }
+            .disabled(track.automation.allSatisfy { $0.points.isEmpty })
+        Button("Hide All") { model.automationShown[track.id] = nil }.disabled(model.shownLanes(track).isEmpty)
+        Divider()
+        ForEach(model.project.automationTargets(of: track), id: \.address) { target in
+            Toggle(target.name, isOn: Binding(
+                get: { model.isLaneShown(track, target.address) },
+                set: { on in model.setLane(track, target.address, shown: on); if on { model.viewMode = .arrangement } }))
+        }
+    }
+}
+
 /// A menu of checkmarks: which automation lanes of a track are visible.
 struct AutomationLanesMenu: View {
     @Environment(AppModel.self) private var model

@@ -58,6 +58,8 @@ struct Fader: View {
 
 /// A mixer strip: pan, fader with meter, and the mute and solo buttons.
 struct MixerStrip: View {
+    /// Room for Audio From, the monitor buttons and Audio To.
+    static let ioHeight: CGFloat = 92
     @Environment(AppModel.self) private var model
     let track: Track
     let isMaster: Bool
@@ -70,20 +72,34 @@ struct MixerStrip: View {
                 .contextMenu { Button("Center") { model.apply(.setPan(id: track.id, pan: 0)) } }
                 .help("Pan")
 
-            if !isMaster && track.kind != .returnTrack {
-                ForEach(model.project.tracks.filter { $0.kind == .returnTrack }, id: \.id) { ret in
-                    HStack(spacing: 4) {
-                        Text(String(ret.name.prefix(1))).font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.track(ret.colorIndex))
-                        Slider(value: Binding(
-                            get: { (model.sendLevel(track, to: ret.id) + 48) / 48 },
-                            set: { model.setSend(from: track, to: ret.id, db: $0 <= 0.01 ? -96 : -48 + 48 * $0) }), in: 0...1)
-                            .controlSize(.mini)
+            // Every strip has the same rows at the same heights, so faders line up across the mixer.
+            let returns = model.project.tracks.filter { $0.kind == .returnTrack }
+            VStack(spacing: 4) {
+                if !isMaster && track.kind != .returnTrack {
+                    ForEach(returns, id: \.id) { ret in
+                        HStack(spacing: 4) {
+                            Text(String(ret.name.prefix(1))).font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.track(ret.colorIndex))
+                            Slider(value: Binding(
+                                get: { (model.sendLevel(track, to: ret.id) + 48) / 48 },
+                                set: { model.setSend(from: track, to: ret.id, db: $0 <= 0.01 ? -96 : -48 + 48 * $0) }), in: 0...1)
+                                .controlSize(.mini)
+                        }
+                        .frame(height: 16)
+                        .help("Send to \(ret.name)")
                     }
-                    .help("Send to \(ret.name)")
                 }
             }
+            .frame(height: CGFloat(returns.count) * 20, alignment: .top)
 
-            if !isMaster { TrackIOSection(track: track) }
+            Group {
+                if isMaster {
+                    Text("Master").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.dim)
+                } else {
+                    TrackIOSection(track: track)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: Self.ioHeight, alignment: .top)
 
             HStack(spacing: 6) {
                 Fader(db: track.volumeDb) { model.apply(.setVolume(id: track.id, db: $0), key: "vol\(track.id)") }
@@ -96,8 +112,8 @@ struct MixerStrip: View {
             Text(track.volumeDb <= -90 ? "-inf" : String(format: "%.1f dB", track.volumeDb))
                 .font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.dim)
 
-            if !isMaster {
-                HStack(spacing: 4) {
+            HStack(spacing: 4) {
+                if !isMaster {
                     toggle("S", on: track.solo, tint: Theme.track(5)) {
                         model.apply(.setSolo(id: track.id, solo: !track.solo))
                     }
@@ -106,6 +122,7 @@ struct MixerStrip: View {
                     }
                 }
             }
+            .frame(height: 22)
         }
         .padding(6)
         .frame(width: width)

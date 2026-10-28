@@ -55,7 +55,7 @@ enum Theme {
     static var onTint: Color { palette.onTint }
     static var trackColors: [Color] { palette.trackColors }
 
-    static let radius: CGFloat = 3
+    static let radius: CGFloat = 2
 
     static func track(_ index: Int) -> Color { trackColors[((index % trackColors.count) + trackColors.count) % trackColors.count] }
 

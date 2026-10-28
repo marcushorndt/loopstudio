@@ -22,14 +22,12 @@ struct AutomationEditor: View {
     var body: some View {
         Canvas { ctx, size in
             // Background and a line at the default value.
-            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black.opacity(0.18)))
+            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.background.opacity(0.6)))
             let defY = y(target.def)
-            ctx.fill(Path(CGRect(x: 0, y: defY, width: size.width, height: 0.5)), with: .color(.white.opacity(0.18)))
+            ctx.stroke(Path { p in p.move(to: CGPoint(x: 0, y: defY)); p.addLine(to: CGPoint(x: size.width, y: defY)) },
+                       with: .color(Theme.dim.opacity(0.35)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
 
-            guard !shown.isEmpty else {
-                ctx.draw(Text("Click to add a point").font(.system(size: 10)).foregroundStyle(Theme.dim), at: CGPoint(x: 8, y: 10), anchor: .leading)
-                return
-            }
+            guard !shown.isEmpty else { return }
             var line = Path()
             line.move(to: CGPoint(x: 0, y: y(shown[0].value)))
             line.addLine(to: CGPoint(x: x(shown[0].tick), y: y(shown[0].value)))

@@ -51,6 +51,10 @@ final class AppModel {
         didSet { UserDefaults.standard.set(sidebarTab.rawValue, forKey: "sidebarTab") }
     }
     var detailOpen = true
+    /// Height of the inspector, kept per Mac.
+    var detailHeight: CGFloat = CGFloat(UserDefaults.standard.object(forKey: "detailHeight") as? Double ?? 260) {
+        didSet { UserDefaults.standard.set(Double(detailHeight), forKey: "detailHeight") }
+    }
     /// The computer keyboard plays the selected MIDI track.
     var keyboardMIDI = false
     /// The clip inspector shows the gain envelope instead of the sample.
@@ -513,7 +517,7 @@ final class AppModel {
         case .returnTrack, .group:
             guard transportPlaying else { return }
             let at = project.barBoundary(atOrAfter: currentTick)
-            for t in project.tracks where t.output == track.id && !t.slots.isEmpty { performance.append(Launch(track: t.id, slot: nil, tick: at)) }
+            for t in project.tracks where (t.output == track.id || t.id == track.id) && !t.slots.isEmpty { performance.append(Launch(track: t.id, slot: nil, tick: at)) }
             rebuild()
         default: stopTrack(track.id)
         }

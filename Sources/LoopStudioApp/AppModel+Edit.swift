@@ -145,7 +145,7 @@ extension AppModel {
         if found.isEmpty, let id = selectedClip, let (tid, clip) = project.findClip(id), let i = ordered.firstIndex(where: { $0.id == tid }) {
             found.append((i, clip))
         }
-        let slots: [ClipID: SessionSlot] = Dictionary(uniqueKeysWithValues: project.tracks.flatMap { $0.slots.compactMap { $0 } }.map { ($0.clip.id, $0) })
+        let slots: [ClipID: SessionSlot] = Dictionary(project.tracks.flatMap { $0.slots.compactMap { $0 } }.map { ($0.clip.id, $0) }, uniquingKeysWith: { a, _ in a })
         guard !found.isEmpty else { return }
         let firstTrack = found.map(\.0).min()!, firstStart = found.map { $0.1.start.rawValue }.min()!
         clipboard = found.map { ClipboardItem(clip: $0.1, trackOffset: $0.0 - firstTrack, startOffset: $0.1.start.rawValue - firstStart, slot: slots[$0.1.id]) }

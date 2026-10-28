@@ -218,6 +218,21 @@ private func rewriteHeader(_ dir: URL, _ edit: (inout [String: Any]) -> Void) th
     #expect(loaded.issues.contains { if case .routeTargetMissing = $0 { true } else { false } })
 }
 
+@Test func aTrackListedTwiceLoadsOnce() throws {
+    let dir = Temp.directory()
+    let p = try richProject()
+    try ProjectPackage.write(p, to: dir)
+    let header = dir.appendingPathComponent("project.json")
+    var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: header)) as? [String: Any])
+    var order = try #require(object["trackOrder"] as? [Any])
+    order.append(order[0])
+    object["trackOrder"] = order
+    try JSONSerialization.data(withJSONObject: object).write(to: header)
+    let loaded = try ProjectPackage.read(from: dir)
+    #expect(loaded.project.tracks.count == p.tracks.count)
+    #expect(Set(loaded.project.tracks.map(\.id)).count == p.tracks.count)
+}
+
 // MARK: Journal
 
 @Test func journalRoundTripAndReset() throws {

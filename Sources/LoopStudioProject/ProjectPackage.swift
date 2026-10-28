@@ -148,7 +148,9 @@ public enum ProjectPackage {
         project.ports = decodedHeader.ports
         project.launches = decodedHeader.launches
         project.assets = decodedHeader.assets
-        project.tracks = try decodedHeader.trackOrder.map(track)
+        // A track listed twice would be two tracks with one id; keep the first.
+        var listed = Set<TrackID>()
+        project.tracks = try decodedHeader.trackOrder.filter { listed.insert($0).inserted && $0 != decodedHeader.master }.map(track)
         project.master = try track(decodedHeader.master)
         return LoadedProject(project: project, issues: project.validate(), migratedFrom: migrated ? version : nil)
     }

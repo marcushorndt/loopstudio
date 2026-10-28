@@ -160,7 +160,7 @@ public struct RenderPlan {
         }
 
         // Order: sources before targets (Kahn). Ties keep project order, so the plan is deterministic.
-        var incoming = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, 0) })
+        var incoming = Dictionary(tracks.map { ($0.id, 0) }, uniquingKeysWith: { a, _ in a })
         for t in tracks { for target in Routing.feeds(of: t, in: project) where incoming[target] != nil { incoming[target]! += 1 } }
         var ready = tracks.filter { incoming[$0.id] == 0 }.map(\.id)
         var order: [TrackID] = []

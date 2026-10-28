@@ -1170,6 +1170,9 @@ final class AppModel {
             rebuild()
             syncPlugins()
             UserDefaults.standard.set(url.path, forKey: "lastProject")
+            if !loaded.issues.isEmpty {
+                status = "Opened with \(loaded.issues.count) problem\(loaded.issues.count == 1 ? "" : "s"): \(loaded.issues.prefix(3).map { "\($0)" }.joined(separator: "; "))"
+            }
         } catch {
             status = "Cannot open \(url.lastPathComponent): \(error)"
             if project.tracks.isEmpty { createDemo() }

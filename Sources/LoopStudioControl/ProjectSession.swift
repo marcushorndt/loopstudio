@@ -24,6 +24,7 @@ public actor ProjectSession {
 
     public var isOpen: Bool { store != nil }
     public var path: String? { url?.path }
+    public var packageURL: URL? { url }
 
     // MARK: Open, create, save
 

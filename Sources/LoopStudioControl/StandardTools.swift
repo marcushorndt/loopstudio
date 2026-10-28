@@ -1,6 +1,7 @@
 import Foundation
 import LoopStudioCore
 import LoopStudioEngine
+import LoopStudioProject
 
 /// The tools every front end shares (MCP, CLI, the app). One list, so they cannot drift apart.
 public enum StandardTools {
@@ -126,6 +127,138 @@ public enum StandardTools {
                 return .object(["changed": .bool(changed), "revision": .number(Double(await session.revision()))])
             })
         }
+
+        r.add(Tool(
+            name: "asset_import", title: "Import audio file",
+            description: """
+            Copy an audio file into the project (stored by content hash, so the same file is never stored twice) and register it as an asset. \
+            Returns the asset ID, its length, and whether it would loop or play once under the project's auto-loop rule.
+            """,
+            inputSchema: Schema.object(["path": Schema.string("Absolute path of an audio file (wav, aiff, caf, mp3, m4a, flac).")], required: ["path"]),
+            annotations: ToolAnnotations(idempotent: true)
+        ) { args in
+            guard let package = await session.packageURL else { throw ToolFailure("no project is open; call project_new or project_open first") }
+            let source = try fileURL(try args.string("path"))
+            guard FileManager.default.fileExists(atPath: source.path) else { throw ToolFailure("file not found: \(source.path)") }
+            var project = try await session.project()
+
+            let imported: Asset
+            do { imported = try AssetStore.importFile(source, into: package) }
+            catch { throw ToolFailure("cannot import: \(error)") }
+            if let existing = project.assets.first(where: { $0.sha256 == imported.sha256 }) {
+                return try assetInfo(existing, project: project, alreadyInProject: true)
+            }
+            try await session.apply(.addAsset(asset: imported))
+            project = try await session.project()
+            return try assetInfo(imported, project: project, alreadyInProject: false)
+        })
+
+        r.add(Tool(
+            name: "sample_drop", title: "Drop a sample",
+            description: """
+            Put a sample on an audio track, on the timeline or in a session slot, the way dragging it in would. \
+            The clip gets the project's default fade (so it never clicks) and loops or plays once by the auto-loop rule \
+            (short samples loop, long samples play once). Override with 'loop'. Without 'lengthTicks' the clip is as long as the sample at the project tempo.
+            """,
+            inputSchema: Schema.object([
+                "track": Schema.string("Track ID of an audio track."),
+                "asset": Schema.string("Asset ID from asset_import."),
+                "startTick": Schema.integer("Timeline position in ticks. Default 0. Ignored for a session slot."),
+                "lengthTicks": Schema.integer("Clip length in ticks.", minimum: 1),
+                "slot": Schema.integer("Put the clip in this session slot instead of on the timeline.", minimum: 0),
+                "loop": .object(["type": .string("boolean"), "description": .string("Force loop (true) or one-shot (false).")]),
+            ], required: ["track", "asset"]),
+            annotations: ToolAnnotations(destructive: true)
+        ) { args in
+            let project = try await session.project()
+            let trackID = try trackID(args, key: "track")
+            guard let assetUUID = UUID(uuidString: try args.string("asset")) else { throw ToolFailure("'asset' is not a valid UUID") }
+            guard let asset = project.asset(AssetID(assetUUID)) else { throw ToolFailure("no asset with id \(assetUUID)") }
+            let start = Tick(Int64(args.optionalInt("startTick") ?? 0))
+
+            let length: Tick
+            if let t = args.optionalInt("lengthTicks") { length = Tick(Int64(t)) }
+            else {
+                let seconds = Double(asset.frames) / asset.sampleRate
+                let map = project.tempoMap
+                length = map.tick(atSeconds: map.seconds(at: start) + seconds) - start
+            }
+            var clip = project.makeAudioClip(asset: asset.id, start: start, length: max(length, Tick(1)))
+            if let loop = args.raw["loop"]?.boolValue { clip.loop = loop }
+
+            if let slot = args.optionalInt("slot") {
+                clip.start = 0
+                try await session.apply(.setSlot(track: trackID, index: slot, slot: SessionSlot(clip: .audio(clip))))
+            } else {
+                try await session.apply(.insertClip(track: trackID, clip: .audio(clip)))
+            }
+            return .object(["clip": .string(clip.id.description), "loop": .bool(clip.loop),
+                            "fadeMs": .number(clip.fadeInMs), "lengthTicks": .number(Double(clip.length.rawValue))])
+        })
+
+        r.add(Tool(
+            name: "render_bounce", title: "Render to WAV",
+            description: """
+            Render the master mix offline to a 24-bit WAV file. The result is the same as live playback would sound. \
+            Returns length, peak and RMS in dB, a loudness curve (RMS per second) and any warnings, so the result can be checked without listening. \
+            Tracks sent straight to a hardware port are not in the master mix.
+            """,
+            inputSchema: Schema.object([
+                "path": Schema.string("Absolute path of the WAV file to write. Must end in .wav."),
+                "startTick": Schema.integer("Start in ticks. Default 0."),
+                "endTick": Schema.integer("End in ticks. Default: the end of the last clip."),
+                "tailSeconds": Schema.number("Extra seconds after the last clip (for reverb tails). Default 0."),
+                "overwrite": .object(["type": .string("boolean"), "description": .string("Replace an existing file. Default false.")]),
+            ], required: ["path"]),
+            annotations: ToolAnnotations(destructive: false)
+        ) { args in
+            let out = try fileURL(try args.string("path"))
+            guard out.pathExtension.lowercased() == "wav" else { throw ToolFailure("path must end in .wav") }
+            if FileManager.default.fileExists(atPath: out.path), args.raw["overwrite"]?.boolValue != true {
+                throw ToolFailure("file exists; pass overwrite: true to replace it")
+            }
+            guard let package = await session.packageURL else { throw ToolFailure("no project is open") }
+            let project = try await session.project()
+            let loaded = AudioBank.load(project: project) { AssetStore.fileURL(for: $0, in: package) }
+            let plan = RenderPlan.compile(project, bank: loaded.bank)
+
+            let map = project.tempoMap
+            let start = args.optionalInt("startTick").map { map.frame(at: Tick(Int64($0)), sampleRate: project.sampleRate).rawValue } ?? 0
+            let end = args.optionalInt("endTick").map { map.frame(at: Tick(Int64($0)), sampleRate: project.sampleRate).rawValue }
+            let audio = Bounce.render(plan, startFrame: start, endFrame: end, tailSeconds: args.optionalDouble("tailSeconds") ?? 0)
+            guard audio.frames > 0 else { throw ToolFailure("nothing to render: the range is empty (no clips on audible tracks?)") }
+
+            try FileManager.default.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: out)
+            try Bounce.writeWAV(audio, to: out)
+
+            func dBFS(_ x: Float) -> Double { x <= 0 ? -200 : (Double(20 * log10(x)) * 10).rounded() / 10 }
+            let perSecond = Int(project.sampleRate)
+            var curve: [JSONValue] = []
+            var i = 0
+            while i < audio.frames {
+                let n = min(perSecond, audio.frames - i)
+                var sum = 0.0
+                for k in i..<(i + n) { sum += Double(audio.left[k] * audio.left[k] + audio.right[k] * audio.right[k]) }
+                curve.append(.number(dBFS(Float((sum / Double(n * 2)).squareRoot()))))
+                i += n
+            }
+            var warnings = plan.warnings
+            for (id, reason) in loaded.failed.sorted(by: { $0.key.description < $1.key.description }) {
+                warnings.append("asset \(id): \(reason)")
+            }
+            return .object([
+                "path": .string(out.path),
+                "seconds": .number((Double(audio.frames) / audio.sampleRate * 1000).rounded() / 1000),
+                "frames": .number(Double(audio.frames)),
+                "sampleRate": .number(audio.sampleRate),
+                "peakDb": .number(dBFS(audio.peak)),
+                "rmsDb": .number(dBFS(audio.rms)),
+                "clipping": .bool(audio.peak > 1),
+                "rmsDbPerSecond": .array(curve),
+                "warnings": .array(warnings.map { .string($0) }),
+            ])
+        })
 
         r.add(Tool(
             name: "audio_devices", title: "Sound cards",
@@ -307,6 +440,19 @@ public enum StandardTools {
             "revision": .number(Double(await session.revision())),
             "unsavedChanges": .bool(await session.isDirty()),
             "issues": .array(project.validate().map { .string($0.description) }),
+        ])
+    }
+
+    static func assetInfo(_ asset: Asset, project: Project, alreadyInProject: Bool) throws -> JSONValue {
+        let seconds = Double(asset.frames) / asset.sampleRate
+        return .object([
+            "asset": .string(asset.id.description),
+            "name": .string(asset.name),
+            "seconds": .number((seconds * 1000).rounded() / 1000),
+            "sampleRate": .number(asset.sampleRate),
+            "channels": .number(Double(asset.channels)),
+            "alreadyInProject": .bool(alreadyInProject),
+            "wouldLoop": .bool(project.autoLoop.shouldLoop(seconds: seconds)),
         ])
     }
 

@@ -279,3 +279,14 @@ private func trackIDs(_ r: Client.Result) -> [String] {
     let missing = try await client.rpc("resources/read", .object(["uri": .string("loopstudio://nope")]))
     #expect(missing["error"]?["code"]?.intValue == -32002)
 }
+
+@Test func effectCatalogListsEveryBuiltInEffectWithItsKeys() async throws {
+    var client = Client()
+    let result = try await client.call("effect_catalog")
+    let effects = try #require(result.data["effects"]?.arrayValue)
+    #expect(effects.count == BuiltInEffects.all.count)
+    let delay = try #require(effects.first { $0["id"]?.stringValue == "delay" })
+    let keys = delay["params"]?.arrayValue?.compactMap { $0["key"]?.stringValue } ?? []
+    #expect(keys.contains("timeMs") && keys.contains("timeMsSync") && keys.contains("timeMsDivision"))
+    #expect(result.data["divisions"]?.arrayValue?.count == NoteDivision.all.count)
+}

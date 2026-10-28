@@ -81,7 +81,19 @@ public final class LiveEngine: @unchecked Sendable {
         engine.attach(node)
         engine.connect(node, to: engine.mainMixerNode, format: format)
         try engine.start()
+        // A sound card that changes its format or goes away stops the engine. It starts again on the new setup.
+        if configObserver == nil {
+            configObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+                guard let self, !self.engine.isRunning else { return }
+                try? self.engine.start()
+                self.onConfigurationChange?()
+            }
+        }
     }
+
+    /// Called on the main queue after the sound card setup changed and the engine started again.
+    public var onConfigurationChange: (@Sendable () -> Void)?
+    private var configObserver: NSObjectProtocol?
 
     public func shutdown() { engine.stop() }
 

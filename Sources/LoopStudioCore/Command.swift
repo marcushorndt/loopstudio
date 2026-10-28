@@ -525,7 +525,18 @@ extension Project {
             if let value, !value.isFinite { throw CommandError.invalidValue("not a number") }
             return try withTrack(trackID) { t in
                 guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
-                let old = t.devices[i].params[key]
+                let device = t.devices[i]
+                var value = value
+                // A key the device does not have would be stored and do nothing. Values outside the range are clamped.
+                if device.format == "builtin", let spec = BuiltInEffects.spec(device.identifier) {
+                    guard let param = spec.params.first(where: { $0.key == key }) else {
+                        throw CommandError.invalidValue("\(spec.name) has no parameter \"\(key)\"; it has \(spec.params.map(\.key).joined(separator: ", "))")
+                    }
+                    value = value.map(param.clamp)
+                } else if let known = device.pluginParams, !known.contains(where: { $0.key == key }) {
+                    throw CommandError.invalidValue("\(device.name) has no parameter \"\(key)\"")
+                }
+                let old = device.params[key]
                 t.devices[i].params[key] = value
                 return .setDeviceParam(track: trackID, device: id, key: key, value: old)
             }

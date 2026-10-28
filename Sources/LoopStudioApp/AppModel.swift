@@ -211,6 +211,10 @@ final class AppModel {
     @ObservationIgnored private var meterHold: [Int: Float] = [:]
     @ObservationIgnored let host = PluginHost()
     @ObservationIgnored private var midiMonitor: MIDIInputMonitor?
+    @ObservationIgnored private var deviceMonitor: DeviceChangeMonitor?
+    /// The chosen output is gone, so the default plays. It switches back when the device returns.
+    @ObservationIgnored private var outputFallback = false
+    @ObservationIgnored private var lastDefaultOutput = AudioDeviceCatalog.defaultOutputUID()
     @ObservationIgnored private let liveTarget = LiveTarget()
     /// Keyboard and piano-roll notes that sound now, with the render node that got them.
     @ObservationIgnored private var heldKeys: [UInt8: TrackID] = [:]
@@ -228,6 +232,7 @@ final class AppModel {
         do { try engine.start() } catch { status = "No audio output: \(error.localizedDescription)" }
         applyAudioSettings()
         startMIDI()
+        watchDevices()
         watchHorizon()
         audioFolders = (UserDefaults.standard.stringArray(forKey: "audioFolders") ?? []).map { URL(fileURLWithPath: $0) }
 
@@ -970,6 +975,42 @@ final class AppModel {
             }
         }
         return used
+    }
+
+    // MARK: Devices that come and go
+
+    private func watchDevices() {
+        deviceMonitor = DeviceChangeMonitor { [weak self] in
+            Task { @MainActor in self?.devicesChanged() }
+        }
+        engine.onConfigurationChange = { [weak self] in
+            Task { @MainActor in self?.status = "The sound card setup changed. Audio runs again." }
+        }
+    }
+
+    /// A sound card or MIDI device was plugged in or out, or the system default changed.
+    func devicesChanged() {
+        midiSources = MIDIEndpointCatalog.sources().count
+        let present = Set(AudioDeviceCatalog.devices().map(\.uid))
+        let defaultOutput = AudioDeviceCatalog.defaultOutputUID()
+        defer { lastDefaultOutput = defaultOutput }
+        if let uid = outputUID {
+            if !present.contains(uid), !outputFallback {
+                outputFallback = true
+                try? engine.setOutput(uid: nil)
+                status = "The chosen output is gone. The default output plays until it is back."
+            } else if present.contains(uid), outputFallback {
+                outputFallback = false
+                applyAudioSettings()
+                status = "The chosen output is back."
+            } else if outputFallback, defaultOutput != lastDefaultOutput {
+                try? engine.setOutput(uid: nil)
+            }
+        } else if defaultOutput != lastDefaultOutput {
+            // "System default" follows the system: a new default device takes over.
+            applyAudioSettings()
+            status = "Playing through the new default output."
+        }
     }
 
     // MARK: MIDI

@@ -354,3 +354,17 @@ func randomEditsKeepInvariantsAndUndoBackToTheStart(seed: UInt64) throws {
     try Command.setClipColor(clip: slotClip.id, colorIndex: 2).apply(to: &project)
     #expect(project.findClip(slotClip.id)?.clip.colorIndex == 2)
 }
+
+@Test func deviceParamKeysAreCheckedAndValuesClamped() throws {
+    var p = Fixture.baseProject()
+    let t = Track(name: "A", kind: .audio)
+    try Command.insertTrack(track: t, index: 0).apply(to: &p)
+    let delay = BuiltInEffects.makeSlot("delay")!
+    try Command.insertDevice(track: t.id, device: delay, index: nil).apply(to: &p)
+    #expect(throws: CommandError.self, "a typo is refused, not stored") {
+        try Command.setDeviceParam(track: t.id, device: delay.id, key: "mixx", value: 0.5).apply(to: &p)
+    }
+    try Command.setDeviceParam(track: t.id, device: delay.id, key: "mix", value: 7).apply(to: &p)
+    let mix = BuiltInEffects.spec("delay")!.params.first { $0.key == "mix" }!
+    #expect(p.tracks[0].devices[0].params["mix"] == mix.max)
+}

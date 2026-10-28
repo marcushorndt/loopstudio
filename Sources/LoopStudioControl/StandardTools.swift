@@ -319,6 +319,30 @@ public enum StandardTools {
         })
 
         r.add(Tool(
+            name: "effect_catalog", title: "Built-in effects",
+            description: """
+            Every built-in effect with its parameters: key, range, default, unit and choices. Use the effect id with \
+            insertDevice (BuiltInEffects id) and the keys with setDeviceParam. A key with a "Sync" switch and a \
+            "Division" note value follows the song tempo when the switch is 1; the division is an index into "divisions".
+            """,
+            inputSchema: Schema.object(), annotations: .read
+        ) { _ in
+            let effects = BuiltInEffects.all.map { spec in
+                JSONValue.object([
+                    "id": .string(spec.id), "name": .string(spec.name),
+                    "params": .array(spec.params.map { p in
+                        var o: [String: JSONValue] = ["key": .string(p.key), "name": .string(p.name), "min": .number(p.min),
+                                                      "max": .number(p.max), "default": .number(p.def)]
+                        if !p.unit.isEmpty { o["unit"] = .string(p.unit) }
+                        if !p.choices.isEmpty && !p.rotary { o["choices"] = .array(p.choices.map(JSONValue.string)) }
+                        return .object(o)
+                    }),
+                ])
+            }
+            return .object(["effects": .array(effects), "divisions": .array(NoteDivision.all.map { .string($0.name) })])
+        })
+
+        r.add(Tool(
             name: "follow_simulate", title: "Preview follow actions",
             description: """
             Run the follow-action dice for one session slot many times and report how often each outcome happens. \
@@ -488,6 +512,9 @@ public enum StandardTools {
             ("setSends", .setSends(id: track.id, sends: [Send(target: ret.id, levelDb: -12)])),
             ("setSlot (dummy clip with follow actions)", .setSlot(track: track.id, index: 0, slot: slot)),
             ("setSlot (empty a slot)", .setSlot(track: track.id, index: 0, slot: nil)),
+            ("insertClip (MIDI clip with two notes)", .insertClip(track: TrackID(uuid(7)), clip: .midi(MIDIClip(
+                id: ClipID(uuid(4)), start: 0, length: 3840, loop: true,
+                notes: [MIDINote(tick: 0, length: 480, pitch: 60), MIDINote(tick: 960, length: 480, pitch: 64, velocity: 90)])))),
             ("removeClip", .removeClip(clip: ClipID(uuid(4)))),
             ("moveClip", .moveClip(clip: ClipID(uuid(4)), toTrack: track.id, start: 3840)),
             ("setClipRange", .setClipRange(clip: ClipID(uuid(4)), start: 0, length: 7680)),

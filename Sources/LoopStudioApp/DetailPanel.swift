@@ -50,23 +50,24 @@ extension SectionHeader where Trailing == EmptyView {
     init(title: String) { self.init(title: title) { EmptyView() } }
 }
 
-/// A quiet, outlined menu button for inspector headers.
+/// A dropdown field for inspector headers: a label and a chevron in a box with a light border.
 struct PillMenu<Content: View>: View {
     let label: String
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         Menu { content() } label: {
-            HStack(spacing: 4) {
-                Text(label).font(.system(size: 11, weight: .medium))
-                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+            HStack(spacing: 6) {
+                Text(label).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(Theme.dim)
             }
-            .foregroundStyle(Theme.text)
-            .padding(.horizontal, 8).frame(height: 22)
-            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
+            .padding(.horizontal, 8).frame(minWidth: 96, minHeight: 22, maxHeight: 22)
+            .background(Theme.panelRaised.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius + 2))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius + 2).strokeBorder(Theme.line, lineWidth: 1))
             .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
     }
 }
 

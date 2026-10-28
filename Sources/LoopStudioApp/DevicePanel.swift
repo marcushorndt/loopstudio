@@ -81,16 +81,20 @@ struct DeviceChainView: View {
         if let track = model.selectedTrack.flatMap({ model.project.track($0) }) {
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(track.name).font(.headline)
-                        PillMenu(label: "Automate") { AutomationLaneToggles(track: track) }
-                        Text(track.kind == .master ? "Master" : track.kind.rawValue.capitalized).font(.caption).foregroundStyle(Theme.dim)
-                        if track.devices.isEmpty {
-                            Text("Drag an effect here\nor double-click it in the sidebar.").font(.caption).foregroundStyle(Theme.dim).padding(.top, 6)
+                    VStack(alignment: .leading, spacing: 8) {
+                        SectionHeader(title: kindLabel(track.kind)) {
+                            PillMenu(label: "Automate") { AutomationLaneToggles(track: track) }
                         }
+                        HStack(spacing: 6) {
+                            RoundedRectangle(cornerRadius: 2).fill(Theme.track(track.colorIndex)).frame(width: 8, height: 8)
+                            Text(track.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                        }
+                        Text(track.devices.isEmpty ? "No devices" : "\(track.devices.count) device\(track.devices.count == 1 ? "" : "s")")
+                            .font(.caption).foregroundStyle(Theme.dim)
                     }
-                    .frame(width: 150, alignment: .leading)
+                    .frame(width: 180, alignment: .leading)
                     ForEach(track.devices, id: \.id) { DeviceCard(track: track, device: $0) }
+                    emptySlot(track)
                     Spacer(minLength: 0)
                 }
                 .padding(10)
@@ -101,6 +105,33 @@ struct DeviceChainView: View {
         } else {
             VStack { Spacer(); Text("Select a track to see its devices.").foregroundStyle(Theme.dim); Spacer() }.frame(maxWidth: .infinity)
         }
+    }
+
+    private func kindLabel(_ kind: TrackKind) -> String {
+        switch kind {
+        case .audio: "Audio Track"
+        case .midi: "MIDI Track"
+        case .group: "Group Track"
+        case .returnTrack: "Return Track"
+        case .master: "Master"
+        }
+    }
+
+    /// The drop target at the end of the chain. It is the only hint when the chain is empty.
+    private func emptySlot(_ track: Track) -> some View {
+        let instrument = track.kind == .midi && !track.devices.contains { model.host.units[$0.id]?.isInstrument == true }
+        return VStack(spacing: 6) {
+            Image(systemName: "plus").font(.system(size: 14, weight: .medium))
+            Text(instrument ? "Drop an instrument\nor an effect here" : "Drop an effect here")
+                .font(.caption).multilineTextAlignment(.center)
+            Button(instrument ? "Browse Instruments" : "Browse Effects") {
+                model.sidebarTab = instrument ? .instruments : .effects
+            }
+            .buttonStyle(.link).font(.caption)
+        }
+        .foregroundStyle(Theme.dim)
+        .frame(width: track.devices.isEmpty ? 200 : 130, height: 92)
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
     }
 }
 

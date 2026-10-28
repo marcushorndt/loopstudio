@@ -61,9 +61,15 @@ public actor ProjectSession {
 
     public func save() async throws {
         let (store, url) = try require()
-        try ProjectPackage.write(await store.project, to: url)
-        try journal?.reset()
-        savedRevision = await store.revision
+        let journal = journal
+        // Write and clear the journal inside one store step: an edit that arrives during the save is
+        // either in the file, or still in the journal.
+        let saved = try await store.checkpoint { project, _ in
+            try ProjectPackage.write(project, to: url)
+            try journal?.reset()
+        }
+        // Another project may have been opened while this one saved.
+        if self.store === store { savedRevision = saved }
     }
 
     // MARK: Reading and editing

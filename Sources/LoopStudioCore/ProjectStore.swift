@@ -33,6 +33,14 @@ public actor ProjectStore {
         self.journal = journal
     }
 
+    /// Runs `body` with the current project and revision in one actor step. No command can apply in
+    /// between, so a save can write the project and clear the journal as one unit.
+    @discardableResult
+    public func checkpoint(_ body: (Project, Int) throws -> Void) rethrows -> Int {
+        try body(project, revision)
+        return revision
+    }
+
     public var canUndo: Bool { !undoStack.isEmpty }
     public var canRedo: Bool { !redoStack.isEmpty }
 

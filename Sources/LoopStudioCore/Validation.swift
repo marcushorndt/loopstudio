@@ -2,7 +2,7 @@ import Foundation
 
 public enum Routing {
     /// Tracks that `track` feeds: its output and its send targets. The master has no outgoing edge.
-    static func edges(of track: Track) -> [TrackID] {
+    public static func edges(of track: Track) -> [TrackID] {
         var result = track.sends.map(\.target)
         if let output = track.output { result.append(output) }
         return result

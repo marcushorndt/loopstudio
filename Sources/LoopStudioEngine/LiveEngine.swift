@@ -93,8 +93,8 @@ public final class LiveEngine: @unchecked Sendable {
         engine.stop()
         setRenderer(nil)
         if let node = sourceNode { engine.detach(node); sourceNode = nil }
-        locked { position = 0; sessionPosition = 0; playing = false; countInRemaining = 0 }
-        sampleRate = rate
+        // Readers on other threads (MIDI time stamps) take the lock, so the rate changes under it too.
+        locked { position = 0; sessionPosition = 0; playing = false; countInRemaining = 0; anchorHost = 0; sampleRate = rate }
         if wasRunning { try start() }
     }
 

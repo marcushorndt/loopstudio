@@ -83,6 +83,10 @@ extension AppModel {
         apply(.insertClip(track: id, clip: .audio(clip)))
         selectedClips = [clip.id]
         status = String(format: "Recorded %.1f s", Double(trimmed.frames) / take.sampleRate)
+        if take.droppedFrames > 0 {
+            status += String(format: ". Warning: %.2f s of input were lost (the disk was too slow)", Double(take.droppedFrames) / take.sampleRate)
+        }
+        if let error = take.writeError { status += ". Warning: writing the take failed: \(error)" }
     }
 
     private func nextTakeName() -> String {

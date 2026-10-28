@@ -300,7 +300,9 @@ Tools to add as features land: `asset_import` (hash and copy a file into the pro
 | Recording | R arms. Space starts. Optional count-in of 0, 1, 2 or 4 bars. Metronome. MIDI notes become a clip when the transport stops. Audio recording is not built. |
 | Keys | One table, `AppAction` in `Shortcuts.swift`. The menu bar, the right-click menus, the key monitor and the shortcut sheet (⌘/) all read it. Plain keys (Space, Tab, R, Delete) go through an `NSEvent` monitor, so a focused control cannot swallow them. |
 | Right-click menus | Clip, lane, ruler, track header, mixer strip, session slot, scene, device, sidebar items. Items show their key. |
-| Open | Warping, plugin delay compensation, audio recording, audio device and channel picker, more MCP tools, VST3 bridge. |
+| Warping | Beats and Tones modes, stretched offline with WSOLA (`TimeStretch.swift`) and cached per clip. Source tempo comes from the file name or the clip panel; warp markers and tempo ramps bend time. Deterministic, so a golden test can pin it. |
+| Delay compensation | Each node knows the latency of its plugins. A plan pass (`DelayCompensation.swift`) adds delay lines on the connections that skip a latent plugin, so all paths into a node line up. Sample accurate, same output for every block size. |
+| Open | Audio recording and resampling, per-track hardware outputs, more MCP convenience tools, VST3 bridge, clip colors. |
 
 ## 17. Risks and the spikes that answer them
 

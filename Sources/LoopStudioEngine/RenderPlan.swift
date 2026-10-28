@@ -69,6 +69,8 @@ struct SendPlan {
     var gain: Float
     var preFader: Bool
     var auto: AutoLane? = nil
+    /// Frames of delay that line this send up with the other inputs of its target.
+    var delay = 0
 }
 
 struct NodePlan {
@@ -91,6 +93,11 @@ struct NodePlan {
     var midi: [MIDIEvent] = []
     /// Nodes that take this node's sound as input, after the fader.
     var taps: [Int] = []
+    /// Latency of the plugins on this node, in frames.
+    var latency = 0
+    /// Delay on the output connection and on each tap, from plugin delay compensation.
+    var outputDelay = 0
+    var tapDelays: [Int] = []
 }
 
 /// Everything the renderer needs, compiled from a project. Immutable; built off the audio thread.
@@ -100,6 +107,8 @@ public struct RenderPlan {
     public let sampleRate: Double
     /// First frame after the last sounding clip.
     public let endFrame: Int64
+    /// How late the master mix is, in frames, because of plugin latency. 0 when no plugin has latency.
+    public internal(set) var latencyFrames = 0
     /// Things that were not rendered as the project says (missing audio, unsupported features).
     public let warnings: [String]
     /// The track of each node, in node order. The master (last) has `nil`.
@@ -276,8 +285,14 @@ public struct RenderPlan {
             guard let source = t.inputTrack, t.monitorMode != .off, let from = index[source], let to = index[t.id], from < to else { continue }
             nodes[from].taps.append(to)
         }
-        return RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings,
-                          trackOrder: order.map { Optional($0) } + [nil])
+        for i in nodes.indices {
+            let chainLatency = nodes[i].effects.filter { !$0.bypassed }.reduce(0) { $0 + ($1.unit?.latencySamples ?? 0) }
+            nodes[i].latency = chainLatency + (nodes[i].instrument?.latencySamples ?? 0)
+        }
+        var plan = RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings,
+                              trackOrder: order.map { Optional($0) } + [nil])
+        plan.applyDelayCompensation()
+        return plan
     }
 
     /// The clip's audio, stretched to the project tempo when warping is on. Otherwise the audio as it is.

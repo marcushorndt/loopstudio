@@ -319,3 +319,44 @@ private func writeSine(rate: Double, seconds: Double, channels: Int = 2) throws 
     #expect(throws: (any Error).self) { try Command.setInputTrack(id: a, source: b).apply(to: &rig.project) }
     #expect(throws: (any Error).self) { try Command.setInputTrack(id: a, source: a).apply(to: &rig.project) }
 }
+
+// MARK: Plugin delay compensation
+
+@Test func tracksWithoutLatencyWaitForTracksWithLatency() {
+    var rig = Rig()
+    let a = rig.asset(seconds: 2) { _ in 0.5 }
+    let slow = rig.track("Slow"), fast = rig.track("Fast")
+    rig.clip(a, on: slow); rig.clip(a, on: fast)
+    var plan = rig.plan
+    #expect(plan.latencyFrames == 0)
+    plan.nodes[0].latency = 256            // the "Slow" track runs a plugin with 256 frames of latency
+    plan.applyDelayCompensation()
+    #expect(plan.latencyFrames == 256)
+    let out = Bounce.render(plan, startFrame: 0, endFrame: 2_000)
+    #expect(out.left[0] == 0.5 && out.left[255] == 0.5, "only Slow, whose plugin delay is not simulated here")
+    #expect(out.left[256] == 1.0, "Fast now arrives 256 frames later and lines up")
+}
+
+@Test func compensationDoesNotDependOnBlockSize() {
+    var rig = Rig()
+    let a = rig.asset(seconds: 2) { Float(sin(Double($0) * 0.05)) * 0.4 }
+    let slow = rig.track("Slow"), fast = rig.track("Fast"), ret = rig.track("Ret", .returnTrack)
+    rig.clip(a, on: slow); rig.clip(a, on: fast)
+    try! Command.setSends(id: fast, sends: [Send(target: ret, levelDb: -6)]).apply(to: &rig.project)
+    var plan = rig.plan
+    plan.nodes[0].latency = 300
+    plan.applyDelayCompensation()
+    let big = Bounce.render(plan, startFrame: 0, endFrame: 20_000, block: 4096)
+    for block in [64, 333, 1000] {
+        let other = Bounce.render(plan, startFrame: 0, endFrame: 20_000, block: block)
+        #expect(zip(big.left, other.left).allSatisfy { $0 == $1 }, "block \(block)")
+    }
+}
+
+@Test func noLatencyMeansNoDelayLines() {
+    var rig = Rig()
+    let a = rig.asset(seconds: 1) { _ in 0.5 }
+    rig.clip(a, on: rig.track("T"))
+    let plan = rig.plan
+    #expect(plan.nodes.allSatisfy { $0.outputDelay == 0 && $0.tapDelays.allSatisfy { $0 == 0 } })
+}

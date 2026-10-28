@@ -32,6 +32,9 @@ public final class Renderer {
     private let inPointers: UnsafeMutablePointer<UnsafePointer<Float>>
     private let outPointers: UnsafeMutablePointer<UnsafeMutablePointer<Float>>
     private let chains: [[Slot]]
+    private let outputLines: [DelayLine?]
+    private let sendLines: [[DelayLine?]]
+    private let tapLines: [[DelayLine?]]
     private let instances: [DeviceID: DSPEffect]
 
     /// With `reusing`, effects that exist in both plans keep their memory (reverb tails, filter state),
@@ -56,6 +59,10 @@ public final class Renderer {
             built.append(chain)
         }
         chains = built
+        func line(_ d: Int) -> DelayLine? { d > 0 ? DelayLine(delay: d, maxBlock: maxBlock) : nil }
+        outputLines = plan.nodes.map { line($0.outputDelay) }
+        sendLines = plan.nodes.map { $0.sends.map { line($0.delay) } }
+        tapLines = plan.nodes.map { $0.tapDelays.map(line) }
         instances = made
         self.plan = plan
         self.maxBlock = maxBlock
@@ -89,6 +96,9 @@ public final class Renderer {
     /// Clears every effect's memory (delay lines, reverb tails). Called after a stop or a jump.
     public func reset() {
         for effect in instances.values { effect.reset() }
+        for line in outputLines { line?.reset() }
+        for lines in sendLines { for line in lines { line?.reset() } }
+        for lines in tapLines { for line in lines { line?.reset() } }
         silenceNotes()
     }
 
@@ -157,7 +167,7 @@ public final class Renderer {
             if let instrument = node.instrument { play(instrument, transport ? node.midi : [], into: l, r, startFrame: startFrame, frames: frames) }
             for slot in chains[i] where !slot.bypassed { runSlot(slot, l, r, startFrame: startFrame, frames: frames) }
 
-            for send in node.sends where send.preFader { addSend(send, l, r, startFrame: startFrame, frames: frames) }
+            for (k, send) in node.sends.enumerated() where send.preFader { sendOut(send, sendLines[i][k], l, r, startFrame: startFrame, frames: frames) }
 
             let peak: Float
             if node.isMaster {
@@ -168,9 +178,9 @@ public final class Renderer {
             peaks[i] = max(peaks[i], peak)
             if node.isMaster { continue }
 
-            for send in node.sends where !send.preFader { addSend(send, l, r, startFrame: startFrame, frames: frames) }
-            if let target = node.output { add(l, r, gain: 1, to: target, frames: frames) }
-            for tap in node.taps { add(l, r, gain: 1, to: tap, frames: frames) }
+            for (k, send) in node.sends.enumerated() where !send.preFader { sendOut(send, sendLines[i][k], l, r, startFrame: startFrame, frames: frames) }
+            if let target = node.output { addDelayed(l, r, to: target, line: outputLines[i], frames: frames) }
+            for (k, tap) in node.taps.enumerated() { addDelayed(l, r, to: tap, line: tapLines[i][k], frames: frames) }
         }
     }
 
@@ -258,6 +268,19 @@ public final class Renderer {
     }
 
     @inline(__always)
+    private func addDelayed(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, to target: Int, line: DelayLine?, frames: Int) {
+        guard let line else { add(l, r, gain: 1, to: target, frames: frames); return }
+        line.process(l, r, frames: frames)
+        add(line.outLeft, line.outRight, gain: 1, to: target, frames: frames)
+    }
+
+    private func sendOut(_ send: SendPlan, _ line: DelayLine?, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
+                         startFrame: Int64, frames: Int) {
+        guard let line else { addSend(send, l, r, startFrame: startFrame, frames: frames); return }
+        line.process(l, r, frames: frames)
+        addSend(send, line.outLeft, line.outRight, startFrame: startFrame, frames: frames)
+    }
+
     private func add(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, gain: Float, to target: Int, frames: Int) {
         let tl = left(target), tr = right(target)
         for k in 0..<frames { tl[k] += l[k] * gain; tr[k] += r[k] * gain }

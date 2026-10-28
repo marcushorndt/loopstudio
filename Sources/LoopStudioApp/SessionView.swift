@@ -61,8 +61,6 @@ private struct TrackColumn: View {
     @Environment(AppModel.self) private var model
     let track: Track
     let rows: Int
-    @State private var renaming = false
-    @State private var name = ""
 
     var body: some View {
         VStack(spacing: gap) {
@@ -86,14 +84,7 @@ private struct TrackColumn: View {
     private var header: some View {
         let selected = model.selectedTrack == track.id
         return HStack(spacing: 4) {
-            if renaming {
-                TextField("", text: $name, onCommit: {
-                    model.apply(.setTrackName(id: track.id, name: name.isEmpty ? track.name : name)); renaming = false
-                })
-                .textFieldStyle(.plain)
-            } else {
-                Text(track.name).lineLimit(1).font(.system(size: 12, weight: .semibold))
-            }
+            Text(track.name).lineLimit(1).font(.system(size: 12, weight: .semibold))
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 6).frame(height: 30)
@@ -101,7 +92,6 @@ private struct TrackColumn: View {
         .background(Theme.track(track.colorIndex), in: RoundedRectangle(cornerRadius: 3))
         .overlay(RoundedRectangle(cornerRadius: 3).stroke(.white, lineWidth: selected ? 1.5 : 0))
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { name = track.name; renaming = true }
         .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
         .onTapGesture { model.selectedTrack = track.id }
         .dropDestination(for: String.self) { items, _ in

@@ -13,6 +13,7 @@ public final class Renderer {
     private let nodes: UnsafeMutablePointer<NodePlan>
     private let nodeCount: Int
     private let buffers: UnsafeMutablePointer<Float> // per node: left block, right block
+    private let peaks: UnsafeMutablePointer<Float>   // per node: largest sample since the last `takePeak`
 
     public init(plan: RenderPlan, maxBlock: Int = 4096) {
         self.plan = plan
@@ -22,12 +23,23 @@ public final class Renderer {
         nodes.initialize(from: plan.nodes, count: nodeCount)
         buffers = .allocate(capacity: nodeCount * 2 * maxBlock)
         buffers.initialize(repeating: 0, count: nodeCount * 2 * maxBlock)
+        peaks = .allocate(capacity: max(1, nodeCount))
+        peaks.initialize(repeating: 0, count: max(1, nodeCount))
     }
 
     deinit {
         nodes.deinitialize(count: nodeCount)
         nodes.deallocate()
         buffers.deallocate()
+        peaks.deallocate()
+    }
+
+    /// The largest absolute sample of a node (after its fader) since the last call. For meters.
+    public func takePeak(node: Int) -> Float {
+        guard node >= 0, node < nodeCount else { return 0 }
+        let p = peaks[node]
+        peaks[node] = 0
+        return p
     }
 
     @inline(__always) private func left(_ node: Int) -> UnsafeMutablePointer<Float> { buffers + node * 2 * maxBlock }
@@ -49,12 +61,22 @@ public final class Renderer {
 
             if node.isMaster {
                 let gl = node.gain * node.panLeft, gr = node.gain * node.panRight
-                for k in 0..<frames { outLeft[k] = l[k] * gl; outRight[k] = r[k] * gr }
+                var peak: Float = 0
+                for k in 0..<frames {
+                    outLeft[k] = l[k] * gl; outRight[k] = r[k] * gr
+                    peak = max(peak, abs(outLeft[k]), abs(outRight[k]))
+                }
+                peaks[i] = max(peaks[i], peak)
                 continue
             }
 
             let gl = node.gain * node.panLeft, gr = node.gain * node.panRight
-            for k in 0..<frames { l[k] *= gl; r[k] *= gr }
+            var peak: Float = 0
+            for k in 0..<frames {
+                l[k] *= gl; r[k] *= gr
+                peak = max(peak, abs(l[k]), abs(r[k]))
+            }
+            peaks[i] = max(peaks[i], peak)
             for send in node.sends where !send.preFader { add(l, r, gain: send.gain, to: send.target, frames: frames) }
             if let target = node.output { add(l, r, gain: 1, to: target, frames: frames) }
         }
@@ -100,6 +122,12 @@ public struct RenderedAudio {
     public var left: [Float]
     public var right: [Float]
     public var sampleRate: Double
+
+    public init(left: [Float], right: [Float], sampleRate: Double) {
+        self.left = left
+        self.right = right
+        self.sampleRate = sampleRate
+    }
 
     public var frames: Int { left.count }
     public var peak: Float { max(left.reduce(0) { max($0, abs($1)) }, right.reduce(0) { max($0, abs($1)) }) }

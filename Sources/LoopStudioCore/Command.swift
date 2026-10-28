@@ -36,6 +36,8 @@ public enum Command: Codable, Sendable {
     case moveClip(clip: ClipID, toTrack: TrackID, start: Tick)
     case setClipRange(clip: ClipID, start: Tick, length: Tick)
     case setClipLoop(clip: ClipID, loop: Bool)
+    /// Gain, fades and mute of an audio clip.
+    case setAudioClip(clip: ClipID, gainDb: Double, fadeInMs: Double, fadeOutMs: Double, muted: Bool)
     /// Puts a clip (with its follow actions) into a session slot, or empties the slot with `nil`.
     case setSlot(track: TrackID, index: Int, slot: SessionSlot?)
 
@@ -206,6 +208,18 @@ extension Project {
             }
             try withTrack(trackID) { t in try t.replaceClip(changed) }
             return .setClipLoop(clip: id, loop: old)
+
+        case .setAudioClip(let id, let gainDb, let fadeIn, let fadeOut, let muted):
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            guard case .audio(var c) = clip else { throw CommandError.invalidValue("only audio clips have gain and fades") }
+            guard gainDb.isFinite, fadeIn.isFinite, fadeOut.isFinite else { throw CommandError.invalidValue("not a number") }
+            let old = Command.setAudioClip(clip: id, gainDb: c.gainDb, fadeInMs: c.fadeInMs, fadeOutMs: c.fadeOutMs, muted: c.muted)
+            c.gainDb = min(max(gainDb, -96), 24)
+            c.fadeInMs = min(max(fadeIn, 0), 10_000)
+            c.fadeOutMs = min(max(fadeOut, 0), 10_000)
+            c.muted = muted
+            try withTrack(trackID) { t in try t.replaceClip(.audio(c)) }
+            return old
 
         case .setSlot(let trackID, let index, let slot):
             guard (0...maxSlotIndex).contains(index) else { throw CommandError.invalidValue("slot index \(index)") }

@@ -29,6 +29,11 @@ public struct SessionEvent: Hashable, Codable, Sendable {
 public struct SessionSimulation: Hashable, Sendable {
     public var events: [SessionEvent]
     public var warnings: [String]
+
+    public init(events: [SessionEvent] = [], warnings: [String] = []) {
+        self.events = events
+        self.warnings = warnings
+    }
 }
 
 extension Project {

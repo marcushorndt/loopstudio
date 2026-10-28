@@ -39,6 +39,8 @@ public struct RenderPlan {
     public let endFrame: Int64
     /// Things that were not rendered as the project says (missing audio, unsupported features).
     public let warnings: [String]
+    /// The track of each node, in node order. The master (last) has `nil`.
+    public let trackOrder: [TrackID?]
 
     public static func dB(_ db: Double) -> Float { db <= -96 ? 0 : Float(pow(10.0, db / 20.0)) }
 
@@ -52,7 +54,7 @@ public struct RenderPlan {
         return (Float(left), Float(right))
     }
 
-    public static func compile(_ project: Project, bank: AudioBank) -> RenderPlan {
+    public static func compile(_ project: Project, bank: AudioBank, session: SessionSimulation? = nil) -> RenderPlan {
         var warnings: [String] = []
         let tracks = project.tracks
         let rate = project.sampleRate
@@ -126,6 +128,24 @@ public struct RenderPlan {
                     endFrame = max(endFrame, end)
                 }
             }
+            if t.kind == .audio && !silent, let session {
+                for e in session.events where e.track == id {
+                    guard case .audio(let c)? = project.findClip(e.clip)?.clip, !c.muted,
+                          let pcm = bank.buffer(for: c.asset), pcm.frames > 0 else { continue }
+                    let start = map.frame(at: e.startTick, sampleRate: rate).rawValue
+                    let end = map.frame(at: e.endTick, sampleRate: rate).rawValue
+                    guard end > start else { continue }
+                    var fadeIn = Int64((c.fadeInMs * rate / 1000).rounded())
+                    var fadeOut = Int64((c.fadeOutMs * rate / 1000).rounded())
+                    if fadeIn + fadeOut > end - start {
+                        let scale = Double(end - start) / Double(fadeIn + fadeOut)
+                        fadeIn = Int64(Double(fadeIn) * scale)
+                        fadeOut = Int64(Double(fadeOut) * scale)
+                    }
+                    clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: 0, loop: c.loop,
+                                          gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut)))
+                }
+            }
             if t.kind == .midi || t.kind == .group || t.kind == .returnTrack { /* summing nodes or not rendered yet */ }
             if t.kind == .midi && !t.clips.isEmpty { warnings.append("MIDI track \"\(t.name)\" needs an instrument, which is not rendered yet") }
 
@@ -139,6 +159,7 @@ public struct RenderPlan {
         let (ml, mr) = balance(project.master.pan)
         nodes.append(NodePlan(isMaster: true, clips: [], gain: project.master.mute ? 0 : dB(project.master.volumeDb),
                               panLeft: ml, panRight: mr, output: nil, sends: []))
-        return RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings)
+        return RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings,
+                          trackOrder: order.map { Optional($0) } + [nil])
     }
 }

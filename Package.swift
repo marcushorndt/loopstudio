@@ -22,7 +22,7 @@ let package = Package(
         .target(name: "LoopStudioControl", dependencies: ["LoopStudioCore", "LoopStudioProject", "LoopStudioEngine"]),
         .executableTarget(name: "loopstudio", dependencies: ["LoopStudioEngine", "LoopStudioProject", "LoopStudioCore", "LoopStudioControl"]),
         // The window app. Run it with scripts/run-app.sh.
-        .executableTarget(name: "LoopStudioApp", dependencies: ["LoopStudioCore"]),
+        .executableTarget(name: "LoopStudioApp", dependencies: ["LoopStudioCore", "LoopStudioEngine", "LoopStudioProject"]),
         .testTarget(name: "LoopStudioCoreTests", dependencies: ["LoopStudioCore"]),
         .testTarget(name: "LoopStudioProjectTests", dependencies: ["LoopStudioProject", "LoopStudioCore"]),
         .testTarget(name: "LoopStudioEngineTests", dependencies: ["LoopStudioEngine", "LoopStudioCore"]),

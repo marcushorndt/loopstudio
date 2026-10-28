@@ -67,11 +67,50 @@ extension AppModel {
         case .insertScene: insertScene(at: (selectedSceneRow ?? project.tracks.map(\.slots.count).max() ?? 0 - 1) + 1)
         case .deleteScene: if let r = selectedSceneRow { deleteScene(r) }
         case .duplicateScene: if let r = selectedSceneRow { duplicateScene(r) }
+        case .moveUp: moveSelection(rows: -1, tracks: 0)
+        case .moveDown: moveSelection(rows: 1, tracks: 0)
+        case .moveLeft: moveSelection(rows: 0, tracks: -1)
+        case .moveRight: moveSelection(rows: 0, tracks: 1)
+        case .launchSelected: launchSelection()
         case .sessionView: viewMode = .session
         case .arrangementView: viewMode = .arrangement
         case .switchView: viewMode = viewMode == .session ? .arrangement : .session
         case .toggleDetail: detailOpen.toggle()
         case .showShortcuts: shortcutsOpen = true
+        }
+    }
+
+    // MARK: Keyboard navigation
+
+    /// The slot the selection points at: the row of the selected clip, else the selected scene row.
+    private var selectedRow: Int? {
+        if let id = selectedClip, let (tid, _) = project.findClip(id),
+           let row = project.track(tid)?.slots.firstIndex(where: { $0?.clip.id == id }) { return row }
+        return selectedSceneRow
+    }
+
+    /// Arrow keys. Session view moves through slots; arrangement view moves between tracks.
+    func moveSelection(rows: Int, tracks: Int) {
+        let columns = project.tracks
+        guard !columns.isEmpty else { return }
+        let current = selectedTrack.flatMap { id in columns.firstIndex { $0.id == id } } ?? 0
+        let column = min(max(current + tracks + (viewMode == .arrangement ? rows : 0), 0), columns.count - 1)
+        selectedTrack = columns[column].id
+        guard viewMode == .session else { return }
+        let rowCount = max(1, columns.map(\.slots.count).max() ?? 1)
+        let row = min(max((selectedRow ?? (rows > 0 ? -1 : rowCount)) + rows, 0), rowCount - 1)
+        selectedSceneRow = row
+        let track = columns[column]
+        selectedClip = row < track.slots.count ? track.slots[row]?.clip.id : nil
+    }
+
+    /// Return: launches the selected session clip, or the selected scene when the slot is empty.
+    func launchSelection() {
+        guard viewMode == .session, let row = selectedRow else { return }
+        if let track = selectedTrack, let t = project.track(track), row < t.slots.count, t.slots[row] != nil {
+            launch(track: track, row: row)
+        } else {
+            launchScene(row)
         }
     }
 

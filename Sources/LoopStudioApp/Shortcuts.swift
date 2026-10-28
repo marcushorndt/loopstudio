@@ -9,11 +9,12 @@ enum AppAction: String, CaseIterable, Identifiable {
     case record, toggleMetronome, play, pause, stopRewind, stopAllClips, loopSelection, loopToggle, backToArrangement
     case insertAudioTrack, insertMIDITrack, insertReturnTrack, insertGroupTrack, groupTracks, renameTrack, duplicateTrack
     case insertScene, deleteScene, duplicateScene
+    case moveUp, moveDown, moveLeft, moveRight, launchSelected
     case sessionView, arrangementView, switchView, toggleDetail, showShortcuts
 
     var id: String { rawValue }
 
-    enum Category: String, CaseIterable { case file = "File", edit = "Edit", transport = "Transport", track = "Track", scene = "Scene", view = "View" }
+    enum Category: String, CaseIterable { case file = "File", edit = "Edit", transport = "Transport", track = "Track", scene = "Scene", navigate = "Navigate", view = "View" }
 
     var category: Category {
         switch self {
@@ -22,6 +23,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .record, .toggleMetronome, .play, .pause, .stopRewind, .stopAllClips, .loopSelection, .loopToggle, .backToArrangement: .transport
         case .insertAudioTrack, .insertMIDITrack, .insertReturnTrack, .insertGroupTrack, .groupTracks, .renameTrack, .duplicateTrack: .track
         case .insertScene, .deleteScene, .duplicateScene: .scene
+        case .moveUp, .moveDown, .moveLeft, .moveRight, .launchSelected: .navigate
         case .sessionView, .arrangementView, .switchView, .toggleDetail, .showShortcuts: .view
         }
     }
@@ -58,6 +60,11 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .insertScene: "Insert Scene"
         case .deleteScene: "Delete Scene"
         case .duplicateScene: "Duplicate Scene"
+        case .moveUp: "Select Up"
+        case .moveDown: "Select Down"
+        case .moveLeft: "Select Left"
+        case .moveRight: "Select Right"
+        case .launchSelected: "Launch Selected Clip or Scene"
         case .sessionView: "Session View"
         case .arrangementView: "Arrangement View"
         case .switchView: "Switch Session / Arrangement"
@@ -92,6 +99,11 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .groupTracks: KeyBinding("g", .command)
         case .renameTrack: KeyBinding("r", .command)
         case .insertScene: KeyBinding("i", [.command, .shift])
+        case .moveUp: KeyBinding("\u{F700}", [])
+        case .moveDown: KeyBinding("\u{F701}", [])
+        case .moveLeft: KeyBinding("\u{F702}", [])
+        case .moveRight: KeyBinding("\u{F703}", [])
+        case .launchSelected: KeyBinding("\r", [])
         case .sessionView: KeyBinding("1", .command)
         case .arrangementView: KeyBinding("2", .command)
         case .switchView: KeyBinding("\t", [])
@@ -127,6 +139,11 @@ struct KeyBinding {
         case " ": text += "Space"
         case "\t": text += "Tab"
         case "\u{7F}": text += "⌫"
+        case "\u{F700}": text += "↑"
+        case "\u{F701}": text += "↓"
+        case "\u{F702}": text += "←"
+        case "\u{F703}": text += "→"
+        case "\r": text += "Return"
         default: text += String(character).uppercased()
         }
         return text

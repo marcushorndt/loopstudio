@@ -1,0 +1,60 @@
+{
+  "assets" : [
+
+  ],
+  "autoLoop" : {
+    "enabled" : true,
+    "maxSeconds" : 20,
+    "minSeconds" : 0
+  },
+  "defaultFadeMs" : 2,
+  "markers" : [
+
+  ],
+  "master" : "70AEDB37-EEB9-4046-8E4A-71243A94AA8A",
+  "name" : "relative",
+  "ports" : [
+    {
+      "channels" : 2,
+      "direction" : "output",
+      "id" : "A19FA8D6-D33D-4587-8759-626167BD2512",
+      "name" : "Main"
+    },
+    {
+      "channels" : 2,
+      "direction" : "output",
+      "id" : "16D581BE-EB6F-4008-9615-6A4D176B4F1B",
+      "name" : "Cue"
+    },
+    {
+      "channels" : 2,
+      "direction" : "input",
+      "id" : "F1F856CE-956C-48E5-AA2E-CA9407DF8321",
+      "name" : "Input 1-2"
+    }
+  ],
+  "randomSeed" : 1,
+  "sampleRate" : 48000,
+  "schemaVersion" : 1,
+  "tempoMap" : {
+    "points" : [
+      {
+        "bpm" : 120,
+        "ramp" : false,
+        "tick" : 0
+      }
+    ]
+  },
+  "timeSignatures" : [
+    {
+      "signature" : {
+        "denominator" : 4,
+        "numerator" : 4
+      },
+      "tick" : 0
+    }
+  ],
+  "trackOrder" : [
+
+  ]
+}

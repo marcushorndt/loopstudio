@@ -1,0 +1,26 @@
+{
+  "automation" : [
+
+  ],
+  "clips" : [
+
+  ],
+  "colorIndex" : 0,
+  "devices" : [
+
+  ],
+  "hardwareOutput" : "A19FA8D6-D33D-4587-8759-626167BD2512",
+  "id" : "70AEDB37-EEB9-4046-8E4A-71243A94AA8A",
+  "kind" : "master",
+  "mute" : false,
+  "name" : "Master",
+  "pan" : 0,
+  "sends" : [
+
+  ],
+  "slots" : [
+
+  ],
+  "solo" : false,
+  "volumeDb" : 0
+}

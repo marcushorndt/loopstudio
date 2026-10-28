@@ -290,11 +290,19 @@ public struct Track: Hashable, Codable, Sendable, Identifiable {
     /// `nil` means the master track.
     public var output: TrackID?
     public var automation: [AutomationLane]
+    /// Audio tracks: record or monitor from this input port.
+    public var audioInput: PortID?
+    /// MIDI tracks: which device and channel to listen to. `nil` means no MIDI input.
+    public var midiInput: MIDIInputSelection?
+    /// Sends the output straight to this hardware port, instead of to `output` or the master.
+    /// On the master track this is the main speaker output.
+    public var hardwareOutput: PortID?
 
     public init(id: TrackID = TrackID(), name: String, kind: TrackKind, colorIndex: Int = 0,
                 volumeDb: Double = 0, pan: Double = 0, mute: Bool = false, solo: Bool = false,
                 clips: [Clip] = [], slots: [SessionSlot?] = [], devices: [DeviceSlot] = [],
-                sends: [Send] = [], output: TrackID? = nil, automation: [AutomationLane] = []) {
+                sends: [Send] = [], output: TrackID? = nil, automation: [AutomationLane] = [],
+                audioInput: PortID? = nil, midiInput: MIDIInputSelection? = nil, hardwareOutput: PortID? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
@@ -309,6 +317,9 @@ public struct Track: Hashable, Codable, Sendable, Identifiable {
         self.sends = sends
         self.output = output
         self.automation = automation
+        self.audioInput = audioInput
+        self.midiInput = midiInput
+        self.hardwareOutput = hardwareOutput
     }
 
     /// Inserts a clip at its sorted place, so the order never depends on insertion history.
@@ -385,6 +396,8 @@ public struct Project: Hashable, Codable, Sendable {
     /// Fade length for new audio clips, in milliseconds.
     public var defaultFadeMs: Double
     public var autoLoop: AutoLoopRule
+    /// Logical hardware ports. The project names them; each machine maps them to real channels.
+    public var ports: [IOPort]
     public var assets: [Asset]
     public var tracks: [Track]
     public var master: Track
@@ -402,6 +415,16 @@ public struct Project: Hashable, Codable, Sendable {
         self.assets = []
         self.tracks = []
         self.master = Track(name: "Master", kind: .master)
+        let main = IOPort(name: "Main", direction: .output, channels: 2)
+        self.ports = [main,
+                      IOPort(name: "Cue", direction: .output, channels: 2),
+                      IOPort(name: "Input 1-2", direction: .input, channels: 2)]
+        self.master.hardwareOutput = main.id
+    }
+
+    /// Ports that some track uses. The resolver reports only these as unmapped.
+    public var usedPortIDs: Set<PortID> {
+        Set(allTracks.flatMap { [$0.hardwareOutput, $0.audioInput] }.compactMap { $0 })
     }
 
     public var allTracks: [Track] { tracks + [master] }

@@ -189,6 +189,54 @@ A later "new variation each play" mode changes the seed on each play; the fixed 
 
 **Loop or one-shot.** Each clip has a `loop` flag. At drop time the project's `AutoLoopRule` sets it from the sample's length: a sample between `minSeconds` and `maxSeconds` loops (default 0 to 20 s), anything else plays once. With the rule off, every drop plays once. The flag can be changed on any clip afterwards. A one-shot plays through once and then ends, or hands over to its follow action; for a one-shot, `loops(n)` counts as one pass.
 
+## 11b. Sound cards, channels and MIDI devices
+
+Model and logic are done (milestone 1b). The live device switching comes with the renderer.
+
+**Two layers.**
+- The **project** has logical ports: `Main` (stereo out), `Cue` (stereo out), `Input 1-2`. You can add more (for example a mono `Out 5` for a hardware synth). Tracks point at ports: `hardwareOutput` (send straight to a port, for stems or a cue mix), `audioInput` (record from a port). The master track's `hardwareOutput` is the main speaker output.
+- The **machine** has a profile (`AudioIOProfile`): output device, input device, sample rate, buffer size, and for each port the physical channels it uses. It is stored per Mac in `~/Library/Application Support/loopstudio/`, not in the project, and remembered per device UID.
+
+A project made on a studio interface therefore opens on a laptop: the ports stay, only the profile differs.
+
+**How a profile is applied (`IOResolver`, pure logic, tested without hardware).**
+- A device is found by its **UID**, never by its numeric ID. A missing device falls back to the system default and reports `deviceMissing`.
+- A saved mapping is used when valid. If a channel is out of range or the width is wrong, the port gets free channels in order and the resolver reports it. Ports without a saved mapping get free channels in order (Main on 1-2, Cue on 3-4, and so on).
+- A port that a track uses but that has no channels left is reported as `unmapped` and stays silent. Unused ports are never reported.
+- A stereo port on a one-channel device plays on that channel (`foldedToMono`). Two ports on the same channel add up, with a warning (`sharedChannel`).
+- Sample rate and buffer size are limited to what the device supports; any change is reported.
+- If input and output are different devices at different rates, the resolver reports `inputRateMismatch`. The engine then builds an **aggregate device** (`AudioHardwareCreateAggregateDevice`) with drift correction on the secondary device.
+
+**Reading hardware (`AudioDeviceCatalog`).** For each device: UID, name, manufacturer, transport (built-in, USB, Bluetooth, AirPlay, aggregate, virtual, and so on), the **channel names** the driver reports, supported sample rates, buffer range, and input and output latency. The `loopstudio devices` command and the `audio_devices` MCP tool show it. A `DeviceChangeMonitor` fires when a device appears, disappears, or the default changes. The engine then runs the resolver again and rebuilds its plan; the transport keeps its position.
+
+**Latency.** The reported latency of the input and output device is used for record compensation and shown in the UI. A Bluetooth or Continuity device can report thousands of frames (this Mac's iPhone microphone reports 6100); the UI warns, and the timeline is never shifted for it.
+
+**MIDI.**
+- Sources and destinations come from CoreMIDI with their **unique ID**, which stays the same across restarts. `MIDIEndpointCatalog` lists them; the `DeviceChangeMonitor` reports hot-plug.
+- A MIDI track has a `MIDIInputSelection`: one source (by unique ID, with its name kept for display) or all online sources, and one channel or all.
+- A chosen source that is gone gives **no input and a visible issue**. It never falls back to "all sources", because that would let the wrong keyboard play the wrong instrument. When the device returns, the selection works again.
+- Later: MIDI learn (a machine-level map from controller messages to parameters and actions), MIDI output to hardware destinations with a latency offset, and MIDI clock in and out.
+
+## 11c. Control layer and MCP
+
+Every important action is a **tool**: a name, a description, a JSON schema for its input, annotations (read-only, destructive, idempotent), and a handler. One registry (`StandardTools`) serves all front ends, so they cannot drift apart:
+
+| Front end | Status |
+|---|---|
+| MCP server over stdio (`loopstudio mcp`) | Done: 15 tools, resources, tested over real pipes |
+| In-app UI | Will call the same tools |
+| Live attach: the running app listens on a local socket, `loopstudio mcp` bridges to it | Planned with the renderer |
+
+Why the design is safe and flexible:
+- **One generic edit tool.** `command_apply` takes any `Command` as JSON. A new command added to the model is available to agents at once, with no new tool. `command_examples` returns one valid example per command, and a test decodes every example, so the examples stay correct.
+- **Same code path as the UI.** Tools go through `ProjectSession` and `ProjectStore`: validation, undo, the crash journal. An agent cannot create a state the UI could not.
+- **Errors are results.** A rejected command returns `isError: true` with the reason, and changes nothing, so the agent can fix it and try again. Only an unknown tool or a broken message is a protocol error.
+- **Paths are guarded.** Tools open or create only absolute paths that end in `.loopstudio`, and never overwrite an existing project.
+- **The audio thread is out of reach.** Tools talk to the project store. Anything that must reach the audio thread (transport, parameter changes) goes through the same lock-free queue as the UI.
+- **Preview before commit.** `io_resolve` shows what a device choice would do, and `follow_simulate` runs the follow-action dice 1000 times, both without changing anything.
+
+Tools to add as features land: `asset_import` (hash and copy a file into the project), `transport` (play, stop, seek, loop), `render` (offline bounce, stems), `io_apply` (store a machine profile and switch devices), `warp_*`, `automation_*`, `plugin_*` (scan, insert, set parameter). Each one is a registry entry; none needs a protocol change.
+
 ## 12. Devices and failure handling
 
 - Handle sample-rate change, buffer-size change, and device removal. The renderer rebuilds its plan for the new format; the transport position is kept.
@@ -227,6 +275,7 @@ A later "new variation each play" mode changes the seed on each play; the fixed 
 |---|---|---|
 | 0 | Single loop player | Done: 4 tests pass |
 | 1 | **Core**: time types, `TempoMap`, project model, commands, undo, JSON package with migrations, command journal, follow-action resolver | Done: 70 tests pass, including random edit sequences that undo back to the start |
+| 1b | **Hardware I/O model and control layer**: logical ports, track inputs and outputs, `IOResolver`, device and MIDI catalogs, tool registry, MCP server | Done: 112 tests pass, MCP checked over real pipes |
 | 2 | **Renderer spike** (see section 17) | Part 1 done: `AudioUnitEffect` hosts Apple's AUDelay through `renderBlock`; output is the same for 64 and 1024 frame blocks. Still open: 10 min soak with zero allocations, and one third-party AUv3 |
 | 3 | Renderer v1: tracks, clips, transport, loop region, offline bounce = realtime | Null test passes |
 | 4 | Mixer: sends, buses, groups, PDC, meters | Routing and latency tests pass |

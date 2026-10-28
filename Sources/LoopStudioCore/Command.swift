@@ -10,6 +10,8 @@ public enum CommandError: Error, Equatable {
     case invalidRoute(String)
     case invalidValue(String)
     case assetInUse(AssetID)
+    case portNotFound(PortID)
+    case portInUse(PortID)
 }
 
 /// Every edit to a project is a command. Commands are plain data (Codable), so the same type serves
@@ -43,6 +45,14 @@ public enum Command: Codable, Sendable {
     case setAutoLoop(rule: AutoLoopRule)
     case addAsset(asset: Asset)
     case removeAsset(id: AssetID)
+
+    /// `index` is where the port goes; `nil` means the end.
+    case addPort(port: IOPort, index: Int?)
+    /// Fails while a track still uses the port.
+    case removePort(id: PortID)
+    case setHardwareOutput(id: TrackID, port: PortID?)
+    case setAudioInput(id: TrackID, port: PortID?)
+    case setMIDIInput(id: TrackID, selection: MIDIInputSelection?)
 }
 
 extension Command {
@@ -127,6 +137,9 @@ extension Project {
             guard id != master.id else { throw CommandError.cannotChangeMaster }
             // The master is the same as "no output".
             let normalized = target == master.id ? nil : target
+            if normalized != nil, track(id)?.hardwareOutput != nil {
+                throw CommandError.invalidRoute("track sends to a hardware port; clear that first")
+            }
             let old = try withTrack(id) { t -> TrackID? in defer { t.output = normalized }; return t.output }
             try checkRouting()
             return .setOutput(id: id, target: old)
@@ -255,7 +268,50 @@ extension Project {
             }
             let removed = assets.remove(at: index)
             return .addAsset(asset: removed)
+
+        case .addPort(let port, let index):
+            guard ports.allSatisfy({ $0.id != port.id }) else { throw CommandError.duplicateID(port.id.description) }
+            guard (1...64).contains(port.channels), !port.name.isEmpty else { throw CommandError.invalidValue("port") }
+            guard (0...ports.count).contains(index ?? ports.count) else { throw CommandError.invalidValue("port index") }
+            ports.insert(port, at: index ?? ports.count)
+            return .removePort(id: port.id)
+
+        case .removePort(let id):
+            guard let index = ports.firstIndex(where: { $0.id == id }) else { throw CommandError.portNotFound(id) }
+            guard !usedPortIDs.contains(id) else { throw CommandError.portInUse(id) }
+            return .addPort(port: ports.remove(at: index), index: index)
+
+        case .setHardwareOutput(let id, let port):
+            if let port { try requirePort(port, direction: .output) }
+            let old = try withTrack(id) { t -> PortID? in
+                if port != nil, t.output != nil { throw CommandError.invalidRoute("track routes to another track; clear its output first") }
+                defer { t.hardwareOutput = port }
+                return t.hardwareOutput
+            }
+            return .setHardwareOutput(id: id, port: old)
+
+        case .setAudioInput(let id, let port):
+            if let port { try requirePort(port, direction: .input) }
+            let old = try withTrack(id) { t -> PortID? in
+                guard port == nil || t.kind == .audio else { throw CommandError.invalidValue("only audio tracks take an audio input") }
+                defer { t.audioInput = port }
+                return t.audioInput
+            }
+            return .setAudioInput(id: id, port: old)
+
+        case .setMIDIInput(let id, let selection):
+            let old = try withTrack(id) { t -> MIDIInputSelection? in
+                guard selection == nil || t.kind == .midi else { throw CommandError.invalidValue("only MIDI tracks take a MIDI input") }
+                defer { t.midiInput = selection }
+                return t.midiInput
+            }
+            return .setMIDIInput(id: id, selection: old)
         }
+    }
+
+    private func requirePort(_ id: PortID, direction: PortDirection) throws {
+        guard let port = ports.first(where: { $0.id == id }) else { throw CommandError.portNotFound(id) }
+        guard port.direction == direction else { throw CommandError.invalidValue("port \(port.name) is an \(port.direction.rawValue) port") }
     }
 
     // MARK: Checks

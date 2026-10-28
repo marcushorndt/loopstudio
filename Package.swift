@@ -8,6 +8,7 @@ let package = Package(
         .library(name: "LoopStudioCore", targets: ["LoopStudioCore"]),
         .library(name: "LoopStudioProject", targets: ["LoopStudioProject"]),
         .library(name: "LoopStudioEngine", targets: ["LoopStudioEngine"]),
+        .library(name: "LoopStudioControl", targets: ["LoopStudioControl"]),
         .executable(name: "loopstudio", targets: ["loopstudio"]),
     ],
     targets: [
@@ -15,10 +16,13 @@ let package = Package(
         .target(name: "LoopStudioCore"),
         // Package format, migrations, command journal.
         .target(name: "LoopStudioProject", dependencies: ["LoopStudioCore"]),
-        .target(name: "LoopStudioEngine"),
-        .executableTarget(name: "loopstudio", dependencies: ["LoopStudioEngine", "LoopStudioProject", "LoopStudioCore"]),
+        .target(name: "LoopStudioEngine", dependencies: ["LoopStudioCore"]),
+        // Tool registry and MCP server: the one way for scripts and agents to drive the app.
+        .target(name: "LoopStudioControl", dependencies: ["LoopStudioCore", "LoopStudioProject", "LoopStudioEngine"]),
+        .executableTarget(name: "loopstudio", dependencies: ["LoopStudioEngine", "LoopStudioProject", "LoopStudioCore", "LoopStudioControl"]),
         .testTarget(name: "LoopStudioCoreTests", dependencies: ["LoopStudioCore"]),
         .testTarget(name: "LoopStudioProjectTests", dependencies: ["LoopStudioProject", "LoopStudioCore"]),
-        .testTarget(name: "LoopStudioEngineTests", dependencies: ["LoopStudioEngine"]),
+        .testTarget(name: "LoopStudioEngineTests", dependencies: ["LoopStudioEngine", "LoopStudioCore"]),
+        .testTarget(name: "LoopStudioControlTests", dependencies: ["LoopStudioControl", "LoopStudioCore", "LoopStudioProject"]),
     ]
 )

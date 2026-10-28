@@ -27,6 +27,7 @@ public enum AssetTag {}
 public enum DeviceTag {}
 public enum LaneTag {}
 public enum MarkerTag {}
+public enum PortTag {}
 
 public typealias TrackID = ID<TrackTag>
 public typealias ClipID = ID<ClipTag>
@@ -34,3 +35,4 @@ public typealias AssetID = ID<AssetTag>
 public typealias DeviceID = ID<DeviceTag>
 public typealias LaneID = ID<LaneTag>
 public typealias MarkerID = ID<MarkerTag>
+public typealias PortID = ID<PortTag>

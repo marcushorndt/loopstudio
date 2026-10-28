@@ -43,6 +43,11 @@ public enum ProjectIssue: Hashable, Sendable, CustomStringConvertible {
     case masterWrongKind
     case invalidLoop
     case slotsEndWithEmpty(TrackID)
+    case portMissing(track: TrackID, port: PortID)
+    case portWrongDirection(track: TrackID, port: PortID)
+    case outputConflict(TrackID)
+    case inputWrongTrackKind(TrackID)
+    case duplicatePortID(PortID)
 
     public var description: String {
         switch self {
@@ -57,6 +62,11 @@ public enum ProjectIssue: Hashable, Sendable, CustomStringConvertible {
         case .masterWrongKind: "master track has the wrong kind"
         case .invalidLoop: "loop region is empty or reversed"
         case .slotsEndWithEmpty(let id): "session slots of track \(id) end with an empty slot"
+        case .portMissing(let track, let port): "track \(track) uses missing port \(port)"
+        case .portWrongDirection(let track, let port): "track \(track) uses port \(port) in the wrong direction"
+        case .outputConflict(let id): "track \(id) has both an output track and a hardware output"
+        case .inputWrongTrackKind(let id): "track \(id) has an input that does not fit its kind"
+        case .duplicatePortID(let id): "duplicate port ID \(id)"
         }
     }
 }
@@ -100,6 +110,24 @@ extension Project {
             }
         }
         if Routing.hasCycle(self) { issues.append(.routeCycle) }
+
+        var portIDs = Set<PortID>()
+        for port in ports where !portIDs.insert(port.id).inserted { issues.append(.duplicatePortID(port.id)) }
+        func check(_ port: PortID?, on track: Track, expect direction: PortDirection) {
+            guard let port else { return }
+            guard let found = ports.first(where: { $0.id == port }) else {
+                issues.append(.portMissing(track: track.id, port: port))
+                return
+            }
+            if found.direction != direction { issues.append(.portWrongDirection(track: track.id, port: port)) }
+        }
+        for track in allTracks {
+            check(track.hardwareOutput, on: track, expect: .output)
+            check(track.audioInput, on: track, expect: .input)
+            if track.hardwareOutput != nil, track.output != nil { issues.append(.outputConflict(track.id)) }
+            if track.audioInput != nil, track.kind != .audio { issues.append(.inputWrongTrackKind(track.id)) }
+            if track.midiInput != nil, track.kind != .midi { issues.append(.inputWrongTrackKind(track.id)) }
+        }
         return issues
     }
 

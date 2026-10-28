@@ -38,6 +38,7 @@ struct PianoRoll: View {
                             ForEach(Array(clip.notes.enumerated()), id: \.offset) { index, note in
                                 NoteView(clip: clip, index: index, note: note, tint: tint, pxPerBeat: pxPerBeat) { lastLength = $0 }
                             }
+                            ClipPlayhead(clip: clip.id, period: clip.length) { CGFloat($0.quarters) * pxPerBeat }
                         }
                         .frame(width: width, height: height)
                     }

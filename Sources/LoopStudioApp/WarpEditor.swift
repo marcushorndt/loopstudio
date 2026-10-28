@@ -112,6 +112,7 @@ struct WarpEditor: View {
                     Image(systemName: "triangle.fill").font(.system(size: 8)).rotationEffect(.degrees(180))
                         .foregroundStyle(i == dragIndex ? Theme.text : Theme.accent).offset(x: x - 4, y: 0)
                 }
+                ClipPlayhead(clip: clip.id, period: clip.length) { CGFloat((clip.offset + $0).quarters) * ppb }
                 if shown.isEmpty {
                     Text("Double-click to add a warp marker.").font(.caption).foregroundStyle(Theme.dim)
                         .padding(6).offset(y: h - 26)

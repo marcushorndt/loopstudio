@@ -390,13 +390,14 @@ struct MiniCurves: View {
     var body: some View {
         Canvas { ctx, size in
             let length = Double(max(1, clip.length.rawValue))
+            let cycle = clip.automationCycle.rawValue
             for lane in model.project.effectiveLanes(of: clip, owner: owner) {
                 guard let target = model.project.automationTarget(lane.target) else { continue }
                 var path = Path()
                 let steps = max(2, Int(size.width / 3))
                 for i in 0...steps {
                     let t = Double(i) / Double(steps)
-                    let v = AutomationMath.value(lane.points, at: Tick(Int64(t * length))) ?? target.def
+                    let v = AutomationMath.value(lane.points, at: Tick(Int64(t * length) % cycle)) ?? target.def
                     let pt = CGPoint(x: CGFloat(t) * size.width, y: size.height * (1 - CGFloat(target.position(v))))
                     if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
                 }
@@ -426,7 +427,7 @@ private struct ClipOverrideSpans: View {
                     let steps = max(2, Int(size.width / 3))
                     for i in 0...steps {
                         let t = Double(i) / Double(steps)
-                        let v = AutomationMath.value(item.lane, at: Tick(Int64(t * length))) ?? target.def
+                        let v = AutomationMath.value(item.lane, at: Tick(Int64(t * length) % item.clip.automationCycle.rawValue)) ?? target.def
                         let pt = CGPoint(x: CGFloat(t) * size.width, y: size.height * (1 - CGFloat(target.position(v))))
                         if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
                     }

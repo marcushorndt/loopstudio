@@ -184,18 +184,24 @@ extension Project {
         else { return nil }
         let lanes = effectiveLanes(of: clip, owner: owner)
         guard !lanes.isEmpty else { return nil }
-        let s = clip.start, e = clip.start + clip.length
+        let s = clip.start, e = clip.start + clip.length, period = clip.automationCycle
         var commands: [Command] = []
         for lane in lanes {
             guard let host = trackOwning(lane.target), let base = staticValue(lane.target) else { continue }
             let old = host.automation.first { $0.target == lane.target }?.points ?? []
             let outside = { (tick: Tick) in AutomationMath.value(old, at: tick) ?? base }
-            let inside = { (tick: Tick) in AutomationMath.value(lane.points, at: tick - s) ?? base }
+            let inCycle = { (offset: Tick) in AutomationMath.value(lane.points, at: offset) ?? base }
             var points = old.filter { $0.tick < s }
             if s > 0 { points.append(AutomationPoint(tick: s - 1, value: outside(s - 1))) }
-            points.append(AutomationPoint(tick: s, value: inside(s)))
-            points += lane.points.filter { $0.tick < clip.length }.map { var p = $0; p.tick = p.tick + s; return p }
-            points.append(AutomationPoint(tick: e - 1, value: inside(e - 1)))
+            // One copy of the curve per automation cycle, each held at its edges.
+            var cycle = s
+            while cycle < e {
+                let end = min(cycle + period, e)
+                points.append(AutomationPoint(tick: cycle, value: inCycle(0)))
+                points += lane.points.filter { $0.tick < end - cycle }.map { var p = $0; p.tick = p.tick + cycle; return p }
+                points.append(AutomationPoint(tick: end - 1, value: inCycle(end - 1 - cycle)))
+                cycle = end
+            }
             points.append(AutomationPoint(tick: e, value: outside(e)))
             points += old.filter { $0.tick > e }
             commands.append(.setAutomation(track: host.id, target: lane.target, points: points))

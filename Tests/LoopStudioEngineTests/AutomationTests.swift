@@ -282,3 +282,23 @@ private let ownVolume = ParameterAddress(node: ParameterAddress.ownTrack, parame
     let a = rig.render(block: 64), b = rig.render(block: 777)
     #expect(a.left == b.left, "a bent lane is bit-identical at any block size")
 }
+
+@Test func unlinkedAutomationRunsItsOwnLengthOverALoopingClip() throws {
+    var rig = Rig()
+    guard case .audio(var c) = rig.track.clips[0] else { Issue.record("no clip"); return }
+    c.id = ClipID(); c.loop = true; c.length = 1_920 // the sample loops every second
+    c.lanes = [AutomationLane(target: ownVolume, points: [AutomationPoint(tick: 0, value: -96, curve: .hold), AutomationPoint(tick: 1_920, value: 0)])]
+    let session = Track(name: "S", kind: .audio, slots: [SessionSlot(clip: .audio(c), quantize: .none)])
+    try Command.insertTrack(track: session, index: 1).apply(to: &rig.project)
+    try Command.removeTrack(id: rig.track.id).apply(to: &rig.project)
+    // Unlink: the curve takes 2 bars (4 s), so it is silent for 1 s, then loud for 3 s.
+    let inverse = try Command.setClipAutomationLength(clip: c.id, length: 7_680).apply(to: &rig.project)
+    rig.project.launches = [Launch(track: session.id, slot: 0, tick: 0)]
+    let audio = rig.render(session: SessionSimulator.run(rig.project, horizon: 15_360), seconds: 6)
+    #expect(rms(audio.left[2_000..<46_000]) < 0.001, "first second: silent")
+    #expect(rms(audio.left[50_000..<190_000]) > 0.3, "the next three loops of the sample: loud, the curve did not restart")
+    #expect(rms(audio.left[194_000..<238_000]) < 0.001, "after 4 s the curve starts again")
+    try inverse.apply(to: &rig.project)
+    #expect(rig.project.findClip(c.id)?.clip.automationLength == nil)
+    #expect(throws: CommandError.self) { try Command.setClipAutomationLength(clip: c.id, length: 10).apply(to: &rig.project) }
+}

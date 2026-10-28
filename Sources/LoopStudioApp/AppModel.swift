@@ -648,6 +648,21 @@ final class AppModel {
         return .stopped
     }
 
+    /// Ticks since the clip began its current play, or `nil` when it does not play now.
+    /// Arrangement clips follow the timeline; session clips follow the session clock.
+    func clipPlayOffset(_ id: ClipID) -> Tick? {
+        guard transportPlaying, let (trackID, clip) = project.findClip(id), let track = project.track(trackID) else { return nil }
+        if track.clips.contains(where: { $0.id == id }) {
+            let t = currentTick
+            return t >= clip.start && t < clip.start + clip.length ? t - clip.start : nil
+        }
+        guard let row = track.slots.firstIndex(where: { $0?.clip.id == id }) else { return nil }
+        let tick = sessionTick
+        guard let e = simulation.events.first(where: { $0.track == trackID && $0.startTick <= tick && tick < $0.endTick }),
+              e.slot == row else { return nil }
+        return tick - e.startTick
+    }
+
     // MARK: Editing
 
     func apply(_ command: Command, key: String? = nil) {

@@ -122,17 +122,28 @@ private struct ClipPanel: View {
                 let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
                 if page == .gain {
                     ClipEnvelopeView(clip: a, peaks: peaks, assetTicks: assetTicks, tint: tint)
+                        .overlay { clipLengthPlayhead(clip) }
                 } else if a.warpMode != .off {
                     WarpEditor(clip: a, asset: asset, peaks: peaks, tint: tint)
                 } else {
                     WaveformView(peaks: peaks, color: tint, fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
                         .background(Theme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.radius))
+                        .overlay { clipLengthPlayhead(clip) }
                 }
             } else {
                 Spacer()
             }
         default:
             Spacer()
+        }
+    }
+
+    /// A play position line for an editor whose width is the clip length.
+    private func clipLengthPlayhead(_ clip: Clip) -> some View {
+        GeometryReader { geo in
+            ClipPlayhead(clip: clip.id, period: clip.length) { t in
+                geo.size.width * CGFloat(t.rawValue) / CGFloat(max(1, clip.length.rawValue))
+            }
         }
     }
 
@@ -334,7 +345,50 @@ private struct ClipLanesPanel: View {
     let track: Track
     let tint: Color
 
+    private var cycle: Tick { clip.automationCycle }
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if case .dummy = clip {} else { linkRow }
+            lanesBody
+        }
+    }
+
+    /// Linked: the curves loop with the clip. Unlinked: they run their own length over the looping clip.
+    private var linkRow: some View {
+        let linked = clip.automationLength == nil
+        let bars = Double(cycle.rawValue) / Double(model.barTicks)
+        return HStack(spacing: 8) {
+            Toggle("Link to clip length", isOn: Binding(get: { linked }, set: { on in
+                model.apply(.setClipAutomationLength(clip: clip.id, length: on ? nil : clip.length))
+            }))
+            .toggleStyle(.checkbox)
+            .help("Linked: the automation loops with the clip. Unlinked: it has its own length, for example 16 bars over a 1-bar loop.")
+            if !linked {
+                Stepper(value: Binding(get: { bars }, set: { v in
+                    let ticks = Int64((max(0.25, v) * Double(model.barTicks)).rounded())
+                    model.apply(.setClipAutomationLength(clip: clip.id, length: Tick(ticks)), key: "autolen\(clip.id)")
+                }), in: 0.25...512, step: bars < 1 ? 0.25 : 1) {
+                    Text(bars == bars.rounded() ? "\(Int(bars)) bar" + (bars == 1 ? "" : "s") : String(format: "%.2f bars", bars))
+                        .font(.system(size: 11, design: .monospaced))
+                }
+                .controlSize(.small)
+                Menu("Presets") {
+                    ForEach([1, 2, 4, 8, 16, 32, 64], id: \.self) { n in
+                        Button("\(n) bar" + (n == 1 ? "" : "s")) {
+                            model.apply(.setClipAutomationLength(clip: clip.id, length: Tick(Int64(n) * model.barTicks)))
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 11))
+    }
+
+    @ViewBuilder
+    private var lanesBody: some View {
         let lanes = model.shownClipLanes(clip, owner: track)
         if lanes.isEmpty {
             VStack(spacing: 6) {
@@ -356,6 +410,21 @@ private struct ClipLanesPanel: View {
         }
     }
 
+    /// Where the clip loops inside a longer, unlinked automation cycle.
+    private func loopMarks(ppt: Double) -> some View {
+        Canvas { ctx, size in
+            let step = clip.length.rawValue
+            guard clip.automationLength != nil, step > 0, step < cycle.rawValue else { return }
+            var t = step
+            while t < cycle.rawValue {
+                let x = CGFloat(Double(t) * ppt)
+                ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: size.height)) },
+                           with: .color(Theme.dim.opacity(0.45)), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                t += step
+            }
+        }
+    }
+
     private var hint: String {
         if case .dummy = clip { return "Use Automate to pick what this clip moves.\nIt can move any track or device while it plays." }
         return "Use Automate to pick a parameter of this track.\nWhile the clip plays, its curve overrides the track automation."
@@ -365,11 +434,13 @@ private struct ClipLanesPanel: View {
     private func laneRow(_ address: ParameterAddress, height: CGFloat, width: CGFloat) -> some View {
         if let target = model.project.clipAutomationTargets(clip, owner: track).first(where: { $0.address == address }) {
             let points = clip.lanes.first { $0.target == address }?.points ?? []
-            AutomationEditor(target: target, points: points,
-                             pixelsPerTick: Double(width) / Double(max(1, clip.length.rawValue)),
+            let ppt = Double(width) / Double(max(1, cycle.rawValue))
+            AutomationEditor(target: target, points: points, pixelsPerTick: ppt,
                              width: width, height: height - 2, tint: tint) { pts in
                 model.apply(.setClipAutomation(clip: clip.id, target: address, points: pts))
             }
+            .overlay { loopMarks(ppt: ppt).allowsHitTesting(false) }
+            .overlay { ClipPlayhead(clip: clip.id, period: cycle) { CGFloat(Double($0.rawValue) * ppt) } }
             .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
             .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
             .overlay(alignment: .topLeading) {
@@ -449,5 +520,26 @@ private struct ClipEnvelopeView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
+    }
+}
+
+/// The play position inside a clip editor: a line that moves while the clip plays, hidden otherwise.
+/// `period` folds the position: the clip loop for the sample, the automation cycle for the curves.
+struct ClipPlayhead: View {
+    @Environment(AppModel.self) private var model
+    let clip: ClipID
+    let period: Tick
+    let x: (Tick) -> CGFloat
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !model.transportPlaying)) { _ in
+            if let offset = model.clipPlayOffset(clip) {
+                let t = Tick(offset.rawValue % max(1, period.rawValue))
+                Rectangle().fill(Theme.play).frame(width: 1.5)
+                    .offset(x: x(t) - 0.75)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            }
+        }
+        .allowsHitTesting(false)
     }
 }

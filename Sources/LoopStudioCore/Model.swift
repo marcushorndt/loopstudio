@@ -120,6 +120,9 @@ public struct AudioClip: Hashable, Codable, Sendable, Identifiable {
     public var gainEnvelope: [AutomationPoint]?
     /// Clip automation of the track's parameters, ticks from the clip start. `nil`: none. See `Clip.lanes`.
     public var lanes: [AutomationLane]?
+    /// Length of one cycle of the clip automation. `nil`: linked to the clip length (it loops with the clip).
+    /// Set, it runs on its own: a 16-bar curve over a 1-bar loop.
+    public var automationLength: Tick?
 
     public init(id: ClipID = ClipID(), asset: AssetID, start: Tick = 0, length: Tick, offset: Tick = 0,
                 loop: Bool = false, gainDb: Double = 0,
@@ -167,6 +170,9 @@ public struct MIDIClip: Hashable, Codable, Sendable, Identifiable {
     public var name: String?
     /// Clip automation of the track's parameters, ticks from the clip start. `nil`: none. See `Clip.lanes`.
     public var lanes: [AutomationLane]?
+    /// Length of one cycle of the clip automation. `nil`: linked to the clip length (it loops with the clip).
+    /// Set, it runs on its own: a 16-bar curve over a 1-bar loop.
+    public var automationLength: Tick?
 
     public init(id: ClipID = ClipID(), start: Tick = 0, length: Tick, loop: Bool = false, notes: [MIDINote] = []) {
         self.id = id
@@ -216,6 +222,27 @@ public enum Clip: Hashable, Sendable, Identifiable {
         case .dummy(let c): c.start
         }
     }
+
+    /// Own length of the clip automation, `nil` when it is linked to the clip. A dummy clip is always linked.
+    public var automationLength: Tick? {
+        get {
+            switch self {
+            case .audio(let c): c.automationLength
+            case .midi(let c): c.automationLength
+            case .dummy: nil
+            }
+        }
+        set {
+            switch self {
+            case .audio(var c): c.automationLength = newValue; self = .audio(c)
+            case .midi(var c): c.automationLength = newValue; self = .midi(c)
+            case .dummy: break
+            }
+        }
+    }
+
+    /// One cycle of the clip automation: its own length, or the clip length. The lanes repeat every cycle.
+    public var automationCycle: Tick { max(1, automationLength ?? length) }
 
     /// The clip's own automation, ticks from the clip start. While the clip plays, a lane overrides the
     /// track lane of the same parameter. An audio or MIDI clip moves the parameters of its own track

@@ -52,6 +52,8 @@ public enum Command: Codable, Sendable {
     /// Sets the envelope of one parameter inside a clip (ticks relative to the clip start). Empty points remove the lane.
     /// See `Clip.lanes` for which parameters a clip can move.
     case setClipAutomation(clip: ClipID, target: ParameterAddress, points: [AutomationPoint])
+    /// Unlinks the clip automation from the clip length (`length` set) or links it again (`nil`).
+    case setClipAutomationLength(clip: ClipID, length: Tick?)
     /// The older name of `setClipAutomation`. It still works, for any clip.
     case setDummyAutomation(clip: ClipID, target: ParameterAddress, points: [AutomationPoint])
     /// Replaces the notes of a MIDI clip. Notes are kept sorted by time, then pitch.
@@ -316,6 +318,16 @@ extension Project {
             c.notes = notes.sorted { ($0.tick, $0.pitch) < ($1.tick, $1.pitch) }
             try withTrack(trackID) { t in try t.replaceClip(.midi(c)) }
             return .setMIDINotes(clip: id, notes: old)
+
+        case .setClipAutomationLength(let id, let length):
+            guard let (trackID, found) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            if case .dummy = found { throw CommandError.invalidValue("a dummy clip's automation always has the clip length") }
+            if let length, length.rawValue < Tick.perQuarter / 4 { throw CommandError.invalidValue("automation length too short") }
+            var clip = found
+            let old = clip.automationLength
+            clip.automationLength = length
+            try withTrack(trackID) { t in try t.replaceClip(clip) }
+            return .setClipAutomationLength(clip: id, length: old)
 
         case .setClipEnvelope(let id, let points):
             guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }

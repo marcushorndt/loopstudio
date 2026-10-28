@@ -195,36 +195,34 @@ public struct RenderPlan {
                 if let seg = segment(lane.points, origin: 0, start: Int64.min, end: Int64.max) { segments[lane.target, default: []].append(seg) }
             }
         }
-        // Clip automation of the arrangement clips. It overrides the track lane while the clip covers the frame.
+        // Clip automation: the lanes repeat every automation cycle from the clip start until the clip ends.
         func active(_ clip: Clip) -> Bool { if case .audio(let a) = clip { return !a.muted }; return true }
-        for t in project.allTracks {
-            for clip in t.clips where active(clip) {
-                let a = map.frame(at: clip.start, sampleRate: rate).rawValue
-                let b = map.frame(at: clip.start + clip.length, sampleRate: rate).rawValue
-                for lane in project.effectiveLanes(of: clip, owner: t) {
-                    if let seg = segment(lane.points, origin: clip.start, start: a, end: b) { segments[lane.target, default: []].append(seg) }
+        func addClipLanes(_ clip: Clip, owner: Track, from start: Tick, to end: Tick, session: Bool) {
+            let lanes = project.effectiveLanes(of: clip, owner: owner)
+            guard !lanes.isEmpty else { return }
+            let period = clip.automationCycle
+            var cycle = start, cycles = 0
+            while cycle < end && cycles < 4_096 {
+                let next = min(cycle + period, end)
+                let a = map.frame(at: cycle, sampleRate: rate).rawValue, b = map.frame(at: next, sampleRate: rate).rawValue
+                for lane in lanes {
+                    if var seg = segment(lane.points, origin: cycle, start: a, end: b) {
+                        seg.session = session
+                        segments[lane.target, default: []].append(seg)
+                    }
                 }
+                cycle = next; cycles += 1
             }
         }
-        // Then the session clips that play, on the session clock: they override both. A looping clip
-        // repeats its automation every loop.
+        // Arrangement clips override the track lane while they cover the frame.
+        for t in project.allTracks {
+            for clip in t.clips where active(clip) { addClipLanes(clip, owner: t, from: clip.start, to: clip.start + clip.length, session: false) }
+        }
+        // Session clips that play, on the session clock, override both.
         if let session {
             for e in session.events.sorted(by: { $0.startTick < $1.startTick }) {
                 guard let (trackID, clip) = project.findClip(e.clip), let owner = project.track(trackID), active(clip) else { continue }
-                let lanes = project.effectiveLanes(of: clip, owner: owner)
-                guard !lanes.isEmpty, clip.length > 0 else { continue }
-                var cycle = e.startTick, cycles = 0
-                while cycle < e.endTick && cycles < 4_096 {
-                    let next = min(cycle + clip.length, e.endTick)
-                    let a = map.frame(at: cycle, sampleRate: rate).rawValue, b = map.frame(at: next, sampleRate: rate).rawValue
-                    for lane in lanes {
-                        if var seg = segment(lane.points, origin: cycle, start: a, end: b) {
-                            seg.session = true
-                            segments[lane.target, default: []].append(seg)
-                        }
-                    }
-                    cycle = next; cycles += 1
-                }
+                addClipLanes(clip, owner: owner, from: e.startTick, to: e.endTick, session: true)
             }
         }
         func lane(_ node: UUID, _ key: String) -> AutoLane? {

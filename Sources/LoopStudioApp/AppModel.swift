@@ -1277,8 +1277,11 @@ final class AppModel {
             UserDefaults.standard.set(packageURL.path, forKey: "lastProject")
             // The edits are in the package now. A journal that keeps them would apply them twice after a crash.
             do { try journal?.reset() } catch {
+                // The old journal must not replay over this save on a later open.
                 journal = nil
-                status = "Saved, but the edit journal is off: \(error.localizedDescription)"
+                let gone = (try? FileManager.default.removeItem(at: packageURL.appendingPathComponent("journal.jsonl"))) != nil
+                status = gone ? "Saved, but the edit journal is off: \(error.localizedDescription)"
+                    : "Saved, but the old edit journal could not be removed. Delete journal.jsonl in the project before you open it again."
             }
         } catch {
             status = "Cannot save: \(error.localizedDescription)"

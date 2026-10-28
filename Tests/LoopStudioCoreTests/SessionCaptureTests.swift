@@ -110,3 +110,10 @@ private func setup() -> (Project, TrackID) {
     #expect(moved.map(\.startTick) == [7_680] && moved.map(\.endTick) == [11_520])
     #expect(p.onTimeline([e], shift: -2 * bar).isEmpty, "a part before the timeline start goes")
 }
+
+@Test func aSessionStopAlsoCutsTheArrangement() throws {
+    var (p, id) = setup()
+    try Command.batch(commands: p.captureCommands([], until: 7_680, stops: [id: 3_840])).apply(to: &p)
+    let clips = p.tracks[0].clips.sorted { $0.start < $1.start }
+    #expect(clips.map(\.start) == [0, 7_680] && clips.first?.length == 3_840)
+}

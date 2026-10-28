@@ -73,11 +73,15 @@ extension AppModel {
         recordTrackID = nil
         guard let asset = importAudio(url) else { status = "Could not import the recording"; return }
         let sr = sampleRate
-        // The source's plugins made its sound late; the take moves back by as much.
-        let at = max(0, first - Int64(resampleLatency))
-        let start = project.tempoMap.tick(atFrame: Frame(at), sampleRate: sr)
+        // The source's plugins made its sound late; the take moves back by as much. Before the song start,
+        // the late head is skipped instead.
+        let at = first - Int64(resampleLatency)
+        let skip = max(0, -at)
+        let start = project.tempoMap.tick(atFrame: Frame(max(0, at)), sampleRate: sr)
         let end = project.tempoMap.tick(atFrame: Frame(at + result.frames), sampleRate: sr)
+        guard end > start else { status = "Nothing recorded"; return }
         var clip = project.makeAudioClip(asset: asset.id, start: start, length: Tick(max(1, end.rawValue - start.rawValue)))
+        clip.offset = project.tempoMap.tick(atFrame: Frame(skip), sampleRate: sr)
         clip.loop = false
         clip.warpMode = .off
         placeTake(.audio(clip), on: id)

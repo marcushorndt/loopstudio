@@ -34,7 +34,8 @@ extension Project {
     /// arrangement clips there are cut away (the rest of them stays).
     /// A session clip loops its own length, an arrangement clip its whole source, so every pass of a
     /// looping session clip becomes its own arrangement clip. Automation with its own cycle keeps its phase.
-    public func captureCommands(_ events: [SessionEvent], until now: Tick) -> [Command] {
+    /// `stops`: per track, the first Session stop. It silenced the arrangement too, so the cut starts there at the latest.
+    public func captureCommands(_ events: [SessionEvent], until now: Tick, stops: [TrackID: Tick] = [:]) -> [Command] {
         var inserts: [Command] = []
         var firstStart: [TrackID: Tick] = [:]
         for e in events where e.startTick < now {
@@ -62,6 +63,7 @@ extension Project {
             }
         }
 
+        for (id, stop) in stops where stop < now { firstStart[id] = min(firstStart[id] ?? stop, stop) }
         var cuts: [Command] = []
         for (id, first) in firstStart {
             guard let t = track(id) else { continue }
@@ -101,14 +103,18 @@ extension Project {
     /// before it land where a continuous take would have put them. Parts before the timeline start go.
     public func onTimeline(_ events: [SessionEvent], shift: Int64) -> [SessionEvent] {
         guard shift != 0 else { return events }
-        func move(_ t: Tick) -> Tick {
-            let f = tempoMap.frame(at: t, sampleRate: sampleRate).rawValue + shift
-            return f <= 0 ? Tick(0) : tempoMap.tick(atFrame: Frame(f), sampleRate: sampleRate)
-        }
+        func move(_ t: Tick) -> Tick { onTimeline(t, shift: shift) }
         return events.compactMap { e in
             var e = e
             e.startTick = move(e.startTick); e.endTick = move(e.endTick)
             return e.endTick > e.startTick ? e : nil
         }
+    }
+
+    /// One session tick on the timeline; see `onTimeline(_:shift:)`.
+    public func onTimeline(_ t: Tick, shift: Int64) -> Tick {
+        guard shift != 0 else { return t }
+        let f = tempoMap.frame(at: t, sampleRate: sampleRate).rawValue + shift
+        return f <= 0 ? Tick(0) : tempoMap.tick(atFrame: Frame(f), sampleRate: sampleRate)
     }
 }

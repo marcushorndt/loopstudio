@@ -156,6 +156,8 @@ public final class LiveEngine: @unchecked Sendable {
     public var positionFrame: Int64 { locked { position } }
     /// The session clock. Session launches count on it.
     public var sessionFrame: Int64 { locked { sessionPosition } }
+    /// Timeline frame minus session frame, both read at one instant.
+    public var clockOffset: Int64 { locked { position - sessionPosition } }
 
     /// The session frame that sounded at `hostTime` (a MIDI packet time stamp). 0 means "now".
     /// Several notes in one MIDI burst keep their own times, instead of all landing on the next block.

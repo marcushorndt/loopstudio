@@ -343,6 +343,18 @@ private func writeSine(rate: Double, seconds: Double, channels: Int = 2) throws 
 
 // MARK: Plugin delay compensation
 
+/// The renderer output as it is, without the latency trim of `Bounce` (the tests fake the plugin delay).
+private func raw(_ plan: RenderPlan, frames: Int, block: Int = 4096) -> [Float] {
+    var l = [Float](repeating: 0, count: frames), r = l
+    let renderer = Renderer(plan: plan, maxBlock: block)
+    l.withUnsafeMutableBufferPointer { lb in r.withUnsafeMutableBufferPointer { rb in
+        for k in stride(from: 0, to: frames, by: block) {
+            renderer.process(startFrame: Int64(k), frames: min(block, frames - k), outLeft: lb.baseAddress! + k, outRight: rb.baseAddress! + k)
+        }
+    } }
+    return l
+}
+
 @Test func tracksWithoutLatencyWaitForTracksWithLatency() {
     var rig = Rig()
     let a = rig.asset(seconds: 2) { _ in 0.5 }
@@ -353,9 +365,9 @@ private func writeSine(rate: Double, seconds: Double, channels: Int = 2) throws 
     plan.nodes[0].latency = 256            // the "Slow" track runs a plugin with 256 frames of latency
     plan.applyDelayCompensation()
     #expect(plan.latencyFrames == 256)
-    let out = Bounce.render(plan, startFrame: 0, endFrame: 2_000)
-    #expect(out.left[0] == 0.5 && out.left[255] == 0.5, "only Slow, whose plugin delay is not simulated here")
-    #expect(out.left[256] == 1.0, "Fast now arrives 256 frames later and lines up")
+    let out = raw(plan, frames: 2_000)
+    #expect(out[0] == 0.5 && out[255] == 0.5, "only Slow, whose plugin delay is not simulated here")
+    #expect(out[256] == 1.0, "Fast now arrives 256 frames later and lines up")
 }
 
 @Test func compensationDoesNotDependOnBlockSize() {
@@ -420,7 +432,7 @@ private func writeSine(rate: Double, seconds: Double, channels: Int = 2) throws 
     var plan = rig.plan
     plan.nodes[0].latency = 300
     plan.applyDelayCompensation()
-    let whole = Bounce.render(plan, startFrame: 0, endFrame: 2_000, block: 500)
+    let whole = raw(plan, frames: 2_000, block: 500)
 
     // The same render, but a new renderer (an edit) takes over after 1000 frames.
     var l = [Float](repeating: 0, count: 2_000), r = l
@@ -430,5 +442,19 @@ private func writeSine(rate: Double, seconds: Double, channels: Int = 2) throws 
         let second = Renderer(plan: plan, maxBlock: 500, reusing: first)
         for k in stride(from: 1_000, to: 2_000, by: 500) { second.process(startFrame: Int64(k), frames: 500, outLeft: lb.baseAddress! + k, outRight: rb.baseAddress! + k) }
     } }
-    #expect(zip(whole.left, l).allSatisfy { $0 == $1 })
+    #expect(zip(whole, l).allSatisfy { $0 == $1 })
+}
+
+@Test func bounceRemovesTheCompensationLatency() {
+    var rig = Rig()
+    let a = rig.asset(seconds: 1) { _ in 0.5 }
+    let slow = rig.track("Slow"), fast = rig.track("Fast")
+    rig.clip(a, on: slow); rig.clip(a, on: fast)
+    var plan = rig.plan
+    plan.nodes[0].latency = 256
+    plan.applyDelayCompensation()
+    let out = Bounce.render(plan, startFrame: 0, endFrame: 2_000)
+    #expect(out.frames == 2_000)
+    #expect(out.left[0] == 1.0, "Fast lines up with frame 0 of the file, where Slow (no real delay here) already plays")
+    #expect(raw(plan, frames: 2_256)[256...].elementsEqual(out.left))
 }

@@ -504,20 +504,24 @@ public enum Bounce {
                               tailSeconds: Double = 0, block: Int = 4096) -> RenderedAudio {
         let end = endFrame ?? (plan.endFrame + Int64((tailSeconds * plan.sampleRate).rounded()))
         let total = Int(max(0, end - startFrame))
-        var left = [Float](repeating: 0, count: total)
-        var right = [Float](repeating: 0, count: total)
+        // Plugin delay compensation makes the master `latency` frames late. Render that much more and
+        // drop it from the front, so frame 0 of the file is frame `startFrame` of the timeline.
+        let latency = max(0, plan.latencyFrames)
+        var left = [Float](repeating: 0, count: total + latency)
+        var right = [Float](repeating: 0, count: total + latency)
         let renderer = Renderer(plan: plan, maxBlock: block)
         left.withUnsafeMutableBufferPointer { l in
             right.withUnsafeMutableBufferPointer { r in
                 var done = 0
-                while done < total {
-                    let n = min(block, total - done)
+                while done < total + latency {
+                    let n = min(block, total + latency - done)
                     renderer.process(startFrame: startFrame + Int64(done), frames: n,
                                      outLeft: l.baseAddress! + done, outRight: r.baseAddress! + done)
                     done += n
                 }
             }
         }
+        if latency > 0 { left.removeFirst(latency); right.removeFirst(latency) }
         return RenderedAudio(left: left, right: right, sampleRate: plan.sampleRate)
     }
 

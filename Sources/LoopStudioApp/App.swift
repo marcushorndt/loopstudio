@@ -22,36 +22,53 @@ struct LoopStudioApp: App {
         .defaultSize(width: 1500, height: 940)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Project") { model.newProject() }.keyboardShortcut("n")
-                Button("New Demo Project") { model.newDemoProject() }
-                Button("Save") { model.save() }.keyboardShortcut("s")
+                AppAction.newProject.button(model)
+                AppAction.newDemo.button(model)
+                AppAction.save.button(model)
             }
             CommandGroup(replacing: .undoRedo) {
-                Button("Undo") { model.undo() }.keyboardShortcut("z").disabled(!model.canUndo)
-                Button("Redo") { model.redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!model.canRedo)
+                AppAction.undo.button(model)
+                AppAction.redo.button(model)
+            }
+            CommandGroup(replacing: .pasteboard) {
+                AppAction.cut.button(model)
+                AppAction.copy.button(model)
+                AppAction.paste.button(model)
+                AppAction.duplicate.button(model)
+                AppAction.deleteSelection.button(model)
+                AppAction.splitAtPlayhead.button(model)
             }
             CommandMenu("Transport") {
-                Button(model.transportPlaying ? "Stop" : "Play") { model.togglePlay() }.keyboardShortcut(.space, modifiers: [])
-                Button(model.transportPlaying ? "Pause" : "Continue") { model.togglePause() }.keyboardShortcut(.space, modifiers: .shift)
-                Button("Stop and Rewind") { model.stop() }.keyboardShortcut(".", modifiers: .command)
-                Button("Stop All Clips") { model.stopAllClips() }.keyboardShortcut(".", modifiers: [.command, .shift])
-                Button("Loop Selection") { model.loopSelection() }.keyboardShortcut("l", modifiers: .command)
-                Button("Loop On/Off") { model.toggleLoop() }.keyboardShortcut("l", modifiers: [.command, .shift])
+                AppAction.play.button(model)
+                AppAction.pause.button(model)
+                AppAction.stopRewind.button(model)
+                AppAction.stopAllClips.button(model)
+                AppAction.loopSelection.button(model)
+                AppAction.loopToggle.button(model)
+                AppAction.backToArrangement.button(model)
             }
             CommandMenu("Track") {
-                Button("Insert Audio Track") { model.addTrack(kind: .audio) }.keyboardShortcut("t", modifiers: .command)
-                Button("Delete Selected Clips") { model.deleteSelected() }.keyboardShortcut(.delete, modifiers: [])
-                Button("Insert Group Track") { model.addTrack(kind: .group) }
-                Button("Group Selected Tracks") { model.groupSelectedTracks() }.keyboardShortcut("g", modifiers: .command)
-                Button("Insert Return Track") { model.addTrack(kind: .returnTrack) }.keyboardShortcut("t", modifiers: [.command, .option])
-                Button("Insert MIDI Track") { model.addTrack(kind: .midi) }.keyboardShortcut("t", modifiers: [.command, .shift])
+                AppAction.insertAudioTrack.button(model)
+                AppAction.insertMIDITrack.button(model)
+                AppAction.insertReturnTrack.button(model)
+                AppAction.insertGroupTrack.button(model)
+                Divider()
+                AppAction.groupTracks.button(model)
+                AppAction.renameTrack.button(model)
+                AppAction.duplicateTrack.button(model)
+                Divider()
+                AppAction.insertScene.button(model)
+                AppAction.duplicateScene.button(model)
+                AppAction.deleteScene.button(model)
             }
             CommandGroup(after: .toolbar) {
-                Button("Session View") { model.viewMode = .session }.keyboardShortcut("1", modifiers: .command)
-                Button("Arrangement View") { model.viewMode = .arrangement }.keyboardShortcut("2", modifiers: .command)
-                Button("Switch View") { model.viewMode = model.viewMode == .session ? .arrangement : .session }
-                    .keyboardShortcut(.tab, modifiers: [])
-                Button("Show Clip and Device Panel") { model.detailOpen.toggle() }.keyboardShortcut("d", modifiers: [.command, .option])
+                AppAction.sessionView.button(model)
+                AppAction.arrangementView.button(model)
+                AppAction.switchView.button(model)
+                AppAction.toggleDetail.button(model)
+            }
+            CommandGroup(replacing: .help) {
+                AppAction.showShortcuts.button(model)
             }
         }
     }

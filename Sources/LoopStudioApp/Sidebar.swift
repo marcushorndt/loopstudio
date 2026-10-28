@@ -152,6 +152,11 @@ struct FileRow: View {
         .contentShape(Rectangle())
         .onTapGesture { model.togglePreview(url) }
         .draggable(url)
+        .contextMenu {
+            Button(model.previewing == url ? "Stop Preview" : "Preview") { model.togglePreview(url) }
+            Button("Add to New Audio Track") { _ = model.dropOnNewTrack([url]) }
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        }
         .help("Click to listen. Drag onto a clip slot or the timeline.")
     }
 }
@@ -176,6 +181,10 @@ struct UnitList: View {
                             .contentShape(Rectangle())
                             .onTapGesture(count: 2) { model.addEffect(spec.id) }
                             .draggable("fx:\(spec.id)")
+                            .contextMenu {
+                                Button("Add to Selected Track") { model.addEffect(spec.id) }
+                                Menu("Add to Track") { ForEach(model.project.tracks.filter { $0.kind != .master }, id: \.id) { t in Button(t.name) { model.addEffect(spec.id, to: t.id) } } }
+                            }
                             .help("Double-click to add to the selected track, or drag it onto a track.")
                     }
                 }
@@ -192,6 +201,12 @@ struct UnitList: View {
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) { model.addAudioUnit(identifier: unit.identifier, name: unit.name) }
                     .draggable("au:\(unit.identifier)|\(unit.name)")
+                    .contextMenu {
+                        Button("Add to Selected Track") { model.addAudioUnit(identifier: unit.identifier, name: unit.name) }
+                        if !unit.identifier.hasPrefix("aumu") {
+                            Menu("Add to Track") { ForEach(model.project.tracks.filter { $0.kind != .master }, id: \.id) { t in Button(t.name) { model.addAudioUnit(identifier: unit.identifier, name: unit.name, to: t.id) } } }
+                        }
+                    }
                     .help("Double-click to add. Drag onto a track.")
                 }
                 if loaded && shown.isEmpty { Text("None found").foregroundStyle(Theme.dim) }

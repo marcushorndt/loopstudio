@@ -4,6 +4,8 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var columns = NavigationSplitViewVisibility.all
+    @State private var keys = KeyMonitor()
+    @State private var renameText = ""
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
@@ -34,6 +36,19 @@ struct RootView: View {
             }
         }
         .navigationTitle("")
+        .sheet(isPresented: Bindable(model).shortcutsOpen) { ShortcutsSheet().environment(model) }
+        .onAppear { keys.install(model: model) }
+        .onChange(of: model.renameRequest) { _, id in
+            renameText = id.flatMap { model.project.track($0)?.name } ?? ""
+        }
+        .alert("Rename Track", isPresented: Binding(get: { model.renameRequest != nil }, set: { if !$0 { model.renameRequest = nil } })) {
+            TextField("Name", text: $renameText)
+            Button("Rename") {
+                if let id = model.renameRequest, !renameText.isEmpty { model.apply(.setTrackName(id: id, name: renameText)) }
+                model.renameRequest = nil
+            }
+            Button("Cancel", role: .cancel) { model.renameRequest = nil }
+        }
     }
 }
 

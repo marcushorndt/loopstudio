@@ -135,5 +135,6 @@ private struct DeviceCard: View {
         }
         .padding(8)
         .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 6))
+        .contextMenu { DeviceMenu(track: track, device: device) }
     }
 }

@@ -50,6 +50,11 @@ final class AppModel {
     /// All marked clips. `selectedClip` is the one the clip panel shows.
     var selectedClips: Set<ClipID> = []
     var rangeSelection: RangeSelection?
+    var clipboard: [ClipboardItem] = []
+    var shortcutsOpen = false
+    /// Set to ask the session view to start renaming this track.
+    var renameRequest: TrackID?
+    var selectedSceneRow: Int?
     /// Tracks whose automation row is open in the arrangement, and the parameter each one shows.
     var automationShown: Set<TrackID> = []
     var automationChoice: [TrackID: ParameterAddress] = [:]

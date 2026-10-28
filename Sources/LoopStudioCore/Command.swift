@@ -25,6 +25,7 @@ public enum Command: Codable, Sendable {
     case insertTrack(track: Track, index: Int)
     case removeTrack(id: TrackID)
     case setTrackName(id: TrackID, name: String)
+    case setTrackColor(id: TrackID, colorIndex: Int)
     case setVolume(id: TrackID, db: Double)
     case setPan(id: TrackID, pan: Double)
     case setMute(id: TrackID, mute: Bool)
@@ -140,6 +141,10 @@ extension Project {
         case .setTrackName(let id, let name):
             let old = try withTrack(id) { t -> String in defer { t.name = name }; return t.name }
             return .setTrackName(id: id, name: old)
+
+        case .setTrackColor(let id, let colorIndex):
+            let old = try withTrack(id) { t -> Int in defer { t.colorIndex = max(0, colorIndex) }; return t.colorIndex }
+            return .setTrackColor(id: id, colorIndex: old)
 
         case .setVolume(let id, let db):
             guard !db.isNaN else { throw CommandError.invalidValue("volume NaN") }

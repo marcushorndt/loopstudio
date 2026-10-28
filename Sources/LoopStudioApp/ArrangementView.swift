@@ -107,6 +107,7 @@ private struct ArrangementHeader: View {
         .overlay(alignment: .bottom) { if model.automationShown.contains(track.id) { AutomationPicker(track: track).frame(height: AppModel.automationRow).padding(.horizontal, 6) } }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .onTapGesture { model.selectedTrack = track.id }
+        .contextMenu { TrackMenuItems(track: track, showsAutomation: true) }
         .dropDestination(for: String.self) { items, _ in
             return model.dropDevices(items, on: track.id)
         }
@@ -139,6 +140,7 @@ private struct Ruler: View {
         .background(Theme.panel)
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0).onChanged { model.seek(to: xTick($0.location.x, model)) })
+        .contextMenu { RulerMenu() }
     }
 }
 
@@ -184,6 +186,7 @@ private struct Lane: View {
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .contentShape(Rectangle())
         .onTapGesture { model.selectedTrack = track.id; model.clearSelection() }
+        .contextMenu { LaneMenu(track: track) }
         .gesture(SpatialTapGesture(count: 2).onEnded { v in
             if track.kind == .midi { model.createMIDIClip(track: track.id, at: xTick(v.location.x, model)) }
         })
@@ -253,7 +256,7 @@ private struct ArrangementClip: View {
                 let shift = model.rowIndex(atY: model.rowTop(trackIndex) + laneHeight / 2 + g.translation.height) - trackIndex
                 model.moveClips(Array(model.selectedClips.union([clip.id])), deltaTicks: start.rawValue - clip.start.rawValue, trackShift: shift)
             })
-        .contextMenu { Button("Delete", role: .destructive) { model.apply(.removeClip(clip: clip.id)) } }
+        .contextMenu { ArrangementClipMenu(clip: clip, track: track) }
     }
 }
 

@@ -110,6 +110,12 @@ struct MixerStrip: View {
         .frame(width: width)
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: 4))
         .onTapGesture { model.selectedTrack = track.id }
+        .contextMenu {
+            Button("Reset Volume to 0 dB") { model.apply(.setVolume(id: track.id, db: 0)) }
+            Button("Center Pan") { model.apply(.setPan(id: track.id, pan: 0)) }
+            Divider()
+            if !isMaster { TrackMenuItems(track: track) }
+        }
         .dropDestination(for: String.self) { items, _ in drop(items) }
     }
 

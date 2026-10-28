@@ -86,10 +86,7 @@ private struct TrackColumn: View {
         .dropDestination(for: String.self) { items, _ in
             return model.dropDevices(items, on: track.id)
         }
-        .contextMenu {
-            Button("Rename") { name = track.name; renaming = true }
-            Button("Delete Track", role: .destructive) { model.removeTrack(track.id) }
-        }
+        .contextMenu { TrackMenuItems(track: track) }
     }
 }
 
@@ -141,10 +138,7 @@ private struct SlotCell: View {
             .clipShape(RoundedRectangle(cornerRadius: 3))
             .overlay(RoundedRectangle(cornerRadius: 3).stroke(state.isQueued && blink ? Theme.accent : (selected ? .white : .clear), lineWidth: 1.5))
             .frame(height: slotHeight)
-            .contextMenu {
-                Button("Duplicate") { model.duplicateSlot(track: track.id, row: row) }
-                Button("Delete Clip", role: .destructive) { model.apply(.setSlot(track: track.id, index: row, slot: nil)) }
-            }
+            .contextMenu { SlotMenu(track: track, row: row) }
         } else {
             Button {
                 if track.kind == .midi { model.createMIDIClip(track: track.id, row: row) } else { model.stopTrack(track.id) }
@@ -154,7 +148,7 @@ private struct SlotCell: View {
                     .background(Theme.panel.opacity(0.7), in: RoundedRectangle(cornerRadius: 3))
             }
 .buttonStyle(.plain)
-            .contextMenu { Button("New Dummy Clip") { model.createDummyClip(track: track.id, row: row) } }
+            .contextMenu { SlotMenu(track: track, row: row) }
             .help(track.kind == .midi ? "Create an empty MIDI clip" : "Empty slot. Drop an audio file here.")
         }
     }
@@ -208,6 +202,7 @@ private struct SceneColumn: View {
                     .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 3))
                 }
                 .buttonStyle(.plain)
+                .contextMenu { SceneMenu(row: row) }
             }
         }
     }

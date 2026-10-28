@@ -47,6 +47,7 @@ extension AppModel {
         case .duplicate: duplicateSelection()
         case .deleteSelection: deleteSelected()
         case .splitAtPlayhead: splitAtPlayhead()
+        case .deactivateClip: deactivateSelected()
         case .record: toggleRecordArm()
         case .toggleMetronome: toggleMetronome()
         case .play: togglePlay()
@@ -243,6 +244,19 @@ extension AppModel {
 
     func setClipFades(_ clip: AudioClip, fadeInMs: Double, fadeOutMs: Double) {
         apply(.setAudioClip(clip: clip.id, gainDb: clip.gainDb, fadeInMs: fadeInMs, fadeOutMs: fadeOutMs, muted: clip.muted))
+    }
+
+    /// Key 0: turns the selected audio clips off or on together. The first clip decides the direction.
+    func deactivateSelected() {
+        var ids = selectedClips
+        if let c = selectedClip { ids.insert(c) }
+        let clips = ids.compactMap { project.findClip($0)?.1 }.compactMap { clip -> AudioClip? in
+            if case .audio(let a) = clip { return a } else { return nil }
+        }
+        guard let first = clips.first else { status = "Only audio clips can be deactivated."; return }
+        let mute = !first.muted
+        let commands = clips.map { Command.setAudioClip(clip: $0.id, gainDb: $0.gainDb, fadeInMs: $0.fadeInMs, fadeOutMs: $0.fadeOutMs, muted: mute) }
+        apply(commands.count == 1 ? commands[0] : .batch(commands: commands))
     }
 
     func toggleClipMute(_ clip: AudioClip) {

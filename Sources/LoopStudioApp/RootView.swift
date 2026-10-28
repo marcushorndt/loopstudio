@@ -5,7 +5,6 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var columns = NavigationSplitViewVisibility.all
     @State private var keys = KeyMonitor()
-    @State private var renameText = ""
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
@@ -38,27 +37,9 @@ struct RootView: View {
         .navigationTitle("")
         .sheet(isPresented: Bindable(model).shortcutsOpen) { ShortcutsSheet().environment(model) }
         .onAppear { keys.install(model: model) }
-        .onChange(of: model.renameRequest) { _, id in
-            renameText = id.flatMap { model.project.track($0)?.name } ?? ""
-        }
-        .onChange(of: model.clipRenameRequest) { _, id in
-            renameText = id.flatMap { model.project.findClip($0)?.1.ownName } ?? ""
-        }
-        .alert("Rename Clip", isPresented: Binding(get: { model.clipRenameRequest != nil }, set: { if !$0 { model.clipRenameRequest = nil } })) {
-            TextField("Name", text: $renameText)
-            Button("Rename") {
-                if let id = model.clipRenameRequest { model.apply(.setClipName(clip: id, name: renameText)) }
-                model.clipRenameRequest = nil
-            }
-            Button("Cancel", role: .cancel) { model.clipRenameRequest = nil }
-        }
-        .alert("Rename Track", isPresented: Binding(get: { model.renameRequest != nil }, set: { if !$0 { model.renameRequest = nil } })) {
-            TextField("Name", text: $renameText)
-            Button("Rename") {
-                if let id = model.renameRequest, !renameText.isEmpty { model.apply(.setTrackName(id: id, name: renameText)) }
-                model.renameRequest = nil
-            }
-            Button("Cancel", role: .cancel) { model.renameRequest = nil }
+        .sheet(isPresented: Binding(get: { model.renameRequest != nil || model.clipRenameRequest != nil },
+                                    set: { if !$0 { model.renameRequest = nil; model.clipRenameRequest = nil } })) {
+            RenameSheet().environment(model)
         }
     }
 }
@@ -185,4 +166,42 @@ struct MasterMeter: View {
                 .frame(width: 110, height: 10)
         }
     }
+}
+
+/// One text field, focused at once, so a typed name replaces the old one. Return renames, Escape cancels.
+struct RenameSheet: View {
+    @Environment(AppModel.self) private var model
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var isClip: Bool { model.clipRenameRequest != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(isClip ? "Rename Clip" : "Rename Track").font(.headline)
+            TextField("Name", text: $text)
+                .focused($focused)
+                .onSubmit(commit)
+                .frame(width: 260)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel, action: close).keyboardShortcut(.cancelAction)
+                Button("Rename", action: commit).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .onAppear {
+            if let id = model.clipRenameRequest { text = model.project.findClip(id)?.1.ownName ?? "" }
+            else if let id = model.renameRequest { text = model.project.track(id)?.name ?? "" }
+            focused = true
+        }
+    }
+
+    private func commit() {
+        if let id = model.clipRenameRequest { model.apply(.setClipName(clip: id, name: text)) }
+        else if let id = model.renameRequest, !text.isEmpty { model.apply(.setTrackName(id: id, name: text)) }
+        close()
+    }
+
+    private func close() { model.renameRequest = nil; model.clipRenameRequest = nil }
 }

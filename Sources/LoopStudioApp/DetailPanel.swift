@@ -40,6 +40,9 @@ private struct ClipPanel: View {
                 properties(clip, track: track)
                     .frame(width: 270)
                 VStack(alignment: .leading, spacing: 6) {
+                    if case .midi(let m) = clip {
+                        PianoRoll(clip: m, tint: Theme.track(track.colorIndex))
+                    } else {
                     Text(model.clipName(clip)).font(.headline)
                     if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                         let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
@@ -47,6 +50,7 @@ private struct ClipPanel: View {
                             .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 4))
                     } else {
                         Spacer()
+                    }
                     }
                 }
                 if let row = slotRow, let slot = track.slots[row] {
@@ -73,8 +77,14 @@ private struct ClipPanel: View {
                 slider("Fade out", value: a.fadeOutMs, range: 0...200, format: "%.1f ms") { set(a, fadeOut: $0) }
                 Stepper("Length  \(beatsText(a.length))", onIncrement: { resize(a.id, a.start, a.length, by: 1) },
                         onDecrement: { resize(a.id, a.start, a.length, by: -1) })
-            case .midi, .dummy:
-                Text("MIDI clips arrive with the instrument milestone.").font(.caption).foregroundStyle(Theme.dim)
+            case .midi(let m):
+                Toggle("Loop", isOn: Binding(get: { m.loop }, set: { model.apply(.setClipLoop(clip: m.id, loop: $0)) }))
+                Stepper("Length  \(beatsText(m.length))", onIncrement: { resize(m.id, m.start, m.length, by: 4) },
+                        onDecrement: { resize(m.id, m.start, m.length, by: -4) })
+                Text("Click the grid to add notes. Drag to move. Drag the right edge to resize. Double-click deletes.")
+                    .font(.caption).foregroundStyle(Theme.dim)
+            case .dummy:
+                Text("A dummy clip only carries follow actions.").font(.caption).foregroundStyle(Theme.dim)
             }
             Spacer()
         }

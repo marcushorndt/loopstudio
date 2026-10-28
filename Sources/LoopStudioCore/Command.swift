@@ -37,6 +37,8 @@ public enum Command: Codable, Sendable {
     case moveClip(clip: ClipID, toTrack: TrackID, start: Tick)
     case setClipRange(clip: ClipID, start: Tick, length: Tick)
     case setClipLoop(clip: ClipID, loop: Bool)
+    /// Replaces the notes of a MIDI clip. Notes are kept sorted by time, then pitch.
+    case setMIDINotes(clip: ClipID, notes: [MIDINote])
     /// Gain, fades and mute of an audio clip.
     case setAudioClip(clip: ClipID, gainDb: Double, fadeInMs: Double, fadeOutMs: Double, muted: Bool)
     /// Puts a clip (with its follow actions) into a session slot, or empties the slot with `nil`.
@@ -217,6 +219,14 @@ extension Project {
             }
             try withTrack(trackID) { t in try t.replaceClip(changed) }
             return .setClipLoop(clip: id, loop: old)
+
+        case .setMIDINotes(let id, let notes):
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            guard case .midi(var c) = clip else { throw CommandError.invalidValue("only MIDI clips have notes") }
+            let old = c.notes
+            c.notes = notes.sorted { ($0.tick, $0.pitch) < ($1.tick, $1.pitch) }
+            try withTrack(trackID) { t in try t.replaceClip(.midi(c)) }
+            return .setMIDINotes(clip: id, notes: old)
 
         case .setAudioClip(let id, let gainDb, let fadeIn, let fadeOut, let muted):
             guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }

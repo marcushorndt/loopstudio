@@ -104,8 +104,7 @@ private struct ArrangementHeader: View {
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .onTapGesture { model.selectedTrack = track.id }
         .dropDestination(for: String.self) { items, _ in
-            for item in items where item.hasPrefix("fx:") { model.addEffect(String(item.dropFirst(3)), to: track.id) }
-            return true
+            return model.dropDevices(items, on: track.id)
         }
     }
 
@@ -171,6 +170,9 @@ private struct Lane: View {
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .contentShape(Rectangle())
         .onTapGesture { model.selectedTrack = track.id; model.clearSelection() }
+        .gesture(SpatialTapGesture(count: 2).onEnded { v in
+            if track.kind == .midi { model.createMIDIClip(track: track.id, at: xTick(v.location.x, model)) }
+        })
         .dropDestination(for: URL.self) { urls, location in
             model.dropOnTimeline(urls, track: track.id, at: xTick(location.x, model))
         }
@@ -201,6 +203,7 @@ private struct ArrangementClip: View {
                 WaveformView(peaks: peaks, color: .black.opacity(0.55), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
                     .padding(.top, 16).padding(.bottom, 3)
             }
+            if case .midi(let m) = clip { MiniNotes(clip: m).padding(.top, 16).padding(.bottom, 3).padding(.horizontal, 2) }
             Text(model.clipName(clip)).font(.system(size: 10, weight: .semibold)).foregroundStyle(.black.opacity(0.85))
                 .padding(.horizontal, 5).padding(.top, 2).lineLimit(1)
         }
@@ -297,6 +300,25 @@ private struct SelectionOverlay: View {
                         .offset(x: tickX(r.start, model), y: rulerHeight + CGFloat(index) * laneHeight)
                         .allowsHitTesting(false)
                 }
+            }
+        }
+    }
+}
+
+/// A tiny picture of the notes of a MIDI clip.
+private struct MiniNotes: View {
+    let clip: MIDIClip
+
+    var body: some View {
+        Canvas { ctx, size in
+            guard let lo = clip.notes.map(\.pitch).min(), let hi = clip.notes.map(\.pitch).max() else { return }
+            let span = max(12, Int(hi) - Int(lo) + 1)
+            let rowH = size.height / CGFloat(span)
+            for n in clip.notes {
+                let x = CGFloat(Double(n.tick.rawValue) / Double(max(1, clip.length.rawValue))) * size.width
+                let w = max(2, CGFloat(Double(n.length.rawValue) / Double(max(1, clip.length.rawValue))) * size.width)
+                let y = CGFloat(Int(hi) - Int(n.pitch)) * rowH
+                ctx.fill(Path(CGRect(x: x, y: y, width: w, height: max(1.5, rowH - 0.5))), with: .color(.black.opacity(0.6)))
             }
         }
     }

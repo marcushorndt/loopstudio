@@ -17,6 +17,15 @@ struct EffectPlan {
     var kind: String
     var params: [String: Double]
     var bypassed: Bool
+    /// A hosted Audio Unit effect. `nil` for a built-in one.
+    var unit: AudioUnitEffect? = nil
+}
+
+struct MIDIEvent {
+    var frame: Int64
+    var status: UInt8
+    var data1: UInt8
+    var data2: UInt8
 }
 
 struct SendPlan {
@@ -36,6 +45,9 @@ struct NodePlan {
     var output: Int?
     var sends: [SendPlan]
     var effects: [EffectPlan] = []
+    /// A hosted instrument and the notes it plays, sorted by frame (note-off before note-on on the same frame).
+    var instrument: AudioUnitEffect? = nil
+    var midi: [MIDIEvent] = []
 }
 
 /// Everything the renderer needs, compiled from a project. Immutable; built off the audio thread.
@@ -62,7 +74,8 @@ public struct RenderPlan {
         return (Float(left), Float(right))
     }
 
-    public static func compile(_ project: Project, bank: AudioBank, session: SessionSimulation? = nil) -> RenderPlan {
+    public static func compile(_ project: Project, bank: AudioBank, session: SessionSimulation? = nil,
+                               units: [DeviceID: AudioUnitEffect] = [:]) -> RenderPlan {
         var warnings: [String] = []
         let tracks = project.tracks
         let rate = project.sampleRate
@@ -155,31 +168,89 @@ public struct RenderPlan {
                 }
             }
             if t.kind == .midi || t.kind == .group || t.kind == .returnTrack { /* summing nodes or not rendered yet */ }
-            if t.kind == .midi && !t.clips.isEmpty { warnings.append("MIDI track \"\(t.name)\" needs an instrument, which is not rendered yet") }
+
+            let (chain, instrument) = effects(of: t, units: units, warnings: &warnings)
+            var midi: [MIDIEvent] = []
+            if t.kind == .midi && !silent && instrument != nil {
+                midi = midiEvents(of: t, session: session, map: map, rate: rate, endFrame: &endFrame)
+            } else if t.kind == .midi && !t.clips.isEmpty && instrument == nil {
+                warnings.append("MIDI track \"\(t.name)\" has no instrument")
+            }
 
             let (pl, pr) = balance(t.pan)
             nodes.append(NodePlan(
                 isMaster: false, clips: clips, gain: silent ? 0 : dB(t.volumeDb), panLeft: pl, panRight: pr,
                 output: t.output.flatMap { index[$0] } ?? masterIndex,
                 sends: t.sends.compactMap { s in index[s.target].map { SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader) } },
-                effects: effects(of: t, warnings: &warnings)))
+                effects: chain, instrument: instrument, midi: midi))
         }
 
         let (ml, mr) = balance(project.master.pan)
         nodes.append(NodePlan(isMaster: true, clips: [], gain: project.master.mute ? 0 : dB(project.master.volumeDb),
                               panLeft: ml, panRight: mr, output: nil, sends: [],
-                              effects: effects(of: project.master, warnings: &warnings)))
+                              effects: effects(of: project.master, units: units, warnings: &warnings).0))
         return RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings,
                           trackOrder: order.map { Optional($0) } + [nil])
     }
 
-    private static func effects(of track: Track, warnings: inout [String]) -> [EffectPlan] {
-        track.devices.compactMap { d in
-            guard d.format == "builtin", BuiltInEffects.spec(d.identifier) != nil else {
-                if d.format != "builtin" { warnings.append("\(d.name) on \"\(track.name)\" is not hosted yet") }
-                return nil
+    private static func effects(of track: Track, units: [DeviceID: AudioUnitEffect],
+                                warnings: inout [String]) -> ([EffectPlan], AudioUnitEffect?) {
+        var plans: [EffectPlan] = []
+        var instrument: AudioUnitEffect?
+        for d in track.devices {
+            if d.format == "builtin" {
+                guard BuiltInEffects.spec(d.identifier) != nil else { continue }
+                plans.append(EffectPlan(device: d.id, kind: d.identifier, params: d.params, bypassed: d.bypassed))
+            } else if d.format == "audiounit" {
+                guard let unit = units[d.id] else { warnings.append("\(d.name) on \"\(track.name)\" is not loaded"); continue }
+                if unit.isInstrument {
+                    if instrument == nil && !d.bypassed { instrument = unit }
+                } else {
+                    plans.append(EffectPlan(device: d.id, kind: "audiounit", params: [:], bypassed: d.bypassed, unit: unit))
+                }
+            } else {
+                warnings.append("\(d.name) on \"\(track.name)\" uses an unsupported plugin format")
             }
-            return EffectPlan(device: d.id, kind: d.identifier, params: d.params, bypassed: d.bypassed)
         }
+        return (plans, instrument)
+    }
+
+    /// Note on and off events for a MIDI track: arrangement clips plus the session clips that play.
+    private static func midiEvents(of t: Track, session: SessionSimulation?, map: TempoMap, rate: Double,
+                                   endFrame: inout Int64) -> [MIDIEvent] {
+        var events: [MIDIEvent] = []
+
+        func add(_ c: MIDIClip, origin: Tick, limit: Tick, repeating: Bool) {
+            let length = max(1, c.length.rawValue)
+            var pass: Int64 = 0
+            repeat {
+                let base = origin.rawValue + length * pass
+                for n in c.notes where n.tick.rawValue < length {
+                    let on = base + n.tick.rawValue
+                    if on >= limit.rawValue { continue }
+                    let off = min(base + min(n.tick.rawValue + n.length.rawValue, length), limit.rawValue)
+                    guard off > on else { continue }
+                    let a = map.frame(at: Tick(on), sampleRate: rate).rawValue
+                    let b = map.frame(at: Tick(off), sampleRate: rate).rawValue
+                    guard b > a else { continue }
+                    events.append(MIDIEvent(frame: a, status: 0x90 | (n.channel & 15), data1: n.pitch, data2: max(1, n.velocity)))
+                    events.append(MIDIEvent(frame: b, status: 0x80 | (n.channel & 15), data1: n.pitch, data2: 0))
+                    endFrame = max(endFrame, b)
+                }
+                pass += 1
+            } while repeating && origin.rawValue + length * pass < limit.rawValue
+        }
+
+        for case .midi(let c) in t.clips { add(c, origin: c.start, limit: c.start + c.length, repeating: false) }
+        if let session {
+            for e in session.events where e.track == t.id {
+                for case let slot? in t.slots where slot.clip.id == e.clip {
+                    if case .midi(let c) = slot.clip { add(c, origin: e.startTick, limit: e.endTick, repeating: c.loop) }
+                }
+            }
+        }
+        // Note-off before note-on on the same frame, so repeated notes retrigger.
+        events.sort { ($0.frame, $0.status & 0xF0 == 0x90 ? 1 : 0) < ($1.frame, $1.status & 0xF0 == 0x90 ? 1 : 0) }
+        return events
     }
 }

@@ -112,8 +112,7 @@ struct MixerStrip: View {
     }
 
     private func drop(_ items: [String]) -> Bool {
-        for item in items where item.hasPrefix("fx:") { model.addEffect(String(item.dropFirst(3)), to: track.id) }
-        return true
+        return model.dropDevices(items, on: track.id)
     }
 
     /// For mute, the lit state means "audible", as in Live (the activator).

@@ -188,11 +188,16 @@ struct UnitList: View {
                         Text(unit.name).lineLimit(1)
                         Text(unit.manufacturer).font(.caption).foregroundStyle(Theme.dim)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { model.addAudioUnit(identifier: unit.identifier, name: unit.name) }
+                    .draggable("au:\(unit.identifier)|\(unit.name)")
+                    .help("Double-click to add. Drag onto a track.")
                 }
                 if loaded && shown.isEmpty { Text("None found").foregroundStyle(Theme.dim) }
             }
             Section {
-                Text("Audio Units are listed here. Hosting them in the chain comes next.").font(.caption).foregroundStyle(Theme.dim)
+                Text("Double-click a plugin to add it, or drag it onto a track. An instrument creates a MIDI track.").font(.caption).foregroundStyle(Theme.dim)
             }
         }
         .listStyle(.sidebar)

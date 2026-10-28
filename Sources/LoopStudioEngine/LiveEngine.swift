@@ -18,17 +18,24 @@ public final class LiveEngine: @unchecked Sendable {
     private var position: Int64 = 0
     private var loop: Range<Int64>?
     private var resetPending = false
+    private var silencePending = false
+    private struct LiveMIDI { var node: Int; var status: UInt8; var data1: UInt8; var data2: UInt8 }
+    private let liveCapacity = 512
+    private let live: UnsafeMutablePointer<LiveMIDI>
+    private var liveCount = 0
     public let sampleRate: Double
 
     public init(sampleRate: Double) {
         self.sampleRate = sampleRate
         lock = .allocate(capacity: 1)
         lock.initialize(to: os_unfair_lock())
+        live = .allocate(capacity: liveCapacity)
     }
 
     deinit {
         engine.stop()
         lock.deallocate()
+        live.deallocate()
     }
 
     public func start() throws {
@@ -61,8 +68,17 @@ public final class LiveEngine: @unchecked Sendable {
     public var positionFrame: Int64 { locked { position } }
 
     public func play() { locked { playing = true } }
-    public func pause() { locked { playing = false; resetPending = true } }
+    public func pause() { locked { playing = false; silencePending = true } }
     public func seek(to frame: Int64) { locked { position = max(0, frame); resetPending = true } }
+
+    /// Queues a MIDI message for the instrument of a render node. Safe from any thread (a MIDI callback, the UI).
+    public func sendLiveMIDI(node: Int, _ status: UInt8, _ data1: UInt8, _ data2: UInt8) {
+        locked {
+            guard liveCount < liveCapacity else { return }
+            live[liveCount] = LiveMIDI(node: node, status: status, data1: data1, data2: data2)
+            liveCount += 1
+        }
+    }
     public func setLoop(_ range: Range<Int64>?) { locked { loop = range } }
 
     public func takePeak(node: Int) -> Float { locked { renderer?.takePeak(node: node) ?? 0 } }
@@ -87,12 +103,27 @@ public final class LiveEngine: @unchecked Sendable {
         }
         defer { os_unfair_lock_unlock(lock) }
 
-        guard playing, let renderer else {
+        guard let renderer else {
             left.update(repeating: 0, count: frameCount); right.update(repeating: 0, count: frameCount)
+            liveCount = 0
             return
         }
 
-        if resetPending { renderer.reset(); resetPending = false }
+        if resetPending { renderer.reset(); resetPending = false; silencePending = false }
+        if silencePending { renderer.silenceNotes(); silencePending = false }
+        for i in 0..<liveCount { renderer.sendLive(node: live[i].node, live[i].status, live[i].data1, live[i].data2) }
+        liveCount = 0
+
+        // Stopped: no clips, but instruments and effects keep running, so live notes sound and tails ring out.
+        guard playing else {
+            var done = 0
+            while done < frameCount {
+                let n = min(frameCount - done, renderer.maxBlock)
+                renderer.process(startFrame: position, frames: n, transport: false, outLeft: left + done, outRight: right + done)
+                done += n
+            }
+            return
+        }
 
         var done = 0
         while done < frameCount {
@@ -103,7 +134,7 @@ public final class LiveEngine: @unchecked Sendable {
             renderer.process(startFrame: position, frames: n, outLeft: left + done, outRight: right + done)
             position += Int64(n)
             done += n
-            if let loop, position >= loop.upperBound { position = loop.lowerBound }
+            if let loop, position >= loop.upperBound { position = loop.lowerBound; renderer.silenceNotes() }
         }
     }
 }

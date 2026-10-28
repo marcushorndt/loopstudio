@@ -72,8 +72,7 @@ struct DeviceChainView: View {
                 .padding(10)
             }
             .dropDestination(for: String.self) { items, _ in
-                for item in items where item.hasPrefix("fx:") { model.addEffect(String(item.dropFirst(3)), to: track.id) }
-                return true
+                return model.dropDevices(items, on: track.id)
             }
         } else {
             VStack { Spacer(); Text("Select a track to see its devices.").foregroundStyle(Theme.dim); Spacer() }.frame(maxWidth: .infinity)
@@ -85,6 +84,23 @@ private struct DeviceCard: View {
     @Environment(AppModel.self) private var model
     let track: Track
     let device: DeviceSlot
+
+    @ViewBuilder
+    private var pluginBody: some View {
+        let _ = model.pluginRevision
+        VStack(alignment: .leading, spacing: 6) {
+            if let unit = model.host.units[device.id] {
+                Text(unit.isInstrument ? "Instrument" : "Audio Unit effect").font(.caption).foregroundStyle(Theme.dim)
+                Button("Open Plugin Window") { PluginWindow.show(unit, title: device.name) }.controlSize(.small)
+            } else if let failure = model.host.failures[device.id] {
+                Text("Could not load").font(.caption).foregroundStyle(.red)
+                Text(failure).font(.system(size: 9)).foregroundStyle(Theme.dim).lineLimit(3).frame(width: 150, alignment: .leading)
+            } else {
+                HStack { ProgressView().controlSize(.small); Text("Loading…").font(.caption).foregroundStyle(Theme.dim) }
+            }
+        }
+        .frame(width: 170, height: 60, alignment: .topLeading)
+    }
 
     var body: some View {
         let spec = device.format == "builtin" ? BuiltInEffects.spec(device.identifier) : nil
@@ -111,8 +127,10 @@ private struct DeviceCard: View {
                     }
                 }
                 .opacity(device.bypassed ? 0.4 : 1)
+            } else if device.format == "audiounit" {
+                pluginBody
             } else {
-                Text("This plugin is not hosted yet.").font(.caption).foregroundStyle(Theme.dim).frame(width: 160, height: 60)
+                Text("Unsupported plugin format.").font(.caption).foregroundStyle(Theme.dim).frame(width: 160, height: 60)
             }
         }
         .padding(8)

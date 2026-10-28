@@ -84,8 +84,7 @@ private struct TrackColumn: View {
         .onTapGesture(count: 2) { name = track.name; renaming = true }
         .onTapGesture { model.selectedTrack = track.id }
         .dropDestination(for: String.self) { items, _ in
-            for item in items where item.hasPrefix("fx:") { model.addEffect(String(item.dropFirst(3)), to: track.id) }
-            return true
+            return model.dropDevices(items, on: track.id)
         }
         .contextMenu {
             Button("Rename") { name = track.name; renaming = true }
@@ -147,13 +146,15 @@ private struct SlotCell: View {
                 Button("Delete Clip", role: .destructive) { model.apply(.setSlot(track: track.id, index: row, slot: nil)) }
             }
         } else {
-            Button { model.stopTrack(track.id) } label: {
-                Image(systemName: "stop.fill").font(.system(size: 8)).foregroundStyle(Theme.dim.opacity(0.5))
+            Button {
+                if track.kind == .midi { model.createMIDIClip(track: track.id, row: row) } else { model.stopTrack(track.id) }
+            } label: {
+                Image(systemName: track.kind == .midi ? "plus" : "stop.fill").font(.system(size: 8)).foregroundStyle(Theme.dim.opacity(0.5))
                     .frame(maxWidth: .infinity, minHeight: slotHeight)
                     .background(Theme.panel.opacity(0.7), in: RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain)
-            .help("Empty slot. Drop an audio file here.")
+            .help(track.kind == .midi ? "Create an empty MIDI clip" : "Empty slot. Drop an audio file here.")
         }
     }
 

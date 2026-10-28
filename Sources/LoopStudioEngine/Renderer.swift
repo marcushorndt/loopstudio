@@ -15,7 +15,11 @@ public final class Renderer {
     private let buffers: UnsafeMutablePointer<Float> // per node: left block, right block
     private let peaks: UnsafeMutablePointer<Float>   // per node: largest sample since the last `takePeak`
 
-    private struct Slot { var effect: DSPEffect; var bypassed: Bool }
+    private struct Slot { var effect: DSPEffect?; var unit: AudioUnitEffect?; var bypassed: Bool }
+    private let scratchIn: UnsafeMutablePointer<Float>
+    private let scratchOut: UnsafeMutablePointer<Float>
+    private let inPointers: UnsafeMutablePointer<UnsafePointer<Float>>
+    private let outPointers: UnsafeMutablePointer<UnsafeMutablePointer<Float>>
     private let chains: [[Slot]]
     private let instances: [DeviceID: DSPEffect]
 
@@ -27,6 +31,7 @@ public final class Renderer {
         for node in plan.nodes {
             var chain: [Slot] = []
             for e in node.effects {
+                if let unit = e.unit { chain.append(Slot(effect: nil, unit: unit, bypassed: e.bypassed)); continue }
                 let effect: DSPEffect
                 if let kept = old?.instances[e.device], kept.spec.id == e.kind, kept.sampleRate == plan.sampleRate {
                     effect = kept
@@ -35,7 +40,7 @@ public final class Renderer {
                 } else { continue }
                 effect.configure(e.params)
                 made[e.device] = effect
-                chain.append(Slot(effect: effect, bypassed: e.bypassed))
+                chain.append(Slot(effect: effect, unit: nil, bypassed: e.bypassed))
             }
             built.append(chain)
         }
@@ -48,6 +53,14 @@ public final class Renderer {
         nodes.initialize(from: plan.nodes, count: nodeCount)
         buffers = .allocate(capacity: nodeCount * 2 * maxBlock)
         buffers.initialize(repeating: 0, count: nodeCount * 2 * maxBlock)
+        scratchIn = .allocate(capacity: 2 * maxBlock); scratchIn.initialize(repeating: 0, count: 2 * maxBlock)
+        scratchOut = .allocate(capacity: 2 * maxBlock); scratchOut.initialize(repeating: 0, count: 2 * maxBlock)
+        inPointers = .allocate(capacity: 2)
+        inPointers.initialize(to: UnsafePointer(scratchIn))
+        (inPointers + 1).initialize(to: UnsafePointer(scratchIn + maxBlock))
+        outPointers = .allocate(capacity: 2)
+        outPointers.initialize(to: scratchOut)
+        (outPointers + 1).initialize(to: scratchOut + maxBlock)
         peaks = .allocate(capacity: max(1, nodeCount))
         peaks.initialize(repeating: 0, count: max(1, nodeCount))
     }
@@ -57,12 +70,54 @@ public final class Renderer {
         nodes.deallocate()
         buffers.deallocate()
         peaks.deallocate()
+        scratchIn.deallocate(); scratchOut.deallocate(); inPointers.deallocate(); outPointers.deallocate()
     }
 
     var instancesForTesting: [DeviceID: DSPEffect] { instances }
 
     /// Clears every effect's memory (delay lines, reverb tails). Called after a stop or a jump.
-    public func reset() { for effect in instances.values { effect.reset() } }
+    public func reset() {
+        for effect in instances.values { effect.reset() }
+        silenceNotes()
+    }
+
+    /// Sends a MIDI message to the instrument of a node right now (a note you play, not one from a clip).
+    public func sendLive(node: Int, _ status: UInt8, _ data1: UInt8, _ data2: UInt8) {
+        guard node >= 0, node < nodeCount else { return }
+        nodes[node].instrument?.sendMIDI(status, data1, data2)
+    }
+
+    /// Releases every note of every hosted instrument. Called on stop, on a jump and when the loop wraps.
+    public func silenceNotes() {
+        for i in 0..<nodeCount { nodes[i].instrument?.silenceNotes() }
+    }
+
+    private func run(_ unit: AudioUnitEffect, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
+        scratchIn.update(from: l, count: frames)
+        (scratchIn + maxBlock).update(from: r, count: frames)
+        guard unit.process(frames: frames, input: inPointers, output: outPointers) == noErr else { return } // keep the dry signal
+        l.update(from: scratchOut, count: frames)
+        r.update(from: scratchOut + maxBlock, count: frames)
+    }
+
+    private func play(_ unit: AudioUnitEffect, _ events: [MIDIEvent], into l: UnsafeMutablePointer<Float>,
+                      _ r: UnsafeMutablePointer<Float>, startFrame: Int64, frames: Int) {
+        // First event at or after the block start (events are sorted by frame).
+        var lo = 0, hi = events.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if events[mid].frame < startFrame { lo = mid + 1 } else { hi = mid }
+        }
+        let end = startFrame + Int64(frames)
+        while lo < events.count, events[lo].frame < end {
+            let e = events[lo]
+            unit.sendMIDI(e.status, e.data1, e.data2, sampleOffset: Int(e.frame - startFrame))
+            lo += 1
+        }
+        scratchIn.update(repeating: 0, count: 2 * maxBlock)
+        guard unit.process(frames: frames, input: inPointers, output: outPointers) == noErr else { return }
+        for k in 0..<frames { l[k] += scratchOut[k]; r[k] += scratchOut[maxBlock + k] }
+    }
 
     /// The largest absolute sample of a node (after its fader) since the last call. For meters.
     public func takePeak(node: Int) -> Float {
@@ -76,7 +131,9 @@ public final class Renderer {
     @inline(__always) private func right(_ node: Int) -> UnsafeMutablePointer<Float> { buffers + (node * 2 + 1) * maxBlock }
 
     /// Renders `frames` frames that start at project frame `startFrame` into `outLeft` and `outRight`.
-    public func process(startFrame: Int64, frames: Int,
+    /// With `transport` false the arrangement and session clips and the MIDI clips stay silent, but hosted
+    /// instruments and effects keep running. That is how a stopped project still plays live notes and rings out.
+    public func process(startFrame: Int64, frames: Int, transport: Bool = true,
                         outLeft: UnsafeMutablePointer<Float>, outRight: UnsafeMutablePointer<Float>) {
         precondition(frames <= maxBlock)
         buffers.update(repeating: 0, count: nodeCount * 2 * maxBlock)
@@ -85,8 +142,12 @@ public final class Renderer {
             let node = nodes[i]
             let l = left(i), r = right(i)
 
-            for clip in node.clips { mix(clip, into: l, r, blockStart: startFrame, frames: frames) }
-            for slot in chains[i] where !slot.bypassed { slot.effect.process(l, r, frames: frames) }
+            if transport { for clip in node.clips { mix(clip, into: l, r, blockStart: startFrame, frames: frames) } }
+            if let instrument = node.instrument { play(instrument, transport ? node.midi : [], into: l, r, startFrame: startFrame, frames: frames) }
+            for slot in chains[i] where !slot.bypassed {
+                if let effect = slot.effect { effect.process(l, r, frames: frames) }
+                else if let unit = slot.unit { run(unit, l, r, frames: frames) }
+            }
 
             for send in node.sends where send.preFader { add(l, r, gain: send.gain, to: send.target, frames: frames) }
 

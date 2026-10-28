@@ -12,6 +12,9 @@ struct RangeSelection: Equatable {
     var tracks: Set<TrackID>
 }
 
+/// The render node that live MIDI goes to. Written on the main thread, read on a CoreMIDI thread.
+final class LiveTarget: @unchecked Sendable { var node = -1 }
+
 enum ViewMode: String { case session, arrangement }
 enum DetailTab { case clip, devices }
 enum SidebarTab: String, CaseIterable { case audio, effects, instruments, projects }
@@ -49,7 +52,12 @@ final class AppModel {
     var rangeSelection: RangeSelection?
     /// While a clip of a marked group is dragged, the others follow by this offset.
     var groupDrag: CGSize = .zero
-    var selectedTrack: TrackID?
+    var selectedTrack: TrackID? {
+        didSet { updateLiveTarget() }
+    }
+    /// Bumped when a plugin finished loading, so the device cards refresh.
+    private(set) var pluginRevision = 0
+    private(set) var midiSources = 0
     var pixelsPerBar: Double = 90
     private(set) var transportPlaying = false
     private(set) var canUndo = false
@@ -69,6 +77,9 @@ final class AppModel {
     @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var meterHold: [Int: Float] = [:]
+    @ObservationIgnored let host = PluginHost()
+    @ObservationIgnored private var midiMonitor: MIDIInputMonitor?
+    @ObservationIgnored private let liveTarget = LiveTarget()
 
     static let projectsFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("LoopStudio Projects", isDirectory: true)
@@ -80,6 +91,7 @@ final class AppModel {
         packageURL = url
         engine = LiveEngine(sampleRate: initial.sampleRate)
         do { try engine.start() } catch { status = "No audio output: \(error.localizedDescription)" }
+        startMIDI()
         audioFolders = (UserDefaults.standard.stringArray(forKey: "audioFolders") ?? []).map { URL(fileURLWithPath: $0) }
 
         if let path = UserDefaults.standard.string(forKey: "lastProject"), FileManager.default.fileExists(atPath: path) {
@@ -343,6 +355,7 @@ final class AppModel {
         if let c = selectedClip, project.findClip(c) == nil { selectedClip = nil }
         selectedClips = selectedClips.filter { project.findClip($0) != nil }
         rebuild()
+        syncPlugins()
         scheduleSave()
     }
 
@@ -350,7 +363,14 @@ final class AppModel {
         let n = project.tracks.count
         let names: [TrackKind: String] = [.audio: "Audio", .midi: "MIDI", .group: "Group", .returnTrack: "Return"]
         let t = Track(name: "\(n + 1) \(names[kind] ?? "Track")", kind: kind, colorIndex: n)
-        apply(.insertTrack(track: t, index: n))
+        if kind == .midi {
+            // A new MIDI track starts with Apple's built-in synth, so it makes sound at once.
+            let synth = DeviceSlot(format: "audiounit", identifier: "aumu/dls /appl", name: "Apple DLS Synth")
+            apply(.batch(commands: [.insertTrack(track: t, index: n), .insertDevice(track: t.id, device: synth, index: 0)]))
+        } else {
+            apply(.insertTrack(track: t, index: n))
+        }
+        selectedTrack = t.id
     }
 
     func deleteSelected() {
@@ -367,6 +387,127 @@ final class AppModel {
     }
 
     func removeTrack(_ id: TrackID) { apply(.removeTrack(id: id)) }
+
+    // MARK: Plugins
+
+    func syncPlugins() {
+        Task { @MainActor in
+            if await host.sync(project: project) {
+                pluginRevision += 1
+                rebuild()
+            }
+        }
+    }
+
+    /// Writes each plugin's current state into the project, so a save keeps knob positions and presets.
+    private func captureStates() {
+        let states = host.states()
+        guard !states.isEmpty else { return }
+        for i in project.tracks.indices {
+            for j in project.tracks[i].devices.indices {
+                if let data = states[project.tracks[i].devices[j].id] { project.tracks[i].devices[j].state = data }
+            }
+        }
+        for j in project.master.devices.indices {
+            if let data = states[project.master.devices[j].id] { project.master.devices[j].state = data }
+        }
+    }
+
+    func addAudioUnit(identifier: String, name: String, to track: TrackID? = nil) {
+        let slot = DeviceSlot(format: "audiounit", identifier: identifier, name: name)
+        let target = (track ?? selectedTrack).flatMap { project.track($0) }
+        if identifier.hasPrefix("aumu") {
+            if let target, target.kind == .midi {
+                apply(.insertDevice(track: target.id, device: slot, index: 0))
+                selectedTrack = target.id
+            } else {
+                // An instrument needs a MIDI track. Make one.
+                let t = Track(name: name, kind: .midi, colorIndex: project.tracks.count)
+                apply(.batch(commands: [.insertTrack(track: t, index: project.tracks.count),
+                                        .insertDevice(track: t.id, device: slot, index: 0)]))
+                selectedTrack = t.id
+            }
+        } else {
+            guard let target = target ?? project.tracks.first else { status = "Add a track first"; return }
+            apply(.insertDevice(track: target.id, device: slot, index: nil))
+            selectedTrack = target.id
+        }
+        detailTab = .devices
+        detailOpen = true
+    }
+
+    /// Handles items dragged from the sidebar: "fx:<id>" for a built-in effect, "au:<identifier>|<name>" for a plugin.
+    @discardableResult
+    func dropDevices(_ items: [String], on track: TrackID?) -> Bool {
+        var used = false
+        for item in items {
+            if item.hasPrefix("fx:") { addEffect(String(item.dropFirst(3)), to: track); used = true }
+            else if item.hasPrefix("au:") {
+                let parts = item.dropFirst(3).split(separator: "|", maxSplits: 1).map(String.init)
+                if parts.count == 2 { addAudioUnit(identifier: parts[0], name: parts[1], to: track); used = true }
+            }
+        }
+        return used
+    }
+
+    // MARK: MIDI
+
+    private func startMIDI() {
+        let monitor = MIDIInputMonitor()
+        let target = liveTarget, engine = engine
+        monitor.handler = { status, a, b in
+            let node = target.node
+            if node >= 0 { engine.sendLiveMIDI(node: node, status, a, b) }
+        }
+        midiMonitor = monitor
+        midiSources = monitor.sourceCount
+    }
+
+    /// Points live notes (keyboard, MIDI devices, piano roll clicks) at the selected MIDI track.
+    private func updateLiveTarget() {
+        guard let plan, let id = selectedTrack, project.track(id)?.kind == .midi,
+              let index = plan.trackOrder.firstIndex(where: { $0 == id }) else { liveTarget.node = -1; return }
+        liveTarget.node = index
+    }
+
+    func noteOn(_ pitch: UInt8, velocity: UInt8 = 100) {
+        if liveTarget.node >= 0 { engine.sendLiveMIDI(node: liveTarget.node, 0x90, pitch, velocity) }
+    }
+
+    func noteOff(_ pitch: UInt8) {
+        if liveTarget.node >= 0 { engine.sendLiveMIDI(node: liveTarget.node, 0x80, pitch, 0) }
+    }
+
+    /// A short note, for clicking in the piano roll.
+    func auditionNote(_ pitch: UInt8) {
+        noteOn(pitch)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(260))
+            noteOff(pitch)
+        }
+    }
+
+    func createMIDIClip(track: TrackID, row: Int) {
+        let clip = MIDIClip(start: 0, length: Tick(barTicks), loop: true)
+        apply(.setSlot(track: track, index: row, slot: SessionSlot(clip: .midi(clip))))
+        selectedClip = clip.id
+        selectedTrack = track
+        detailOpen = true
+        detailTab = .clip
+    }
+
+    func createMIDIClip(track: TrackID, at tick: Tick) {
+        let clip = MIDIClip(start: snap(tick), length: Tick(barTicks * 2))
+        apply(.insertClip(track: track, clip: .midi(clip)))
+        selectedClip = clip.id
+        selectedTrack = track
+        detailOpen = true
+        detailTab = .clip
+    }
+
+    func setNotes(_ clip: ClipID, _ notes: [MIDINote]) {
+        apply(.setMIDINotes(clip: clip, notes: notes), key: "notes\(clip)")
+    }
 
     // MARK: Devices
 
@@ -541,9 +682,10 @@ final class AppModel {
 
         let horizon = Tick(barTicks * 300)
         simulation = SessionSimulator.run(p, horizon: horizon)
-        let compiled = RenderPlan.compile(p, bank: bank, session: simulation)
+        let compiled = RenderPlan.compile(p, bank: bank, session: simulation, units: host.units)
         plan = compiled
         warnings = compiled.warnings
+        updateLiveTarget()
         let next = Renderer(plan: compiled, reusing: renderer)
         renderer = next
         engine.setRenderer(next)
@@ -566,6 +708,7 @@ final class AppModel {
     }
 
     func save() {
+        captureStates()
         do {
             try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
             try ProjectPackage.write(project, to: packageURL)
@@ -601,6 +744,7 @@ final class AppModel {
             reset(to: loaded.project, at: url)
             for asset in project.assets { loadAudio(asset) }
             rebuild()
+            syncPlugins()
             UserDefaults.standard.set(url.path, forKey: "lastProject")
         } catch {
             status = "Cannot open \(url.lastPathComponent): \(error)"
@@ -614,6 +758,7 @@ final class AppModel {
         project = new
         packageURL = url
         bank = AudioBank()
+        host.removeAll()
         waveforms = [:]
         performance = []
         undoStack = []; redoStack = []
@@ -695,6 +840,16 @@ final class AppModel {
                 try? Command.setSlot(track: trackID, index: row, slot: slot).apply(to: &project)
             }
         }
+        // A MIDI track with Apple's synth: two chord loops, so scene 1 and 2 have an instrument too.
+        func arpeggio(_ pitches: [UInt8]) -> Clip {
+            let notes = (0..<8).map { i in MIDINote(tick: Tick(Int64(i) * 480), length: Tick(440), pitch: pitches[i % 4] + (i >= 4 ? 12 : 0), velocity: i % 2 == 0 ? 100 : 80) }
+            return .midi(MIDIClip(start: 0, length: Tick(barTicks), loop: true, notes: notes))
+        }
+        var keys = Track(name: "Keys", kind: .midi, colorIndex: 7, volumeDb: 3)
+        keys.devices = [DeviceSlot(format: "audiounit", identifier: "aumu/dls /appl", name: "Apple DLS Synth")]
+        keys.slots = [SessionSlot(clip: arpeggio([57, 60, 64, 67])), SessionSlot(clip: arpeggio([53, 57, 60, 65]))]
+        try? Command.insertTrack(track: keys, index: project.tracks.count).apply(to: &project)
+
         // Two return tracks with effects, sends from Pad and Arp, a compressor on the drums, a limiter on the master.
         let reverbTrack = Track(name: "A Reverb", kind: .returnTrack, colorIndex: 4)
         let delayTrack = Track(name: "B Delay", kind: .returnTrack, colorIndex: 2)
@@ -720,6 +875,7 @@ final class AppModel {
         }
         undoStack = []; redoStack = []; canUndo = false; canRedo = false
         rebuild()
+        syncPlugins()
         save()
     }
 }

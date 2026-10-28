@@ -17,6 +17,9 @@ public final class AudioUnitEffect: @unchecked Sendable {
     }
 
     public let unit: AUAudioUnit
+    /// True for a synth: no audio input, MIDI in.
+    public let isInstrument: Bool
+    private let midiBlock: AUScheduleMIDIEventBlock?
     public let channels: Int
     public let maxFrames: Int
 
@@ -30,6 +33,13 @@ public final class AudioUnitEffect: @unchecked Sendable {
     public var latencySamples: Int { Int((unit.latency * sampleRate).rounded()) }
     public let sampleRate: Double
 
+    /// `identifier` is "type/subtype/manufacturer", each four characters (as `AudioUnitInfo.identifier`).
+    public static func instantiate(identifier: String, sampleRate: Double) async throws -> AudioUnitEffect {
+        let parts = identifier.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 3 else { throw HostError.notFound }
+        return try await instantiate(type: parts[0], subtype: parts[1], manufacturer: parts[2], sampleRate: sampleRate)
+    }
+
     public static func instantiate(type: String, subtype: String, manufacturer: String,
                                    sampleRate: Double, channels: Int = 2, maxFrames: Int = 4096) async throws -> AudioUnitEffect {
         var description = AudioComponentDescription(
@@ -42,6 +52,8 @@ public final class AudioUnitEffect: @unchecked Sendable {
 
     init(unit: AUAudioUnit, sampleRate: Double, channels: Int, maxFrames: Int) throws {
         self.unit = unit
+        self.isInstrument = unit.inputBusses.count == 0
+        self.midiBlock = unit.scheduleMIDIEventBlock
         self.sampleRate = sampleRate
         self.channels = channels
         self.maxFrames = maxFrames
@@ -49,9 +61,11 @@ public final class AudioUnitEffect: @unchecked Sendable {
         let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: AVAudioChannelCount(channels))!
         // Buses start disabled. A disabled input bus is never pulled, and the render call fails
         // with kAudioUnitErr_NoConnection (-10876).
-        unit.inputBusses[0].isEnabled = true
+        if unit.inputBusses.count > 0 {
+            unit.inputBusses[0].isEnabled = true
+            try unit.inputBusses[0].setFormat(format)
+        }
         unit.outputBusses[0].isEnabled = true
-        try unit.inputBusses[0].setFormat(format)
         try unit.outputBusses[0].setFormat(format)
         unit.maximumFramesToRender = AUAudioFrameCount(maxFrames)
         try unit.allocateRenderResources()
@@ -113,5 +127,36 @@ public final class AudioUnitEffect: @unchecked Sendable {
             }
         }
         return status
+    }
+
+    /// Sends one MIDI message to start `sampleOffset` frames into the next `process` call.
+    /// Realtime safe.
+    public func sendMIDI(_ status: UInt8, _ data1: UInt8, _ data2: UInt8, sampleOffset: Int = 0) {
+        guard let midiBlock else { return }
+        var bytes: (UInt8, UInt8, UInt8) = (status, data1, data2)
+        let time = AUEventSampleTime(sampleTime) + AUEventSampleTime(sampleOffset)
+        withUnsafePointer(to: &bytes) { raw in
+            raw.withMemoryRebound(to: UInt8.self, capacity: 3) { midiBlock(time, 0, 3, $0) }
+        }
+    }
+
+    /// All notes off and all sound off on every channel.
+    public func silenceNotes() {
+        for channel in 0..<16 {
+            sendMIDI(0xB0 | UInt8(channel), 123, 0)
+            sendMIDI(0xB0 | UInt8(channel), 120, 0)
+        }
+    }
+
+    /// The plugin state as a property list, to store in the project.
+    public func savedState() -> Data? {
+        guard let state = unit.fullState else { return nil }
+        return try? PropertyListSerialization.data(fromPropertyList: state, format: .binary, options: 0)
+    }
+
+    public func restore(state data: Data) {
+        guard let object = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let dictionary = object as? [String: Any] else { return }
+        unit.fullState = dictionary
     }
 }

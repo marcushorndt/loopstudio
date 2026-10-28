@@ -74,3 +74,23 @@ extension Project {
         return cuts + inserts
     }
 }
+
+extension Project {
+    /// A take made into a Session slot, cut to whole bars so that it loops in time: it starts on the first
+    /// bar line inside the take and keeps the whole bars after it (a bar short by at most an eighth counts).
+    /// A take shorter than half a bar after that line stays as it is.
+    public func barAligned(_ take: Clip) -> Clip {
+        let end = take.start + take.length
+        let bars = clickBeats(upTo: end + Tick(4 * 3_840)).filter(\.accent).map(\.tick)
+        guard let first = bars.first(where: { $0 >= take.start }) else { return take }
+        let following = bars.filter { $0 > first }
+        guard let nextBar = following.first else { return take }
+        let barLength = nextBar - first
+        guard end - first >= Tick(barLength.rawValue / 2) else { return take }
+        // The last bar line that the take reaches, give or take an eighth of a bar.
+        let reach = end + Tick(barLength.rawValue / 8)
+        let last = ([first] + following).last { $0 <= reach && $0 > first } ?? nextBar
+        guard let clip = first > take.start ? take.tail(from: first - take.start) : take else { return take }
+        return clip.placed(at: first, length: last - first, loop: clip.loops)
+    }
+}

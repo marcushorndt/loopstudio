@@ -149,7 +149,7 @@ extension AppModel {
             selectedClips = [take.id]
             return
         }
-        var clip = take
+        var clip = project.barAligned(take)
         switch clip {
         case .audio(var c): c.start = 0; c.loop = true; clip = .audio(c)
         case .midi(var c): c.start = 0; c.loop = true; clip = .midi(c)

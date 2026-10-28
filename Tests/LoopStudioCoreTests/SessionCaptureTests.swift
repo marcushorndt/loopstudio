@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import LoopStudioCore
 
@@ -85,4 +86,17 @@ private func setup() -> (Project, TrackID) {
     try #require(clips.count == 3, "two passes, then the tail of the arrangement clip")
     #expect(clips[0].lanes[0].points.first?.value == 0)
     #expect(abs((clips[1].lanes[0].points.first?.value ?? 0) - 0.5) < 1e-9, "the second pass starts halfway up the ramp")
+}
+
+@Test func aSlotTakeIsCutToWholeBars() {
+    let p = Project(name: "B")
+    let asset = AssetID(UUID())
+    // Recording began a quarter before bar 2 and ran just short of bar 4.
+    let take = Clip.audio(AudioClip(asset: asset, start: 2_880, length: 8_400, loop: false))
+    let aligned = p.barAligned(take)
+    #expect(aligned.start == 3_840)
+    #expect(aligned.length == 7_680, "two whole bars")
+    if case .audio(let a) = aligned { #expect(a.offset == 960, "the audio before the bar line is skipped") }
+    let short = Clip.audio(AudioClip(asset: asset, start: 0, length: 960, loop: false))
+    #expect(p.barAligned(short) == short, "less than half a bar stays as it is")
 }

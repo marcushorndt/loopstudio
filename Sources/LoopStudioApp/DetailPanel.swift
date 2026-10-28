@@ -6,12 +6,27 @@ struct DetailPanel: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        HStack(spacing: 0) {
-            ClipPanel().frame(maxWidth: .infinity)
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                tab("Clip", .clip)
+                tab("Devices", .devices)
+                Spacer()
+            }
+            .padding(.horizontal, 10).padding(.vertical, 4)
             Divider().overlay(Theme.line)
-            DevicePanel().frame(width: 300)
+            switch model.detailTab {
+            case .clip: ClipPanel().frame(maxWidth: .infinity)
+            case .devices: DeviceChainView().frame(maxWidth: .infinity)
+            }
         }
         .background(Theme.panel)
+    }
+
+    private func tab(_ title: String, _ value: DetailTab) -> some View {
+        Button(title) { model.detailTab = value }
+            .buttonStyle(.plain).font(.system(size: 12, weight: model.detailTab == value ? .bold : .regular))
+            .foregroundStyle(model.detailTab == value ? Theme.accent : Theme.dim)
+            .padding(.horizontal, 10).padding(.vertical, 3)
     }
 }
 
@@ -164,26 +179,5 @@ private struct FollowEditor: View {
 
     private func commit(_ s: SessionSlot, key: String? = nil) {
         model.apply(.setSlot(track: track.id, index: row, slot: s), key: key.map { "\($0)\(s.clip.id)" })
-    }
-}
-
-private struct DevicePanel: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Devices").font(.caption.bold()).foregroundStyle(Theme.dim)
-            if let t = model.selectedTrack.flatMap({ model.project.track($0) }) {
-                Text(t.name).font(.headline)
-                if t.devices.isEmpty {
-                    Text("No devices. Effects and instruments from the sidebar will go here.").font(.caption).foregroundStyle(Theme.dim)
-                }
-                ForEach(t.devices, id: \.id) { Text($0.name) }
-            } else {
-                Text("Select a track.").foregroundStyle(Theme.dim)
-            }
-            Spacer()
-        }
-        .padding(10)
     }
 }

@@ -20,7 +20,7 @@ struct SidebarView: View {
             Divider()
             switch model.sidebarTab {
             case .audio: AudioBrowser(search: search)
-            case .effects: UnitList(title: "Audio Effects", match: "effect", units: units, loaded: unitsLoaded, search: search, builtIn: builtInEffects)
+            case .effects: UnitList(title: "Audio Effects", match: "effect", units: units, loaded: unitsLoaded, search: search, builtIn: BuiltInEffects.all)
             case .instruments: UnitList(title: "Instruments", match: "instrument", units: units, loaded: unitsLoaded, search: search, builtIn: [])
             case .projects: ProjectList()
             }
@@ -31,8 +31,6 @@ struct SidebarView: View {
             unitsLoaded = true
         }
     }
-
-    private let builtInEffects = ["Auto Filter", "Compressor", "Delay", "EQ Three", "Limiter", "Reverb", "Utility"]
 
     private var tabs: some View {
         HStack(spacing: 2) {
@@ -161,19 +159,24 @@ struct FileRow: View {
 // MARK: Effects and instruments
 
 struct UnitList: View {
+    @Environment(AppModel.self) private var model
     let title: String
     let match: String
     let units: [AudioUnitInfo]
     let loaded: Bool
     let search: String
-    let builtIn: [String]
+    let builtIn: [EffectSpec]
 
     var body: some View {
         List {
             if !builtIn.isEmpty {
-                Section("LoopStudio (planned)") {
-                    ForEach(builtIn.filter { search.isEmpty || $0.localizedCaseInsensitiveContains(search) }, id: \.self) {
-                        Label($0, systemImage: "slider.horizontal.3").foregroundStyle(Theme.dim)
+                Section("LoopStudio") {
+                    ForEach(builtIn.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }, id: \.id) { spec in
+                        Label(spec.name, systemImage: "slider.horizontal.3")
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) { model.addEffect(spec.id) }
+                            .draggable("fx:\(spec.id)")
+                            .help("Double-click to add to the selected track, or drag it onto a track.")
                     }
                 }
             }
@@ -189,7 +192,7 @@ struct UnitList: View {
                 if loaded && shown.isEmpty { Text("None found").foregroundStyle(Theme.dim) }
             }
             Section {
-                Text("Loading these onto tracks arrives with the device chain milestone.").font(.caption).foregroundStyle(Theme.dim)
+                Text("Audio Units are listed here. Hosting them in the chain comes next.").font(.caption).foregroundStyle(Theme.dim)
             }
         }
         .listStyle(.sidebar)

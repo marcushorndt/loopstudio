@@ -12,6 +12,7 @@ public enum CommandError: Error, Equatable {
     case assetInUse(AssetID)
     case portNotFound(PortID)
     case portInUse(PortID)
+    case deviceNotFound(DeviceID)
 }
 
 /// Every edit to a project is a command. Commands are plain data (Codable), so the same type serves
@@ -55,6 +56,14 @@ public enum Command: Codable, Sendable {
     case setHardwareOutput(id: TrackID, port: PortID?)
     case setAudioInput(id: TrackID, port: PortID?)
     case setMIDIInput(id: TrackID, selection: MIDIInputSelection?)
+
+    /// Device chain of a track. `index` nil means the end.
+    case insertDevice(track: TrackID, device: DeviceSlot, index: Int?)
+    case removeDevice(track: TrackID, device: DeviceID)
+    case moveDevice(track: TrackID, device: DeviceID, to: Int)
+    /// Sets a built-in parameter. `nil` returns it to the default.
+    case setDeviceParam(track: TrackID, device: DeviceID, key: String, value: Double?)
+    case setDeviceBypass(track: TrackID, device: DeviceID, bypassed: Bool)
 
     /// Replaces the whole launch list. The list is sorted by tick and track.
     case setLaunches(launches: [Launch])
@@ -315,6 +324,47 @@ extension Project {
                 return t.audioInput
             }
             return .setAudioInput(id: id, port: old)
+
+        case .insertDevice(let trackID, let device, let index):
+            let exists = allTracks.contains { $0.devices.contains { $0.id == device.id } }
+            guard !exists else { throw CommandError.duplicateID(device.id.description) }
+            return try withTrack(trackID) { t in
+                let at = min(max(0, index ?? t.devices.count), t.devices.count)
+                t.devices.insert(device, at: at)
+                return .removeDevice(track: trackID, device: device.id)
+            }
+
+        case .removeDevice(let trackID, let id):
+            return try withTrack(trackID) { t in
+                guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
+                let removed = t.devices.remove(at: i)
+                return .insertDevice(track: trackID, device: removed, index: i)
+            }
+
+        case .moveDevice(let trackID, let id, let to):
+            return try withTrack(trackID) { t in
+                guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
+                let d = t.devices.remove(at: i)
+                t.devices.insert(d, at: min(max(0, to), t.devices.count))
+                return .moveDevice(track: trackID, device: id, to: i)
+            }
+
+        case .setDeviceParam(let trackID, let id, let key, let value):
+            if let value, !value.isFinite { throw CommandError.invalidValue("not a number") }
+            return try withTrack(trackID) { t in
+                guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
+                let old = t.devices[i].params[key]
+                t.devices[i].params[key] = value
+                return .setDeviceParam(track: trackID, device: id, key: key, value: old)
+            }
+
+        case .setDeviceBypass(let trackID, let id, let bypassed):
+            return try withTrack(trackID) { t in
+                guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
+                let old = t.devices[i].bypassed
+                t.devices[i].bypassed = bypassed
+                return .setDeviceBypass(track: trackID, device: id, bypassed: old)
+            }
 
         case .setLaunches(let list):
             for launch in list {

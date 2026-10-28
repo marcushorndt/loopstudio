@@ -15,7 +15,32 @@ public final class Renderer {
     private let buffers: UnsafeMutablePointer<Float> // per node: left block, right block
     private let peaks: UnsafeMutablePointer<Float>   // per node: largest sample since the last `takePeak`
 
-    public init(plan: RenderPlan, maxBlock: Int = 4096) {
+    private struct Slot { var effect: DSPEffect; var bypassed: Bool }
+    private let chains: [[Slot]]
+    private let instances: [DeviceID: DSPEffect]
+
+    /// With `reusing`, effects that exist in both plans keep their memory (reverb tails, filter state),
+    /// so changing a knob does not cut the sound.
+    public init(plan: RenderPlan, maxBlock: Int = 4096, reusing old: Renderer? = nil) {
+        var made: [DeviceID: DSPEffect] = [:]
+        var built: [[Slot]] = []
+        for node in plan.nodes {
+            var chain: [Slot] = []
+            for e in node.effects {
+                let effect: DSPEffect
+                if let kept = old?.instances[e.device], kept.spec.id == e.kind, kept.sampleRate == plan.sampleRate {
+                    effect = kept
+                } else if let new = DSPEffect.make(e.kind, sampleRate: plan.sampleRate) {
+                    effect = new
+                } else { continue }
+                effect.configure(e.params)
+                made[e.device] = effect
+                chain.append(Slot(effect: effect, bypassed: e.bypassed))
+            }
+            built.append(chain)
+        }
+        chains = built
+        instances = made
         self.plan = plan
         self.maxBlock = maxBlock
         nodeCount = plan.nodes.count
@@ -33,6 +58,11 @@ public final class Renderer {
         buffers.deallocate()
         peaks.deallocate()
     }
+
+    var instancesForTesting: [DeviceID: DSPEffect] { instances }
+
+    /// Clears every effect's memory (delay lines, reverb tails). Called after a stop or a jump.
+    public func reset() { for effect in instances.values { effect.reset() } }
 
     /// The largest absolute sample of a node (after its fader) since the last call. For meters.
     public func takePeak(node: Int) -> Float {
@@ -56,6 +86,7 @@ public final class Renderer {
             let l = left(i), r = right(i)
 
             for clip in node.clips { mix(clip, into: l, r, blockStart: startFrame, frames: frames) }
+            for slot in chains[i] where !slot.bypassed { slot.effect.process(l, r, frames: frames) }
 
             for send in node.sends where send.preFader { add(l, r, gain: send.gain, to: send.target, frames: frames) }
 

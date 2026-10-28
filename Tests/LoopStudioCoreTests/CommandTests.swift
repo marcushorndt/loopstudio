@@ -291,3 +291,39 @@ func randomEditsKeepInvariantsAndUndoBackToTheStart(seed: UInt64) throws {
     #expect(p == initial)
     #expect(final != initial)
 }
+
+// MARK: Devices
+
+@Test func deviceCommandsUndoExactly() throws {
+    var p = Fixture.baseProject()
+    let t = Track(name: "A", kind: .audio)
+    try Command.insertTrack(track: t, index: 0).apply(to: &p)
+    let a = BuiltInEffects.makeSlot("delay")!, b = BuiltInEffects.makeSlot("reverb")!
+    let commands: [Command] = [
+        .insertDevice(track: t.id, device: a, index: nil),
+        .insertDevice(track: t.id, device: b, index: 0),
+        .moveDevice(track: t.id, device: b.id, to: 1),
+        .setDeviceParam(track: t.id, device: a.id, key: "mix", value: 0.9),
+        .setDeviceBypass(track: t.id, device: a.id, bypassed: true),
+        .removeDevice(track: t.id, device: b.id),
+    ]
+    for command in commands {
+        let before = p
+        let inverse = try command.apply(to: &p)
+        #expect(p != before)
+        try inverse.apply(to: &p)
+        #expect(p == before)
+        try command.apply(to: &p)
+    }
+    #expect(p.tracks[0].devices.map(\.id) == [a.id])
+    #expect(p.tracks[0].devices[0].params["mix"] == 0.9 && p.tracks[0].devices[0].bypassed)
+    #expect(throws: CommandError.self) { try Command.insertDevice(track: t.id, device: a, index: nil).apply(to: &p) }
+    #expect(throws: CommandError.self) { try Command.removeDevice(track: t.id, device: DeviceID()).apply(to: &p) }
+}
+
+@Test func oldDeviceFilesStillLoad() throws {
+    let id = DeviceID()
+    let json = #"{"id":"\#(id.rawValue.uuidString)","format":"builtin","identifier":"delay","name":"Delay","bypassed":false}"#
+    let slot = try JSONDecoder().decode(DeviceSlot.self, from: Data(json.utf8))
+    #expect(slot.params.isEmpty && slot.id == id)
+}

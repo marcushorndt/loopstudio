@@ -83,7 +83,9 @@ struct TransportBar: View {
 
             HStack(spacing: 4) {
                 tile("repeat", on: model.project.loop?.enabled == true, tint: Theme.accent) { model.toggleLoop() }
-                    .help("Loop (⌘L)")
+                    .help("Loop on/off (⇧⌘L)")
+                Button("Loop Selection") { model.loopSelection() }.controlSize(.small)
+                    .help("Loop the marked range or clips and turn the loop on (⌘L)")
                 if model.arrangementOverridden {
                     Button("Back to Arrangement") { model.backToArrangement() }
                         .buttonStyle(.borderedProminent).tint(Theme.accent).controlSize(.small)

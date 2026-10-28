@@ -47,6 +47,10 @@ private struct TrackColumn: View {
     var body: some View {
         VStack(spacing: gap) {
             header
+            if track.kind == .returnTrack {
+                Color.clear.frame(height: CGFloat(rows) * (slotHeight + gap) - gap)
+                Text("Return").font(.caption).foregroundStyle(Theme.dim).frame(height: slotHeight)
+            } else {
             ForEach(0..<rows, id: \.self) { row in SlotCell(track: track, row: row) }
             Button { model.stopTrack(track.id) } label: {
                 Image(systemName: "stop.fill").font(.system(size: 9)).foregroundStyle(Theme.dim)
@@ -54,6 +58,7 @@ private struct TrackColumn: View {
                     .background(Theme.panel, in: RoundedRectangle(cornerRadius: 3))
             }
             .buttonStyle(.plain).help("Stop this track's clip at the next bar")
+            }
         }
         .frame(width: columnWidth)
     }
@@ -78,6 +83,10 @@ private struct TrackColumn: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { name = track.name; renaming = true }
         .onTapGesture { model.selectedTrack = track.id }
+        .dropDestination(for: String.self) { items, _ in
+            for item in items where item.hasPrefix("fx:") { model.addEffect(String(item.dropFirst(3)), to: track.id) }
+            return true
+        }
         .contextMenu {
             Button("Rename") { name = track.name; renaming = true }
             Button("Delete Track", role: .destructive) { model.removeTrack(track.id) }

@@ -7,6 +7,7 @@ private let rulerHeight: CGFloat = 28
 
 struct ArrangementView: View {
     @Environment(AppModel.self) private var model
+    @State private var marquee: CGRect?
 
     var body: some View {
         let tracks = model.project.tracks
@@ -35,10 +36,31 @@ struct ArrangementView: View {
                                 Lane(track: track, index: index, count: tracks.count, width: width)
                             }
                         }
+                        SelectionOverlay(tracks: tracks)
+                        if let m = marquee {
+                            Rectangle().fill(Theme.accent.opacity(0.15)).overlay(Rectangle().stroke(Theme.accent, lineWidth: 1))
+                                .frame(width: m.width, height: m.height).offset(x: m.minX, y: m.minY).allowsHitTesting(false)
+                        }
                         LoopBrace(width: width)
                         Playhead(height: rulerHeight + laneHeight * CGFloat(max(1, tracks.count)))
                     }
                     .frame(width: width, alignment: .topLeading)
+                    .gesture(DragGesture(minimumDistance: 5)
+                        .onChanged { g in
+                            guard g.startLocation.y > rulerHeight else { return }
+                            marquee = CGRect(x: min(g.startLocation.x, g.location.x), y: min(g.startLocation.y, g.location.y),
+                                             width: abs(g.location.x - g.startLocation.x), height: abs(g.location.y - g.startLocation.y))
+                        }
+                        .onEnded { g in
+                            defer { marquee = nil }
+                            guard let m = marquee, !tracks.isEmpty else { return }
+                            let first = max(0, Int((m.minY - rulerHeight) / laneHeight))
+                            let last = min(tracks.count - 1, Int((m.maxY - rulerHeight) / laneHeight))
+                            guard first <= last else { return }
+                            let ids = Set(tracks[first...last].map(\.id))
+                            let a = model.snap(xTick(m.minX, model)), b = model.snap(xTick(m.maxX, model))
+                            model.selectRange(from: a, to: b > a ? b : a + Tick(Tick.perQuarter), tracks: ids)
+                        })
                 }
             }
         }
@@ -81,6 +103,10 @@ private struct ArrangementHeader: View {
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .onTapGesture { model.selectedTrack = track.id }
+        .dropDestination(for: String.self) { items, _ in
+            for item in items where item.hasPrefix("fx:") { model.addEffect(String(item.dropFirst(3)), to: track.id) }
+            return true
+        }
     }
 
     private func pill(_ label: String, on: Bool, tint: Color, action: @escaping () -> Void) -> some View {
@@ -144,7 +170,7 @@ private struct Lane: View {
         .background(index % 2 == 0 ? Theme.background : Color(white: 0.145))
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .contentShape(Rectangle())
-        .onTapGesture { model.selectedTrack = track.id }
+        .onTapGesture { model.selectedTrack = track.id; model.clearSelection() }
         .dropDestination(for: URL.self) { urls, location in
             model.dropOnTimeline(urls, track: track.id, at: xTick(location.x, model))
         }
@@ -160,11 +186,14 @@ private struct ArrangementClip: View {
     @State private var drag: CGSize = .zero
     @State private var resize: CGFloat = 0
 
+    /// The clip being dragged follows its own gesture; the rest of a marked group follows it.
+    private var shown: CGSize { drag != .zero ? drag : (model.selectedClips.contains(clip.id) ? model.groupDrag : .zero) }
+
     var body: some View {
         let tint = Theme.track(track.colorIndex)
         let x = tickX(clip.start, model)
         let w = max(6, tickX(clip.length, model) + resize)
-        let selected = model.selectedClip == clip.id
+        let selected = model.selectedClips.contains(clip.id) || model.selectedClip == clip.id
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 4).fill(tint.opacity(0.75))
             if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
@@ -188,17 +217,24 @@ private struct ArrangementClip: View {
                     })
                 .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
         }
-        .offset(x: x + drag.width, y: 3 + drag.height)
-        .zIndex(drag == .zero ? 0 : 10)
-        .onTapGesture { model.selectedClip = clip.id; model.selectedTrack = track.id }
+        .offset(x: x + shown.width, y: 3 + shown.height)
+        .zIndex(shown == .zero ? 0 : 10)
+        .onTapGesture {
+            model.select(clip: clip.id, extend: NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command))
+            model.selectedTrack = track.id
+        }
         .gesture(DragGesture(minimumDistance: 4)
-            .onChanged { drag = $0.translation }
+            .onChanged { g in
+                if !model.selectedClips.contains(clip.id) { model.select(clip: clip.id, extend: false) }
+                drag = g.translation
+                model.groupDrag = g.translation
+            }
             .onEnded { g in
                 drag = .zero
+                model.groupDrag = .zero
                 let start = model.snap(xTick(x + g.translation.width, model))
                 let shift = Int((g.translation.height / laneHeight).rounded())
-                let target = model.project.tracks[min(max(0, trackIndex + shift), trackCount - 1)]
-                model.apply(.moveClip(clip: clip.id, toTrack: target.id, start: start))
+                model.moveClips(Array(model.selectedClips.union([clip.id])), deltaTicks: start.rawValue - clip.start.rawValue, trackShift: shift)
             })
         .contextMenu { Button("Delete", role: .destructive) { model.apply(.removeClip(clip: clip.id)) } }
     }
@@ -244,5 +280,24 @@ private struct LoopBrace: View {
 
     private func handle(x: CGFloat) -> some View {
         Rectangle().fill(Theme.accent).frame(width: 6, height: 14).offset(x: x, y: rulerHeight - 14).contentShape(Rectangle())
+    }
+}
+
+/// The marked time range, drawn over each marked track.
+private struct SelectionOverlay: View {
+    @Environment(AppModel.self) private var model
+    let tracks: [Track]
+
+    var body: some View {
+        if let r = model.rangeSelection {
+            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                if r.tracks.contains(track.id) {
+                    Rectangle().fill(.white.opacity(0.10))
+                        .frame(width: max(1, tickX(r.end, model) - tickX(r.start, model)), height: laneHeight)
+                        .offset(x: tickX(r.start, model), y: rulerHeight + CGFloat(index) * laneHeight)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
     }
 }

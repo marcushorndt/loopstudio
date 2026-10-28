@@ -69,6 +69,19 @@ struct MixerStrip: View {
                 .contextMenu { Button("Center") { model.apply(.setPan(id: track.id, pan: 0)) } }
                 .help("Pan")
 
+            if !isMaster && track.kind != .returnTrack {
+                ForEach(model.project.tracks.filter { $0.kind == .returnTrack }, id: \.id) { ret in
+                    HStack(spacing: 4) {
+                        Text(String(ret.name.prefix(1))).font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.track(ret.colorIndex))
+                        Slider(value: Binding(
+                            get: { (model.sendLevel(track, to: ret.id) + 48) / 48 },
+                            set: { model.setSend(from: track, to: ret.id, db: $0 <= 0.01 ? -96 : -48 + 48 * $0) }), in: 0...1)
+                            .controlSize(.mini)
+                    }
+                    .help("Send to \(ret.name)")
+                }
+            }
+
             HStack(spacing: 6) {
                 Fader(db: track.volumeDb) { model.apply(.setVolume(id: track.id, db: $0), key: "vol\(track.id)") }
                     .frame(width: 44, height: 100)
@@ -93,7 +106,14 @@ struct MixerStrip: View {
         }
         .padding(6)
         .frame(width: width)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 4))
+        .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: 4))
+        .onTapGesture { model.selectedTrack = track.id }
+        .dropDestination(for: String.self) { items, _ in drop(items) }
+    }
+
+    private func drop(_ items: [String]) -> Bool {
+        for item in items where item.hasPrefix("fx:") { model.addEffect(String(item.dropFirst(3)), to: track.id) }
+        return true
     }
 
     /// For mute, the lit state means "audible", as in Live (the activator).

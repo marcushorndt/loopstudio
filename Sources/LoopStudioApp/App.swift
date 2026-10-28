@@ -23,6 +23,7 @@ struct LoopStudioApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Project") { model.newProject() }.keyboardShortcut("n")
+                Button("New Demo Project") { model.newDemoProject() }
                 Button("Save") { model.save() }.keyboardShortcut("s")
             }
             CommandGroup(replacing: .undoRedo) {
@@ -33,10 +34,13 @@ struct LoopStudioApp: App {
                 Button(model.transportPlaying ? "Stop" : "Play") { model.togglePlay() }.keyboardShortcut(.space, modifiers: [])
                 Button("Stop and Rewind") { model.stop() }.keyboardShortcut(".", modifiers: .command)
                 Button("Stop All Clips") { model.stopAllClips() }.keyboardShortcut(".", modifiers: [.command, .shift])
-                Button("Loop") { model.toggleLoop() }.keyboardShortcut("l", modifiers: .command)
+                Button("Loop Selection") { model.loopSelection() }.keyboardShortcut("l", modifiers: .command)
+                Button("Loop On/Off") { model.toggleLoop() }.keyboardShortcut("l", modifiers: [.command, .shift])
             }
             CommandMenu("Track") {
                 Button("Insert Audio Track") { model.addTrack(kind: .audio) }.keyboardShortcut("t", modifiers: .command)
+                Button("Delete Selected Clips") { model.deleteSelected() }.keyboardShortcut(.delete, modifiers: [])
+                Button("Insert Return Track") { model.addTrack(kind: .returnTrack) }.keyboardShortcut("t", modifiers: [.command, .option])
                 Button("Insert MIDI Track") { model.addTrack(kind: .midi) }.keyboardShortcut("t", modifiers: [.command, .shift])
             }
             CommandGroup(after: .toolbar) {

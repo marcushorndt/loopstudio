@@ -12,6 +12,13 @@ struct ClipPlan {
     var fadeOut: Int64
 }
 
+struct EffectPlan {
+    var device: DeviceID
+    var kind: String
+    var params: [String: Double]
+    var bypassed: Bool
+}
+
 struct SendPlan {
     var target: Int
     var gain: Float
@@ -28,6 +35,7 @@ struct NodePlan {
     /// Index of the node this one feeds. The master has none.
     var output: Int?
     var sends: [SendPlan]
+    var effects: [EffectPlan] = []
 }
 
 /// Everything the renderer needs, compiled from a project. Immutable; built off the audio thread.
@@ -153,13 +161,25 @@ public struct RenderPlan {
             nodes.append(NodePlan(
                 isMaster: false, clips: clips, gain: silent ? 0 : dB(t.volumeDb), panLeft: pl, panRight: pr,
                 output: t.output.flatMap { index[$0] } ?? masterIndex,
-                sends: t.sends.compactMap { s in index[s.target].map { SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader) } }))
+                sends: t.sends.compactMap { s in index[s.target].map { SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader) } },
+                effects: effects(of: t, warnings: &warnings)))
         }
 
         let (ml, mr) = balance(project.master.pan)
         nodes.append(NodePlan(isMaster: true, clips: [], gain: project.master.mute ? 0 : dB(project.master.volumeDb),
-                              panLeft: ml, panRight: mr, output: nil, sends: []))
+                              panLeft: ml, panRight: mr, output: nil, sends: [],
+                              effects: effects(of: project.master, warnings: &warnings)))
         return RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings,
                           trackOrder: order.map { Optional($0) } + [nil])
+    }
+
+    private static func effects(of track: Track, warnings: inout [String]) -> [EffectPlan] {
+        track.devices.compactMap { d in
+            guard d.format == "builtin", BuiltInEffects.spec(d.identifier) != nil else {
+                if d.format != "builtin" { warnings.append("\(d.name) on \"\(track.name)\" is not hosted yet") }
+                return nil
+            }
+            return EffectPlan(device: d.id, kind: d.identifier, params: d.params, bypassed: d.bypassed)
+        }
     }
 }

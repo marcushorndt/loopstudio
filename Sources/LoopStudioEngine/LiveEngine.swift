@@ -17,6 +17,7 @@ public final class LiveEngine: @unchecked Sendable {
     private var playing = false
     private var position: Int64 = 0
     private var loop: Range<Int64>?
+    private var resetPending = false
     public let sampleRate: Double
 
     public init(sampleRate: Double) {
@@ -60,8 +61,8 @@ public final class LiveEngine: @unchecked Sendable {
     public var positionFrame: Int64 { locked { position } }
 
     public func play() { locked { playing = true } }
-    public func pause() { locked { playing = false } }
-    public func seek(to frame: Int64) { locked { position = max(0, frame) } }
+    public func pause() { locked { playing = false; resetPending = true } }
+    public func seek(to frame: Int64) { locked { position = max(0, frame); resetPending = true } }
     public func setLoop(_ range: Range<Int64>?) { locked { loop = range } }
 
     public func takePeak(node: Int) -> Float { locked { renderer?.takePeak(node: node) ?? 0 } }
@@ -90,6 +91,8 @@ public final class LiveEngine: @unchecked Sendable {
             left.update(repeating: 0, count: frameCount); right.update(repeating: 0, count: frameCount)
             return
         }
+
+        if resetPending { renderer.reset(); resetPending = false }
 
         var done = 0
         while done < frameCount {

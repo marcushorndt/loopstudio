@@ -5,7 +5,15 @@ import LoopStudioEngine
 import LoopStudioProject
 import Observation
 
+/// A marked time range over one or more tracks in the arrangement.
+struct RangeSelection: Equatable {
+    var start: Tick
+    var end: Tick
+    var tracks: Set<TrackID>
+}
+
 enum ViewMode: String { case session, arrangement }
+enum DetailTab { case clip, devices }
 enum SidebarTab: String, CaseIterable { case audio, effects, instruments, projects }
 
 enum SlotState {
@@ -32,7 +40,15 @@ final class AppModel {
     var viewMode: ViewMode = .session
     var sidebarTab: SidebarTab = .audio
     var detailOpen = true
-    var selectedClip: ClipID?
+    var detailTab: DetailTab = .clip
+    var selectedClip: ClipID? {
+        didSet { if let c = selectedClip, !selectedClips.contains(c) { selectedClips = [c] } }
+    }
+    /// All marked clips. `selectedClip` is the one the clip panel shows.
+    var selectedClips: Set<ClipID> = []
+    var rangeSelection: RangeSelection?
+    /// While a clip of a marked group is dragged, the others follow by this offset.
+    var groupDrag: CGSize = .zero
     var selectedTrack: TrackID?
     var pixelsPerBar: Double = 90
     private(set) var transportPlaying = false
@@ -45,6 +61,7 @@ final class AppModel {
     @ObservationIgnored let engine: LiveEngine
     @ObservationIgnored private var bank = AudioBank()
     @ObservationIgnored private var plan: RenderPlan?
+    @ObservationIgnored private var renderer: Renderer?
     @ObservationIgnored private var performance: [Launch] = []
     @ObservationIgnored private var undoStack: [Command] = []
     @ObservationIgnored private var redoStack: [Command] = []
@@ -76,6 +93,7 @@ final class AppModel {
     /// Launches scene 1, then prints what the engine plays. Used to check the live path without ears.
     private func runSelfTest() {
         Task { @MainActor in
+            newDemoProject()
             try? await Task.sleep(for: .seconds(1))
             launchScene(0)
             var maxPeak: Float = 0
@@ -86,6 +104,8 @@ final class AppModel {
                 let playing = project.tracks.filter {
                     if case .playing = slotState(track: $0, row: 0, at: currentTick) { true } else { false }
                 }.map(\.name)
+                let perTrack = project.tracks.map { "\($0.name)=\(String(format: "%.2f", meterLevel(track: $0.id)))" }.joined(separator: " ")
+                FileHandle.standardError.write(Data("selftest tracks \(perTrack)\n".utf8))
                 FileHandle.standardError.write(Data("selftest t=\(second)s pos=\(positionText()) master peak=\(String(format: "%.3f", peak)) playing=\(playing)\n".utf8))
             }
             FileHandle.standardError.write(Data("selftest max peak \(maxPeak) events=\(simulation.events.count)\n".utf8))
@@ -150,6 +170,70 @@ final class AppModel {
     func backToArrangement() {
         performance = []
         rebuild()
+    }
+
+    // MARK: Selection
+
+    func select(clip id: ClipID, extend: Bool) {
+        rangeSelection = nil
+        if extend {
+            if selectedClips.contains(id) {
+                selectedClips.remove(id)
+                if selectedClip == id { selectedClip = selectedClips.first }
+            } else {
+                selectedClips.insert(id)
+                selectedClip = id
+            }
+        } else {
+            selectedClips = [id]
+            selectedClip = id
+        }
+    }
+
+    func clearSelection() {
+        selectedClips = []
+        selectedClip = nil
+        rangeSelection = nil
+    }
+
+    /// Marks a time range on some tracks. Every arrangement clip that touches it is marked too.
+    func selectRange(from a: Tick, to b: Tick, tracks: Set<TrackID>) {
+        let start = min(a, b), end = max(a, b)
+        guard end > start, !tracks.isEmpty else { return }
+        rangeSelection = RangeSelection(start: start, end: end, tracks: tracks)
+        var ids = Set<ClipID>()
+        for t in project.tracks where tracks.contains(t.id) {
+            for c in t.clips where c.start < end && c.start + c.length > start { ids.insert(c.id) }
+        }
+        selectedClips = ids
+        selectedClip = ids.first
+    }
+
+    /// Loops the marked range (or the extent of the marked clips) and turns the loop on.
+    /// With nothing marked it only switches the loop on or off.
+    func loopSelection() {
+        var range: (Tick, Tick)?
+        if let r = rangeSelection { range = (r.start, r.end) }
+        else if !selectedClips.isEmpty {
+            let found = selectedClips.compactMap { project.findClip($0)?.clip }
+            if let lo = found.map(\.start).min(), let hi = found.map({ $0.start + $0.length }).max() { range = (lo, hi) }
+        }
+        guard let (start, end) = range, end > start else { toggleLoop(); return }
+        apply(.setLoop(loop: LoopRegion(start: start, end: end, enabled: true)))
+        if !transportPlaying || currentTick < start || currentTick >= end { seek(to: start) }
+    }
+
+    /// Moves every clip in `ids` by the same time and track offset, as one undo step.
+    func moveClips(_ ids: [ClipID], deltaTicks: Int64, trackShift: Int) {
+        var commands: [Command] = []
+        let tracks = project.tracks
+        for id in ids {
+            guard let (trackID, clip) = project.findClip(id), let from = tracks.firstIndex(where: { $0.id == trackID }),
+                  tracks[from].clips.contains(where: { $0.id == id }) else { continue }
+            let to = min(max(0, from + trackShift), tracks.count - 1)
+            commands.append(.moveClip(clip: id, toTrack: tracks[to].id, start: Tick(max(0, clip.start.rawValue + deltaTicks))))
+        }
+        if !commands.isEmpty { apply(.batch(commands: commands)) }
     }
 
     func toggleLoop() {
@@ -257,6 +341,7 @@ final class AppModel {
         canRedo = !redoStack.isEmpty
         dirty = true
         if let c = selectedClip, project.findClip(c) == nil { selectedClip = nil }
+        selectedClips = selectedClips.filter { project.findClip($0) != nil }
         rebuild()
         scheduleSave()
     }
@@ -269,15 +354,47 @@ final class AppModel {
     }
 
     func deleteSelected() {
-        guard let id = selectedClip, let (track, clip) = project.findClip(id) else { return }
-        if let t = project.track(track), let row = t.slots.firstIndex(where: { $0?.clip.id == id }) {
-            apply(.setSlot(track: track, index: row, slot: nil))
-        } else {
-            apply(.removeClip(clip: clip.id))
+        var commands: [Command] = []
+        for id in selectedClips.isEmpty ? Set(selectedClip.map { [$0] } ?? []) : selectedClips {
+            guard let (track, clip) = project.findClip(id) else { continue }
+            if let t = project.track(track), let row = t.slots.firstIndex(where: { $0?.clip.id == id }) {
+                commands.append(.setSlot(track: track, index: row, slot: nil))
+            } else {
+                commands.append(.removeClip(clip: clip.id))
+            }
         }
+        if !commands.isEmpty { apply(.batch(commands: commands)) }
     }
 
     func removeTrack(_ id: TrackID) { apply(.removeTrack(id: id)) }
+
+    // MARK: Devices
+
+    /// Adds a built-in effect at the end of a track's chain. Without a track it uses the selected one,
+    /// then the first audio track.
+    func addEffect(_ id: String, to track: TrackID? = nil) {
+        guard let slot = BuiltInEffects.makeSlot(id) else { return }
+        guard let target = track ?? selectedTrack ?? project.tracks.first?.id else { status = "Add a track first"; return }
+        apply(.insertDevice(track: target, device: slot, index: nil))
+        selectedTrack = target
+        detailTab = .devices
+        detailOpen = true
+    }
+
+    func setDeviceParam(_ track: TrackID, _ device: DeviceID, _ key: String, _ value: Double?) {
+        apply(.setDeviceParam(track: track, device: device, key: key, value: value), key: "dev\(device)\(key)")
+    }
+
+    func setSend(from track: Track, to target: TrackID, db: Double) {
+        var sends = track.sends
+        if let i = sends.firstIndex(where: { $0.target == target }) { sends[i].levelDb = db }
+        else { sends.append(Send(target: target, levelDb: db)) }
+        apply(.setSends(id: track.id, sends: sends), key: "send\(track.id)\(target)")
+    }
+
+    func sendLevel(_ track: Track, to target: TrackID) -> Double {
+        track.sends.first { $0.target == target }?.levelDb ?? -96
+    }
 
     func duplicateSlot(track: TrackID, row: Int) {
         guard let t = project.track(track), row < t.slots.count, var slot = t.slots[row] else { return }
@@ -427,7 +544,9 @@ final class AppModel {
         let compiled = RenderPlan.compile(p, bank: bank, session: simulation)
         plan = compiled
         warnings = compiled.warnings
-        engine.setRenderer(Renderer(plan: compiled))
+        let next = Renderer(plan: compiled, reusing: renderer)
+        renderer = next
+        engine.setRenderer(next)
         if let loop = project.loop, loop.enabled, loop.end > loop.start {
             engine.setLoop(frame(loop.start)..<frame(loop.end))
         } else {
@@ -536,10 +655,19 @@ final class AppModel {
 
     // MARK: Demo
 
-    private func createDemo() {
+    func newDemoProject() {
+        save()
+        createDemo(unique: true)
+    }
+
+    private func createDemo(unique: Bool = false) {
         DemoSamples.ensure()
-        try? FileManager.default.removeItem(at: Self.projectsFolder.appendingPathComponent("Demo Set.loopstudio"))
-        reset(to: Project(name: "Demo Set"), at: Self.projectsFolder.appendingPathComponent("Demo Set.loopstudio"))
+        var name = "Demo Set"
+        var n = 2
+        let folder = Self.projectsFolder
+        if unique { while FileManager.default.fileExists(atPath: folder.appendingPathComponent("\(name).loopstudio").path) { name = "Demo Set \(n)"; n += 1 } }
+        else { try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(name).loopstudio")) }
+        reset(to: Project(name: name), at: folder.appendingPathComponent("\(name).loopstudio"))
 
         let layout: [(String, Int, [String?])] = [
             ("Drums", 0, ["Drums A", "Drums B", "Drums C Fill", nil, "Crash"]),
@@ -566,6 +694,21 @@ final class AppModel {
                 }
                 try? Command.setSlot(track: trackID, index: row, slot: slot).apply(to: &project)
             }
+        }
+        // Two return tracks with effects, sends from Pad and Arp, a compressor on the drums, a limiter on the master.
+        let reverbTrack = Track(name: "A Reverb", kind: .returnTrack, colorIndex: 4)
+        let delayTrack = Track(name: "B Delay", kind: .returnTrack, colorIndex: 2)
+        try? Command.insertTrack(track: reverbTrack, index: project.tracks.count).apply(to: &project)
+        try? Command.insertTrack(track: delayTrack, index: project.tracks.count).apply(to: &project)
+        var reverb = BuiltInEffects.makeSlot("reverb")!; reverb.params = ["mix": 1, "size": 0.8]
+        var delay = BuiltInEffects.makeSlot("delay")!; delay.params = ["mix": 1, "timeMs": 375, "feedback": 0.45]
+        try? Command.insertDevice(track: reverbTrack.id, device: reverb, index: nil).apply(to: &project)
+        try? Command.insertDevice(track: delayTrack.id, device: delay, index: nil).apply(to: &project)
+        try? Command.insertDevice(track: project.tracks[0].id, device: BuiltInEffects.makeSlot("compressor")!, index: nil).apply(to: &project)
+        try? Command.insertDevice(track: project.master.id, device: BuiltInEffects.makeSlot("limiter")!, index: nil).apply(to: &project)
+        for (i, level) in [(2, -8.0), (3, -14.0)] {
+            let t = project.tracks[i]
+            try? Command.setSends(id: t.id, sends: [Send(target: reverbTrack.id, levelDb: level), Send(target: delayTrack.id, levelDb: i == 3 ? -10 : -96)]).apply(to: &project)
         }
         // A short arrangement on its own tracks, so the timeline has something in it.
         let bar = barTicks

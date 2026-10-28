@@ -240,20 +240,37 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
     public var id: DeviceID
     /// "builtin" or "audiounit" (later "vst3").
     public var format: String
-    /// Built-in name, or "type/subtype/manufacturer" for an Audio Unit.
+    /// Built-in effect ID, or "type/subtype/manufacturer" for an Audio Unit.
     public var identifier: String
     public var name: String
     public var bypassed: Bool
+    /// Plugin state (Audio Unit full state, as a property list). Kept even when the plugin is missing.
     public var state: Data?
+    /// Parameter values of a built-in effect. A missing key means the default.
+    public var params: [String: Double]
 
     public init(id: DeviceID = DeviceID(), format: String, identifier: String, name: String,
-                bypassed: Bool = false, state: Data? = nil) {
+                bypassed: Bool = false, state: Data? = nil, params: [String: Double] = [:]) {
         self.id = id
         self.format = format
         self.identifier = identifier
         self.name = name
         self.bypassed = bypassed
         self.state = state
+        self.params = params
+    }
+
+    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(DeviceID.self, forKey: .id)
+        format = try c.decode(String.self, forKey: .format)
+        identifier = try c.decode(String.self, forKey: .identifier)
+        name = try c.decode(String.self, forKey: .name)
+        bypassed = try c.decodeIfPresent(Bool.self, forKey: .bypassed) ?? false
+        state = try c.decodeIfPresent(Data.self, forKey: .state)
+        params = try c.decodeIfPresent([String: Double].self, forKey: .params) ?? [:]
     }
 }
 

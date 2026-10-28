@@ -1,0 +1,45 @@
+import Testing
+@testable import LoopStudioCore
+
+private func setup() -> (Project, TrackID) {
+    var p = Fixture.baseProject()
+    var t = Track(name: "A", kind: .audio)
+    t.slots = [SessionSlot(clip: .audio(AudioClip(asset: Fixture.loopAsset.id, start: 0, length: 3_840, loop: true, fadeInMs: 2, fadeOutMs: 2)))]
+    // An arrangement clip from bar 1 to bar 5.
+    t.clips = [.audio(AudioClip(asset: Fixture.songAsset.id, start: 0, length: 15_360, loop: false, fadeInMs: 2, fadeOutMs: 2))]
+    p.tracks = [t]
+    return (p, t.id)
+}
+
+@Test func captureWritesEveryPassAndCutsTheArrangement() throws {
+    var (p, id) = setup()
+    let clipID = p.tracks[0].slots[0]!.clip.id
+    // The looping slot played from bar 2 for two and a half bars.
+    let events = [SessionEvent(track: id, slot: 0, clip: clipID, startTick: 3_840, endTick: 100_000, cause: .launch)]
+    let commands = p.captureCommands(events, until: 13_440)
+    try Command.batch(commands: commands).apply(to: &p)
+
+    let clips = p.tracks[0].clips.sorted { $0.start < $1.start }
+    #expect(clips.map(\.start) == [0, 3_840, 7_680, 11_520, 13_440])
+    #expect(clips.map(\.length) == [3_840, 3_840, 3_840, 1_920, 1_920])
+    // The arrangement clip keeps its head and its tail; the captured passes sit between them.
+    #expect(clips.first?.loops == false && clips.last?.loops == false)
+    #expect(Set(clips.map(\.id)).count == 5)
+}
+
+@Test func captureIsOneUndoStep() throws {
+    let (p, id) = setup()
+    let clipID = p.tracks[0].slots[0]!.clip.id
+    let events = [SessionEvent(track: id, slot: 0, clip: clipID, startTick: 0, endTick: 7_680, cause: .launch)]
+    var edited = p
+    let inverse = try Command.batch(commands: p.captureCommands(events, until: 20_000)).apply(to: &edited)
+    try inverse.apply(to: &edited)
+    #expect(edited.tracks[0].clips == p.tracks[0].clips)
+}
+
+@Test func nothingPlayedMeansNothingToCapture() {
+    let (p, id) = setup()
+    let clipID = p.tracks[0].slots[0]!.clip.id
+    let later = [SessionEvent(track: id, slot: 0, clip: clipID, startTick: 7_680, endTick: 9_000, cause: .launch)]
+    #expect(p.captureCommands(later, until: 3_840).isEmpty)
+}

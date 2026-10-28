@@ -29,7 +29,7 @@ extension AppModel {
         case .redo: canRedo
         case .cut, .copy, .deleteSelection, .duplicate: !selectedClips.isEmpty || selectedClip != nil
         case .paste: !clipboard.isEmpty
-        case .backToArrangement: arrangementOverridden
+        case .backToArrangement, .captureSession: arrangementOverridden
         case .renameTrack: selectedTrack != nil || selectedClip != nil
         case .groupTracks, .duplicateTrack: selectedTrack != nil
         case .exportAudio: !exporting
@@ -62,6 +62,7 @@ extension AppModel {
         case .loopSelection: loopSelection()
         case .loopToggle: toggleLoop()
         case .backToArrangement: backToArrangement()
+        case .captureSession: captureSession()
         case .insertAudioTrack: addTrack(kind: .audio)
         case .insertMIDITrack: addTrack(kind: .midi)
         case .insertReturnTrack: addTrack(kind: .returnTrack)
@@ -286,6 +287,18 @@ extension AppModel {
 
     func toggleClipMute(_ clip: AudioClip) {
         apply(.setAudioClip(clip: clip.id, gainDb: clip.gainDb, fadeInMs: clip.fadeInMs, fadeOutMs: clip.fadeOutMs, muted: !clip.muted))
+    }
+
+    /// Writes what the Session played into the arrangement, at the times it played (Live's arrangement
+    /// record, after the fact), then lets the arrangement play again. One undo step.
+    func captureSession() {
+        let commands = project.captureCommands(simulation.events, until: sessionTick)
+        guard !commands.isEmpty else { status = "Nothing to capture: no Session clip has played yet"; return }
+        let count = commands.filter { if case .insertClip = $0 { true } else { false } }.count
+        apply(.batch(commands: commands))
+        backToArrangement()
+        viewMode = .arrangement
+        status = "Captured the Session into the arrangement (\(count) clip\(count == 1 ? "" : "s"))"
     }
 
     /// Puts a copy of a session clip on the arrangement timeline at the cursor.

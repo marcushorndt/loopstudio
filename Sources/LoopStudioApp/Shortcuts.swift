@@ -6,7 +6,7 @@ import SwiftUI
 enum AppAction: String, CaseIterable, Identifiable {
     case newProject, newDemo, save, saveAs, exportAudio
     case undo, redo, cut, copy, paste, duplicate, deleteSelection, splitAtPlayhead, deactivateClip
-    case record, toggleMetronome, play, pause, stopRewind, stopAllClips, loopSelection, loopToggle, backToArrangement
+    case record, toggleMetronome, play, pause, stopRewind, stopAllClips, loopSelection, loopToggle, backToArrangement, captureSession
     case insertAudioTrack, insertMIDITrack, insertReturnTrack, insertGroupTrack, groupTracks, renameTrack, duplicateTrack
     case insertScene, deleteScene, duplicateScene
     case toggleKeyboardMIDI
@@ -21,7 +21,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         switch self {
         case .newProject, .newDemo, .save, .saveAs, .exportAudio: .file
         case .undo, .redo, .cut, .copy, .paste, .duplicate, .deleteSelection, .splitAtPlayhead, .deactivateClip: .edit
-        case .record, .toggleMetronome, .play, .pause, .stopRewind, .stopAllClips, .loopSelection, .loopToggle, .backToArrangement: .transport
+        case .record, .toggleMetronome, .play, .pause, .stopRewind, .stopAllClips, .loopSelection, .loopToggle, .backToArrangement, .captureSession: .transport
         case .insertAudioTrack, .insertMIDITrack, .insertReturnTrack, .insertGroupTrack, .groupTracks, .renameTrack, .duplicateTrack: .track
         case .insertScene, .deleteScene, .duplicateScene: .scene
         case .toggleKeyboardMIDI: .transport
@@ -55,6 +55,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .loopSelection: "Loop Selection"
         case .loopToggle: "Loop On/Off"
         case .backToArrangement: "Back to Arrangement"
+        case .captureSession: "Capture Session into Arrangement"
         case .insertAudioTrack: "Insert Audio Track"
         case .insertMIDITrack: "Insert MIDI Track"
         case .insertReturnTrack: "Insert Return Track"
@@ -101,6 +102,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .pause: KeyBinding(" ", .shift)
         case .stopRewind: KeyBinding(".", .command)
         case .stopAllClips: KeyBinding(".", [.command, .shift])
+        case .captureSession: KeyBinding("c", [.command, .shift])
         case .loopSelection: KeyBinding("l", .command)
         case .loopToggle: KeyBinding("l", [.command, .shift])
         case .insertAudioTrack: KeyBinding("t", .command)

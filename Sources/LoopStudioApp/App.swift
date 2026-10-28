@@ -53,6 +53,7 @@ struct LoopStudioApp: App {
                 AppAction.loopSelection.button(model)
                 AppAction.loopToggle.button(model)
                 AppAction.backToArrangement.button(model)
+                AppAction.captureSession.button(model)
             }
             CommandMenu("Track") {
                 AppAction.insertAudioTrack.button(model)

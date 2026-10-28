@@ -144,7 +144,13 @@ How we enforce it:
 - A lane targets a `ParameterAddress` (node id plus parameter id). It holds points `(tick, value, curve)`. Curves: linear, hold, ease in/out, bezier.
 - The compiler converts a lane to frame-sorted segments. The renderer sets each parameter at the start of a block and, if the value changes inside the block, uses a sub-block ramp. For plugins it calls `scheduleParameterBlock` with a ramp duration, so changes are click-free.
 - Built-in parameters (volume, pan, send level, device parameters) use the same path as plugin parameters.
+- Hosted Audio Unit parameters: when a plugin loads, the app stores its writable parameters in the device slot (`pluginParams`, keys `au.<address>`). They become automation targets like any knob. The renderer sends them as scheduled parameter events on the 32-frame grid. A ramp is used only for parameters that report `flag_CanRamp`; others ignore an event with a ramp.
+- Clip gain envelopes: an audio clip can hold `gainEnvelope` points (dB, ticks from the clip start). The clip mixer reads it on the same 32-frame grid.
 - Later: LFO and envelope modulation sources that write to the same addresses.
+
+### The session clock
+
+The arrangement loop jumps the timeline back. Session clips must not follow that jump, or a stopped clip would play again after the loop end and a launched clip would vanish. So the engine runs two clocks: the timeline position (it loops) and the session position (it only runs forward while the transport plays). Session launches count on the session clock. Session audio clips, session MIDI notes and dummy-clip automation are planned in session frames and rendered against the session clock. Offline bounce passes the same frame for both. A seek while playing moves only the timeline.
 
 ## 11a. Session view, follow actions, fades, loop or one-shot
 
@@ -295,15 +301,16 @@ Tools to add as features land: `asset_import` (hash and copy a file into the pro
 | Renderer | Own mix graph, one realtime callback. Output depends only on the absolute frame, so it is bit-identical across block sizes, with automation too. |
 | App | SwiftUI, Session and Arrangement views, collapsible sidebar, mixer, clip and device panel, piano roll, plugin windows. |
 | Effects | Utility, filter, EQ3, delay, reverb, compressor, limiter. Hosted Audio Units as effects and instruments. |
-| Routing | Group tracks, return tracks (busses), per-track output menu, sends. Input routing between tracks is not built. |
-| Automation | Track lanes and dummy-clip lanes. Envelope editor in the arrangement row and in the dummy-clip panel. |
-| Recording | R arms. Space starts. Optional count-in of 0, 1, 2 or 4 bars. Metronome. MIDI notes become a clip when the transport stops. Audio recording is not built. |
+| Routing | Group tracks, return tracks (busses), per-track output menu, sends, Audio From another track, Sends Only. Busses have session slots for silent dummy clips that carry automation. |
+| Automation | Several lanes per track in the arrangement, dummy-clip lanes, clip gain envelopes, hosted plugin parameters. Right-click a knob or fader to show its curve. |
+| Recording | R arms. Space starts. Optional count-in of 0, 1, 2 or 4 bars. Metronome. MIDI notes become a clip when the transport stops. Audio from a sound card input, aligned with latency compensation. |
 | Keys | One table, `AppAction` in `Shortcuts.swift`. The menu bar, the right-click menus, the key monitor and the shortcut sheet (⌘/) all read it. Plain keys (Space, Tab, R, Delete) go through an `NSEvent` monitor, so a focused control cannot swallow them. |
 | Right-click menus | Clip, lane, ruler, track header, mixer strip, session slot, scene, device, sidebar items. Items show their key. |
 | Warping | Beats and Tones modes, stretched offline with WSOLA (`TimeStretch.swift`) and cached per clip. Source tempo comes from the file name or the clip panel; warp markers and tempo ramps bend time. Deterministic, so a golden test can pin it. |
 | Delay compensation | Each node knows the latency of its plugins. A plan pass (`DelayCompensation.swift`) adds delay lines on the connections that skip a latent plugin, so all paths into a node line up. Sample accurate, same output for every block size. |
 | Done since | Audio recording with latency compensation, clip colours, clip names, several automation lanes per track in the arrangement, dummy-clip curves in clips, a multi-lane clip editor, keyboard navigation (arrows, Return), key 0, computer keyboard as MIDI keys (M), session slot copy and paste. |
-| Open | Resampling (master as input), MIDI To, per-track hardware outputs, warp-marker editor, VST3 bridge, pinned return tracks in the arrangement, more MCP convenience tools. |
+| Done since (2) | Warp marker editor, clip gain envelopes, plugin parameter automation, session clock, zinc themes (dark and light), resizable inspector, equal mixer strips. |
+| Open | Resampling (master as input), MIDI To, per-track hardware outputs, VST3 bridge, pinned return tracks in the arrangement, more MCP convenience tools. |
 
 ## 17. Risks and the spikes that answer them
 

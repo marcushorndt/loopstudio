@@ -240,8 +240,10 @@ public final class Renderer {
         }
         let bar = Double(sig.ticksPerBar.rawValue) / Double(Tick.perQuarter)
         let downbeat = bar > 0 ? from + ((beat - from) / bar).rounded(.down) * bar : beat
+        let next = plan.tempoMap.frame(at: Tick(Int64(beat.rounded(.up)) * Tick.perQuarter), sampleRate: plan.sampleRate).rawValue
         unit.setSongPosition(frame: blockStart, beat: beat, bpm: 60 / quarter, numerator: sig.numerator,
-                             denominator: sig.denominator, downbeat: downbeat, playing: blockPlaying)
+                             denominator: sig.denominator, downbeat: downbeat, playing: blockPlaying,
+                             toNextBeat: Int(max(0, next - blockStart)))
     }
 
     private func run(_ unit: AudioUnitEffect, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {

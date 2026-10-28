@@ -123,6 +123,10 @@ final class AppModel {
     var trackFocused = false
     var rangeSelection: RangeSelection?
     var clipboard: [ClipboardItem] = []
+    /// Notes copied in the piano roll, from tick 0. While it is set, Paste puts notes into the open clip.
+    var noteClipboard: [MIDINote] = []
+    /// Where the next note paste starts in the clip: right after the copied notes, then after each paste.
+    var notePasteTick = Tick(0)
     /// Record is prepared with R. Space then starts it.
     var recordArmed = false
     var recording = false
@@ -593,6 +597,8 @@ final class AppModel {
     func select(clip id: ClipID, extend: Bool) {
         trackFocused = false
         rangeSelection = nil
+        // A click on the clip itself puts the focus on the clip: Delete then removes the clip, not its notes.
+        selectedNotes = []
         if extend {
             if selectedClips.contains(id) {
                 selectedClips.remove(id)
@@ -609,6 +615,7 @@ final class AppModel {
 
     func clearSelection() {
         trackFocused = false
+        selectedNotes = []
         selectedClips = []
         selectedClip = nil
         rangeSelection = nil
@@ -1079,6 +1086,18 @@ final class AppModel {
         if let i = sends.firstIndex(where: { $0.target == target }) { sends[i].levelDb = db }
         else { sends.append(Send(target: target, levelDb: db)) }
         apply(.setSends(id: track.id, sends: sends), key: "send\(track.id)\(target)")
+    }
+
+    func sendPreFader(_ track: Track, to target: TrackID) -> Bool {
+        track.sends.first { $0.target == target }?.preFader ?? false
+    }
+
+    /// Pre-fader: the send takes the sound before the track's volume, so the fader does not change it.
+    func setSendPreFader(from track: Track, to target: TrackID, _ pre: Bool) {
+        var sends = track.sends
+        if let i = sends.firstIndex(where: { $0.target == target }) { sends[i].preFader = pre }
+        else { sends.append(Send(target: target, levelDb: -96, preFader: pre)) }
+        apply(.setSends(id: track.id, sends: sends))
     }
 
     func sendLevel(_ track: Track, to target: TrackID) -> Double {

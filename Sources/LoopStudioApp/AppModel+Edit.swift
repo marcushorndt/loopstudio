@@ -29,7 +29,7 @@ extension AppModel {
         case .redo: canRedo
         case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil) || !selectedNotes.isEmpty
         case .cut, .copy, .duplicate: !selectedClips.isEmpty || selectedClip != nil
-        case .paste: !clipboard.isEmpty
+        case .paste: !clipboard.isEmpty || !noteClipboard.isEmpty
         case .backToArrangement, .captureSession: arrangementOverridden
         case .renameTrack: selectedTrack != nil || selectedClip != nil
         case .groupTracks, .duplicateTrack: selectedTrack != nil
@@ -50,7 +50,9 @@ extension AppModel {
         case .cut: cutSelection()
         case .copy: copySelection()
         case .paste: pasteClipboard()
-        case .duplicate: duplicateSelection()
+        case .duplicate:
+            // Marked notes: a copy right after them, like Live. The note clipboard keeps the copy.
+            if !selectedNotes.isEmpty { copySelection(); pasteClipboard() } else { duplicateSelection() }
         case .deleteSelection: deleteSelected()
         case .drawMode: drawMode.toggle(); status = drawMode ? "Draw mode: click or drag to draw notes, click a note to delete it" : "Draw mode off"
         case .splitAtPlayhead: splitAtPlayhead()
@@ -108,6 +110,7 @@ extension AppModel {
         selectedTrack = track
         selectedSceneRow = row
         trackFocused = false
+        selectedNotes = []
     }
 
     /// The rows the Session view shows: at least 8, and one empty row below the last slot.
@@ -169,6 +172,15 @@ extension AppModel {
     // MARK: Clipboard
 
     func copySelection() {
+        // Marked notes in the open clip: copy the notes, not the clip.
+        if !selectedNotes.isEmpty, let id = selectedClip, case .midi(let m)? = project.findClip(id)?.1 {
+            let notes = m.notes.filter { selectedNotes.contains($0) }
+            guard let first = notes.map(\.tick.rawValue).min(), let end = notes.map({ $0.tick.rawValue + $0.length.rawValue }).max() else { return }
+            noteClipboard = notes.map { var n = $0; n.tick = Tick(n.tick.rawValue - first); return n }
+            notePasteTick = Tick(end)
+            return
+        }
+        noteClipboard = []
         var found: [(Int, Clip)] = []
         let ordered = orderedTracks
         for (i, t) in ordered.enumerated() {
@@ -187,6 +199,7 @@ extension AppModel {
 
     /// Pastes at the cursor, starting on the selected track.
     func pasteClipboard() {
+        if !noteClipboard.isEmpty { pasteNotes(); return }
         guard !clipboard.isEmpty else { return }
         if viewMode == .session { pasteIntoSlots(); return }
         let ordered = orderedTracks
@@ -205,6 +218,28 @@ extension AppModel {
         apply(.batch(commands: commands))
         selectedClips = Set(pasted)
         viewMode = .arrangement
+    }
+
+    /// Puts the copied notes into the open MIDI clip, after the copied ones. Each paste goes on from there.
+    /// Notes past the clip end are dropped. The pasted notes are marked.
+    private func pasteNotes() {
+        guard let id = selectedClip, case .midi(let m)? = project.findClip(id)?.1 else {
+            status = "Select a MIDI clip to paste the notes into"
+            return
+        }
+        let span = noteClipboard.map { $0.tick.rawValue + $0.length.rawValue }.max() ?? 0
+        let start = notePasteTick.rawValue < m.length.rawValue ? notePasteTick.rawValue : 0
+        let pasted = noteClipboard.compactMap { n -> MIDINote? in
+            var n = n
+            n.tick = Tick(n.tick.rawValue + start)
+            guard n.tick.rawValue < m.length.rawValue else { return nil }
+            n.length = Tick(min(n.length.rawValue, m.length.rawValue - n.tick.rawValue))
+            return n
+        }
+        guard !pasted.isEmpty else { return }
+        setNotes(id, m.notes + pasted.filter { !m.notes.contains($0) })
+        selectedNotes = Set(pasted)
+        notePasteTick = Tick(start + span)
     }
 
     /// Session view: puts the copied clips into the selected slot and the slots to its right, same row.

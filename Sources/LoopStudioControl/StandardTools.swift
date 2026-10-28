@@ -225,7 +225,7 @@ public enum StandardTools {
             let end = args.optionalInt("endTick").map { map.frame(at: Tick(Int64($0)), sampleRate: project.sampleRate).rawValue }
             let tail = Int64(((args.optionalDouble("tailSeconds") ?? 0) * project.sampleRate).rounded())
             let audio = withExtendedLifetime(prepared.host) {
-                Bounce.render(plan, startFrame: start, endFrame: end ?? prepared.endFrame + tail)
+                Bounce.render(plan, startFrame: start, endFrame: (end ?? prepared.endFrame) + tail)
             }
             guard audio.frames > 0 else { throw ToolFailure("nothing to render: the range is empty (no clips on audible tracks?)") }
 

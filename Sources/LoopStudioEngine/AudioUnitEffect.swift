@@ -81,10 +81,7 @@ public final class AudioUnitEffect: @unchecked Sendable {
             numerator?.pointee = Double(song.numerator)
             denominator?.pointee = song.denominator
             beat?.pointee = song.beat
-            if let toNextBeat {
-                let rest = song.beat.rounded(.up) - song.beat
-                toNextBeat.pointee = Int((rest * 60 / max(song.bpm, 1) * song.sampleRate).rounded())
-            }
+            toNextBeat?.pointee = song.toNextBeat
             downbeat?.pointee = song.downbeat
             return true
         }
@@ -133,7 +130,7 @@ public final class AudioUnitEffect: @unchecked Sendable {
 
     /// Sets the song position the plugin sees in the next `process` call. Realtime safe.
     func setSongPosition(frame: Int64, beat: Double, bpm: Double, numerator: Int, denominator: Int,
-                         downbeat: Double, playing: Bool) {
+                         downbeat: Double, playing: Bool, toNextBeat: Int) {
         // "Changed" only when the transport starts, stops or jumps (a locate or a loop wrap).
         let jumped = frame < song.lastFrame || frame > song.lastFrame + Int64(maxFrames)
         song.changed = playing != song.playing || (playing && jumped)
@@ -141,6 +138,7 @@ public final class AudioUnitEffect: @unchecked Sendable {
         song.frame = Double(frame); song.beat = beat; song.bpm = bpm
         song.numerator = numerator; song.denominator = denominator
         song.downbeat = downbeat; song.playing = playing; song.sampleRate = sampleRate
+        song.toNextBeat = toNextBeat
     }
 
     /// Renders `frames` frames. `input` and `output` hold one pointer per channel.
@@ -231,5 +229,7 @@ private final class SongPosition: @unchecked Sendable {
     var playing = false
     var sampleRate = 48_000.0
     var changed = true
+    /// Samples to the next beat, through the tempo map, so a tempo ramp is exact.
+    var toNextBeat = 0
     var lastFrame = Int64.min / 2
 }

@@ -281,8 +281,12 @@ public struct RenderPlan {
 
         for id in order {
             let t = project.track(id)!
-            if t.hardwareOutput != nil { warnings.append("track \"\(t.name)\" goes straight to a hardware port and is not in the master mix") }
-            let silent = t.mute || !audible.contains(id) || t.hardwareOutput != nil
+            // The engine has one stereo output so far. A track sent to its own hardware port plays through the
+            // master instead of going silent, and the warning says so.
+            if t.hardwareOutput != nil {
+                warnings.append("track \"\(t.name)\" is set to its own hardware port; it plays through the master until per-port outputs exist")
+            }
+            let silent = t.mute || !audible.contains(id)
             var clips: [ClipPlan] = []
 
             if t.kind == .audio && !silent {

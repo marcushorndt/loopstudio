@@ -61,7 +61,11 @@ struct MixerStrip: View {
     /// Room for Audio From, the monitor buttons and Audio To.
     static let ioHeight: CGFloat = 92
     /// The send knobs: rows of four, each 42 points high.
-    static func sendsHeight(_ returns: Int) -> CGFloat { returns == 0 ? 0 : CGFloat((returns + 3) / 4) * 46 - 4 }
+    /// Three 36 pt knobs fit the 128 pt strip with its padding; a fourth would cover the next strip.
+    static let sendsPerRow = 3
+    static func sendsHeight(_ returns: Int) -> CGFloat {
+        returns == 0 ? 0 : CGFloat((returns + sendsPerRow - 1) / sendsPerRow) * 46 - 4
+    }
     @Environment(AppModel.self) private var model
     let track: Track
     let isMaster: Bool
@@ -76,10 +80,10 @@ struct MixerStrip: View {
 
             // Every strip has the same rows at the same heights, so faders line up across the mixer.
             let returns = model.project.tracks.filter { $0.kind == .returnTrack }
-            // The sends as knobs, like Live: one per return track, four to a row.
+            // The sends as knobs, like Live: one per return track, three to a row.
             HStack(alignment: .top, spacing: 0) {
                 if !isMaster && track.kind != .returnTrack {
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(36), spacing: 4), count: min(4, max(1, returns.count))),
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(36), spacing: 4), count: min(Self.sendsPerRow, max(1, returns.count))),
                               alignment: .leading, spacing: 4) {
                         ForEach(returns, id: \.id) { ret in SendKnob(track: track, ret: ret) }
                     }
@@ -199,9 +203,13 @@ struct SendKnob: View {
         .contextMenu {
             Button("Send Off") { set(0) }
             Button("Send at 0 dB") { set(1) }
+            Toggle("Pre-Fader", isOn: Binding(get: { model.sendPreFader(track, to: ret.id) },
+                                              set: { model.setSendPreFader(from: track, to: ret.id, $0) }))
             Divider()
             Button(model.isLaneShown(track, address) ? "Hide Send Automation" : "Show Send Automation") {
-                model.toggleLaneAndReveal(track, address)
+                // A lane needs a send to automate: an untouched knob gets one, still off.
+                if !track.sends.contains(where: { $0.target == ret.id }) { model.setSend(from: track, to: ret.id, db: -96) }
+                if let fresh = model.project.track(track.id) { model.toggleLaneAndReveal(fresh, address) }
             }
         }
     }

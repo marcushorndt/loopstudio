@@ -45,10 +45,10 @@ struct PianoRoll: View {
                 }
                 Text("X").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
                 Slider(value: $zoom, in: 1...8).controlSize(.mini).frame(width: 90)
-                    .help("Horizontal zoom. All the way left, the clip fills the width. Pinch, or Command and scroll.")
+                    .hint("Horizontal zoom. All the way left, the clip fills the width. Pinch, or Command and scroll.")
                 Text("Y").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
                 Slider(value: $rowHeight, in: 6...28).controlSize(.mini).frame(width: 70)
-                    .help("Vertical zoom: the height of a note row. Option and scroll up or down.")
+                    .hint("Vertical zoom: the height of a note row. Option and scroll up or down.")
             }
             ScrollViewReader { proxy in
                 ScrollView([.horizontal, .vertical]) {
@@ -116,7 +116,7 @@ struct PianoRoll: View {
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.5) : Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .help(help)
+        .hint(help)
     }
 
     private func drawGrid(_ ctx: inout GraphicsContext, _ size: CGSize) {

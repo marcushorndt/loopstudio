@@ -59,9 +59,11 @@ struct Knob: View {
             if let sync { SyncToggle(sync: sync, tint: tint) }
         }
         .frame(width: 66)
+        .hint(param.isSwitch ? "\(param.name): \(value >= 0.5 ? "On" : "Off"). Click to switch."
+              : "\(param.name): \(param.format(value)). Drag up or down; double-click resets. Right-click for automation.")
         .overlay(alignment: .topTrailing) {
             if automation?.hasCurve == true {
-                Circle().fill(Theme.track(0)).frame(width: 6, height: 6).padding(4).help("Automated")
+                Circle().fill(Theme.track(0)).frame(width: 6, height: 6).padding(4).hint("Automated")
             }
         }
         .contextMenu {
@@ -120,7 +122,7 @@ struct OnOffSwitch: View {
             .animation(.snappy(duration: 0.15), value: on)
         }
         .buttonStyle(.plain)
-        .help(on ? "On" : "Off")
+        .hint(on ? "On" : "Off")
     }
 }
 
@@ -140,7 +142,7 @@ private struct SyncToggle: View {
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
-        .help(sync.synced ? "Follows the tempo. Click for a free time in \(sync.unit)." : "Free time. Click to follow the tempo with a note value.")
+        .hint(sync.synced ? "Follows the tempo. Click for a free time in \(sync.unit)." : "Free time. Click to follow the tempo with a note value.")
     }
 
     private func segment(_ label: Text, on: Bool) -> some View {
@@ -253,13 +255,13 @@ private struct DeviceCard: View {
                     Image(systemName: "power").font(.system(size: 11, weight: .bold))
                         .foregroundStyle(device.bypassed ? Theme.dim : Theme.accent)
                 }
-                .buttonStyle(.plain).help(device.bypassed ? "Turn on" : "Bypass")
+                .buttonStyle(.plain).hint(device.bypassed ? "Turn on" : "Bypass")
                 Text(device.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 8)
                 Button { model.apply(.removeDevice(track: track.id, device: device.id)) } label: {
                     Image(systemName: "xmark").font(.system(size: 9)).foregroundStyle(Theme.dim)
                 }
-                .buttonStyle(.plain).help("Remove")
+                .buttonStyle(.plain).hint("Remove")
             }
             if let spec {
                 HStack(alignment: .top, spacing: 2) {

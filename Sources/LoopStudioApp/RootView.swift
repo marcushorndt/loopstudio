@@ -59,8 +59,13 @@ struct StatusBar: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(model.status.isEmpty ? (model.warnings.first ?? "Ready") : model.status)
-                .lineLimit(1).foregroundStyle(model.status.isEmpty ? Theme.dim : Theme.accent)
+            // The control under the pointer first, then the last message, then a warning.
+            if !model.hoverInfo.isEmpty {
+                Text(model.hoverInfo).lineLimit(1).foregroundStyle(Theme.text)
+            } else {
+                Text(model.status.isEmpty ? (model.warnings.first ?? "Ready") : model.status)
+                    .lineLimit(1).foregroundStyle(model.status.isEmpty ? Theme.dim : Theme.accent)
+            }
             Spacer()
             Text("\(Int(model.sampleRate / 1000)) kHz").foregroundStyle(Theme.dim)
             if let s = model.selectedTrack.flatMap({ model.project.track($0) }) { Text(s.name).foregroundStyle(Theme.dim) }
@@ -81,13 +86,13 @@ struct TransportBar: View {
         HStack(spacing: 14) {
             HStack(spacing: 4) {
                 tile(model.transportPlaying ? "pause.fill" : "play.fill", on: model.transportPlaying, tint: Theme.play) { model.togglePlay() }
-                    .help("Play / pause (Space)")
+                    .hint("Play / pause (Space)")
                 tile("stop.fill", on: false, tint: Theme.dim) { model.stop() }
-                    .help("Stop; press again to go to the start (⌘.)")
+                    .hint("Stop; press again to go to the start (⌘.)")
                 tile(model.recordArmed ? "record.circle.fill" : "record.circle", on: model.recordArmed, tint: .red) { model.toggleRecordArm() }
-                    .help("Arm recording (R). Space starts it.")
+                    .hint("Arm recording (R). Space starts it.")
                 tile("metronome", on: model.metronomeOn, tint: Theme.accent) { model.toggleMetronome() }
-                    .help("Metronome (⌘K)")
+                    .hint("Metronome (⌘K)")
                 Menu {
                     ForEach([0, 1, 2, 4], id: \.self) { n in
                         Button(n == 0 ? "No count-in" : "\(n) bar\(n == 1 ? "" : "s") count-in") { model.countInBars = n }
@@ -95,7 +100,7 @@ struct TransportBar: View {
                 } label: {
                     Text(model.countInBars == 0 ? "No pre" : "Pre \(model.countInBars)").font(.system(size: 10, design: .monospaced))
                 }
-                .menuStyle(.borderlessButton).frame(width: 58).help("Count-in before recording")
+                .menuStyle(.borderlessButton).frame(width: 58).hint("Count-in before recording")
             }
 
             tempoField
@@ -129,7 +134,7 @@ struct TransportBar: View {
                 tile("arrow.uturn.backward", on: false, tint: Theme.text) { model.undo() }.disabled(!model.canUndo)
                 tile("arrow.uturn.forward", on: false, tint: Theme.text) { model.redo() }.disabled(!model.canRedo)
                 tile("rectangle.bottomthird.inset.filled", on: model.detailOpen, tint: Theme.accent) { model.detailOpen.toggle() }
-                    .help("Clip and device panel")
+                    .hint("Clip and device panel")
             }
 
             MasterMeter()
@@ -142,18 +147,18 @@ struct TransportBar: View {
     private func loopButtons(labels: Bool) -> some View {
         HStack(spacing: 4) {
             tile("repeat", on: model.project.loop?.enabled == true, tint: Theme.accent) { model.toggleLoop() }
-                .help("Loop on/off (⇧⌘L)")
+                .hint("Loop on/off (⇧⌘L)")
             Button { model.loopSelection() } label: { label("Loop Selection", "arrow.left.and.right", labels) }
                 .controlSize(.small).fixedSize()
-                .help("Loop the marked range or clips and turn the loop on (⌘L)")
+                .hint("Loop the marked range or clips and turn the loop on (⌘L)")
             if model.arrangementOverridden {
                 Button { model.backToArrangement() } label: { label("Back to Arrangement", "arrow.uturn.backward.circle", labels) }
                     .buttonStyle(.borderedProminent).tint(Theme.accent).controlSize(.small).fixedSize()
-                    .help("Back to Arrangement: the arrangement plays again on all tracks")
+                    .hint("Back to Arrangement: the arrangement plays again on all tracks")
             }
             Button { model.stopAllClips() } label: { label("Stop All Clips", "stop.circle", labels) }
                 .controlSize(.small).fixedSize().disabled(!model.transportPlaying)
-                .help("Stop All Clips")
+                .hint("Stop All Clips")
         }
     }
 
@@ -253,6 +258,6 @@ struct DetailResizeHandle: View {
                 }
                 .onEnded { _ in startHeight = nil })
             .onTapGesture(count: 2) { model.detailHeight = 260 }
-            .help("Drag to resize the inspector. Double-click resets it.")
+            .hint("Drag to resize the inspector. Double-click resets it.")
     }
 }

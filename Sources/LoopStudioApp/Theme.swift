@@ -64,3 +64,22 @@ enum Theme {
         track(index).opacity(active ? min(1, palette.clipFill + 0.34) : palette.clipFill)
     }
 }
+
+/// The footer text for the control under the pointer, like the Info View in Live.
+struct HoverHint: ViewModifier {
+    @Environment(AppModel.self) private var model
+    let text: String
+
+    func body(content: Content) -> some View {
+        content
+            .help(text)
+            .onHover { inside in
+                if inside { model.hoverInfo = text } else if model.hoverInfo == text { model.hoverInfo = "" }
+            }
+    }
+}
+
+extension View {
+    /// A tooltip that also shows in the footer while the pointer is over the view.
+    func hint(_ text: String) -> some View { modifier(HoverHint(text: text)) }
+}

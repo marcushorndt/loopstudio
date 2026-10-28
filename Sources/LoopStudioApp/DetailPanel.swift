@@ -108,20 +108,19 @@ private struct FoldableColumn<Content: View>: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Show \(title)")
+            .hint("Show \(title)")
         } else {
-            content()
-                .frame(width: width)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .overlay(alignment: .topTrailing) {
-                    Button { model.foldedSections.insert(id) } label: {
-                        Image(systemName: "chevron.left").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
-                            .frame(width: 18, height: 18).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Fold \(title) to make room for the editor")
-                    .offset(x: 12, y: -2)
+            // The chevron sits in its own gutter on the title row, so it never crowds a dropdown.
+            HStack(alignment: .top, spacing: 4) {
+                Button { model.foldedSections.insert(id) } label: {
+                    Image(systemName: "chevron.left").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
+                        .frame(width: 14, height: 22).contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .hint("Fold \(title) to make room for the editor")
+                content().frame(width: width)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
     }
 }
@@ -277,7 +276,7 @@ private struct ClipPanel: View {
                 .textFieldStyle(.roundedBorder).frame(width: 70)
                 Button("÷2") { if let t = asset?.sourceTempo, let asset { model.apply(.setAssetTempo(id: asset.id, bpm: t / 2)) } }
                 Button("×2") { if let t = asset?.sourceTempo, let asset { model.apply(.setAssetTempo(id: asset.id, bpm: t * 2)) } }
-                Button("Fit") { fitTempo(a) }.help("Set the source tempo so this clip's audio fills the clip length once")
+                Button("Fit") { fitTempo(a) }.hint("Set the source tempo so this clip's audio fills the clip length once")
             }
             .controlSize(.small)
             if asset?.sourceTempo == nil { Text("Enter the tempo of this loop.").font(.caption).foregroundStyle(.orange) }
@@ -430,14 +429,14 @@ private struct ClipLanesPanel: View {
                 model.apply(.setClipAutomationLength(clip: clip.id, length: on ? nil : clip.length))
             }))
             .toggleStyle(.checkbox)
-            .help("Linked: the automation loops with the clip. Unlinked: it has its own length, for example 16 bars over a 1-bar loop.")
+            .hint("Linked: the automation loops with the clip. Unlinked: it has its own length, for example 16 bars over a 1-bar loop.")
             if !linked {
                 TextField("bars:beats:16ths", text: $lengthText)
                     .textFieldStyle(.roundedBorder).font(.system(size: 11, design: .monospaced)).frame(width: 78)
                     .onSubmit { commitLength() }
                     .onAppear { lengthText = MusicalLength.format(cycle, ticksPerBar: model.barTicks) }
                     .onChange(of: cycle) { lengthText = MusicalLength.format(cycle, ticksPerBar: model.barTicks) }
-                    .help("Length of the automation as bars:beats:sixteenths, for example 4:2:0 or 0:1:1. Press Return.")
+                    .hint("Length of the automation as bars:beats:sixteenths, for example 4:2:0 or 0:1:1. Press Return.")
                 Stepper("", value: Binding(get: { bars }, set: { v in
                     let ticks = Int64((max(0.25, v) * Double(model.barTicks)).rounded())
                     model.apply(.setClipAutomationLength(clip: clip.id, length: Tick(ticks)), key: "autolen\(clip.id)")
@@ -529,12 +528,12 @@ private struct ClipLanesPanel: View {
                         Button { model.apply(.setClipAutomation(clip: clip.id, target: address, points: [])) } label: {
                             Image(systemName: "trash").font(.system(size: 10)).frame(width: 20, height: 20)
                         }
-                        .buttonStyle(.plain).help("Delete this curve")
+                        .buttonStyle(.plain).hint("Delete this curve")
                     }
                     Button { model.setClipLane(clip, owner: track, address, shown: false) } label: {
                         Image(systemName: "xmark").font(.system(size: 10)).frame(width: 20, height: 20)
                     }
-                    .buttonStyle(.plain).help("Hide this lane")
+                    .buttonStyle(.plain).hint("Hide this lane")
                 }
                 .foregroundStyle(Theme.dim).padding(2)
             }

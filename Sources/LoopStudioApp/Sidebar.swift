@@ -157,7 +157,7 @@ struct FileRow: View {
             Button("Add to New Audio Track") { _ = model.dropOnNewTrack([url]) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         }
-        .help("Click to listen. Drag onto a clip slot or the timeline.")
+        .hint("Click to listen. Drag onto a clip slot or the timeline.")
     }
 }
 
@@ -185,7 +185,7 @@ struct UnitList: View {
                                 Button("Add to Selected Track") { model.addEffect(spec.id) }
                                 Menu("Add to Track") { ForEach(model.project.tracks.filter { $0.kind != .master }, id: \.id) { t in Button(t.name) { model.addEffect(spec.id, to: t.id) } } }
                             }
-                            .help("Double-click to add to the selected track, or drag it onto a track.")
+                            .hint("Double-click to add to the selected track, or drag it onto a track.")
                     }
                 }
             }
@@ -207,7 +207,7 @@ struct UnitList: View {
                             Menu("Add to Track") { ForEach(model.project.tracks.filter { $0.kind != .master }, id: \.id) { t in Button(t.name) { model.addAudioUnit(identifier: unit.identifier, name: unit.name, to: t.id) } } }
                         }
                     }
-                    .help("Double-click to add. Drag onto a track.")
+                    .hint("Double-click to add. Drag onto a track.")
                 }
                 if loaded && shown.isEmpty { Text("None found").foregroundStyle(Theme.dim) }
             }
@@ -240,7 +240,7 @@ struct ProjectList: View {
                     }
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) { model.open(url) }
-                    .help("Double-click to open")
+                    .hint("Double-click to open")
                 }
             }
             Section {

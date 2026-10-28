@@ -117,6 +117,8 @@ final class AppModel {
     var foldedSections: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "foldedSections") ?? []) {
         didSet { UserDefaults.standard.set(Array(foldedSections), forKey: "foldedSections") }
     }
+    /// What the control under the pointer does. The footer shows it.
+    var hoverInfo = ""
     /// The last click selected a track (its header or its mixer strip), not a clip. Delete then removes the track.
     var trackFocused = false
     var rangeSelection: RangeSelection?

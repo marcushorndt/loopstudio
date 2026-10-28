@@ -27,7 +27,7 @@ struct ArrangementView: View {
                                 .overlay(RoundedRectangle(cornerRadius: Theme.radius)
                                     .stroke(model.anyLanesShown ? Theme.accent.opacity(0.55) : Theme.line, lineWidth: 1))
                         }
-                        .buttonStyle(.plain).help("Show or hide automation lanes on all tracks (A)")
+                        .buttonStyle(.plain).hint("Show or hide automation lanes on all tracks (A)")
                     }
                     .padding(.horizontal, 8).frame(height: rulerHeight)
                     ForEach(tracks, id: \.id) { ArrangementHeader(track: $0) }
@@ -109,7 +109,7 @@ private struct ArrangementHeader: View {
                     }
                     pill("M", on: track.mute, tint: Theme.accent) { model.apply(.setMute(id: track.id, mute: !track.mute)) }
                     pill("A", on: !model.shownLanes(track).isEmpty, tint: Theme.track(0)) { model.toggleAutomation(track) }
-                        .help("Show automation")
+                        .hint("Show automation")
                 }
             }
             Spacer()
@@ -455,7 +455,7 @@ private struct ClipOverrideSpans: View {
                     Button("Edit in Clip") { openInClip(item.clip) }
                     Button("Move Clip Automation to Track") { model.moveClipAutomationToTrack(item.clip.id) }
                 }
-                .help("The clip's own automation overrides this lane here. Double-click to edit it in the clip.")
+                .hint("The clip's own automation overrides this lane here. Double-click to edit it in the clip.")
                 .offset(x: tickX(item.clip.start, model))
             }
         }
@@ -483,7 +483,7 @@ private struct AutomationLabels: View {
                     Button { model.setLane(track, address, shown: false) } label: {
                         Image(systemName: "xmark").font(.system(size: 8))
                     }
-                    .buttonStyle(.plain).foregroundStyle(Theme.dim).help("Hide this lane")
+                    .buttonStyle(.plain).foregroundStyle(Theme.dim).hint("Hide this lane")
                 }
                 .padding(.horizontal, 8).padding(.top, 4)
                 .frame(height: AppModel.automationRow, alignment: .top)
@@ -494,7 +494,7 @@ private struct AutomationLabels: View {
             if !lanes.isEmpty {
                 AutomationLanesMenu(track: track).menuStyle(.borderlessButton).menuIndicator(.hidden)
                     .frame(width: 24).padding(.trailing, 4).padding(.bottom, 2)
-                    .help("Choose lanes")
+                    .hint("Choose lanes")
             }
         }
     }

@@ -72,7 +72,7 @@ struct MixerStrip: View {
             Slider(value: Binding(get: { track.pan }, set: { model.apply(.setPan(id: track.id, pan: $0), key: "pan\(track.id)") }), in: -1...1)
                 .controlSize(.mini)
                 .contextMenu { Button("Center") { model.apply(.setPan(id: track.id, pan: 0)) } }
-                .help("Pan")
+                .hint("Pan")
 
             // Every strip has the same rows at the same heights, so faders line up across the mixer.
             let returns = model.project.tracks.filter { $0.kind == .returnTrack }
@@ -101,6 +101,7 @@ struct MixerStrip: View {
             HStack(spacing: 6) {
                 Fader(db: track.volumeDb) { model.apply(.setVolume(id: track.id, db: $0), key: "vol\(track.id)") }
                     .frame(width: 44, height: 100)
+                    .hint("\(track.name) volume: \(track.volumeDb <= -90 ? "-inf" : String(format: "%.1f dB", track.volumeDb)). Drag; double-click sets 0 dB.")
                 TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
                     LevelBar(level: model.meterLevel(track: isMaster ? nil : track.id)).frame(width: 9, height: 100)
                 }
@@ -194,7 +195,7 @@ struct SendKnob: View {
                 .lineLimit(1)
         }
         .frame(width: 36)
-        .help("Send to \(ret.name): \(db <= -47.5 ? "off" : String(format: "%.1f dB", db))")
+        .hint("Send to \(ret.name): \(db <= -47.5 ? "off" : String(format: "%.1f dB", db))")
         .contextMenu {
             Button("Send Off") { set(0) }
             Button("Send at 0 dB") { set(1) }
@@ -233,7 +234,7 @@ struct TrackIOSection: View {
             Divider()
             ForEach(model.project.tracks.filter { $0.id != track.id && $0.kind != .returnTrack }, id: \.id) { Text($0.name).tag(Optional($0.id)) }
         }
-        .labelsHidden().controlSize(.mini).help("Ext. In records the sound card input (Settings). A track records that track's sound.")
+        .labelsHidden().controlSize(.mini).hint("Ext. In records the sound card input (Settings). A track records that track's sound.")
         if track.inputTrack != nil {
             HStack(spacing: 2) {
                 ForEach([(MonitorMode.input, "In"), (.auto, "Auto"), (.off, "Off")], id: \.1) { mode, name in
@@ -245,7 +246,7 @@ struct TrackIOSection: View {
                     .buttonStyle(.plain)
                 }
             }
-            .help("Monitor. In and Auto pass the input. Off mutes it.")
+            .hint("Monitor. In and Auto pass the input. Off mutes it.")
         }
     }
 
@@ -295,6 +296,6 @@ struct TrackIOSection: View {
             Divider()
             Text("Sends Only").tag(Out.sendsOnly)
         }
-        .labelsHidden().controlSize(.mini).help("Output routing")
+        .labelsHidden().controlSize(.mini).hint("Output routing")
     }
 }

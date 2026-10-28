@@ -176,7 +176,7 @@ private struct StopButton: View {
         }
         .buttonStyle(.plain)
         .frame(width: width)
-        .help(track.kind == .master ? "Stop all clips" : (track.kind == .returnTrack ? "Stop every track that feeds this bus" : "Stop this track's clip at the next bar"))
+        .hint(track.kind == .master ? "Stop all clips" : (track.kind == .returnTrack ? "Stop every track that feeds this bus" : "Stop this track's clip at the next bar"))
     }
 }
 
@@ -230,6 +230,7 @@ private struct SlotCell: View {
             .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
             .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(state.isQueued && blink ? Theme.accent : (selected ? Theme.text : tint.opacity(0.5)), lineWidth: selected || state.isQueued ? 1.5 : 1))
             .frame(height: slotHeight)
+            .hint("\(model.clipName(slot.clip)): the play icon launches it, a click selects it, Return launches the selection.")
             .contextMenu { SlotMenu(track: track, row: row) }
         } else {
             // An empty slot reached with the arrow keys shows a frame.
@@ -255,7 +256,7 @@ private struct SlotCell: View {
             .background(Theme.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
             .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : Color.clear, lineWidth: 1.5))
             .contextMenu { SlotMenu(track: track, row: row) }
-            .help(track.kind == .midi ? "Empty slot. Click selects it; the + or a double-click creates a MIDI clip."
+            .hint(track.kind == .midi ? "Empty slot. Click selects it; the + or a double-click creates a MIDI clip."
                   : (track.kind == .audio ? "Empty slot. Click selects it; the square stops the track. Drop an audio file here."
                      : "Empty slot. Click selects it. Right-click for a dummy clip: silent, it carries automation."))
         }

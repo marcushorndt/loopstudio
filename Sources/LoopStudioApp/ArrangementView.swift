@@ -42,7 +42,7 @@ struct ArrangementView: View {
                                 .frame(width: m.width, height: m.height).offset(x: m.minX, y: m.minY).allowsHitTesting(false)
                         }
                         LoopBrace(width: width)
-                        Playhead(height: rulerHeight + laneHeight * CGFloat(max(1, tracks.count)))
+                        Playhead(height: rulerHeight + model.rowsHeight)
                     }
                     .frame(width: width, alignment: .topLeading)
                     .gesture(DragGesture(minimumDistance: 5)
@@ -54,8 +54,8 @@ struct ArrangementView: View {
                         .onEnded { g in
                             defer { marquee = nil }
                             guard let m = marquee, !tracks.isEmpty else { return }
-                            let first = max(0, Int((m.minY - rulerHeight) / laneHeight))
-                            let last = min(tracks.count - 1, Int((m.maxY - rulerHeight) / laneHeight))
+                            let first = model.rowIndex(atY: max(0, m.minY - rulerHeight))
+                            let last = model.rowIndex(atY: max(0, m.maxY - rulerHeight))
                             guard first <= last else { return }
                             let ids = Set(tracks[first...last].map(\.id))
                             let a = model.snap(xTick(m.minX, model)), b = model.snap(xTick(m.maxX, model))
@@ -95,12 +95,16 @@ private struct ArrangementHeader: View {
                 HStack(spacing: 4) {
                     pill("S", on: track.solo, tint: Color(red: 0.4, green: 0.65, blue: 1)) { model.apply(.setSolo(id: track.id, solo: !track.solo)) }
                     pill("M", on: track.mute, tint: Theme.accent) { model.apply(.setMute(id: track.id, mute: !track.mute)) }
+                    pill("A", on: model.automationShown.contains(track.id), tint: Color(red: 0.95, green: 0.35, blue: 0.35)) { model.toggleAutomation(track) }
+                        .help("Show automation")
                 }
             }
             Spacer()
         }
-        .padding(6).frame(height: laneHeight)
+        .padding(6).frame(height: laneHeight, alignment: .top)
+        .frame(height: model.rowHeight(track), alignment: .top)
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel)
+        .overlay(alignment: .bottom) { if model.automationShown.contains(track.id) { AutomationPicker(track: track).frame(height: AppModel.automationRow).padding(.horizontal, 6) } }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .onTapGesture { model.selectedTrack = track.id }
         .dropDestination(for: String.self) { items, _ in
@@ -164,8 +168,18 @@ private struct Lane: View {
             ForEach(track.clips, id: \.id) { clip in
                 ArrangementClip(clip: clip, track: track, trackIndex: index, trackCount: count)
             }
+            if model.automationShown.contains(track.id), let address = model.automationChoice[track.id],
+               let target = model.project.automationTarget(address) {
+                AutomationEditor(target: target, points: model.automationPoints(track, address),
+                                 pixelsPerTick: model.pixelsPerBar / Double(model.barTicks),
+                                 width: width, height: AppModel.automationRow, tint: Theme.track(track.colorIndex)) { pts in
+                    model.apply(.setAutomation(track: track.id, target: address, points: pts))
+                }
+                .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
+                .offset(y: laneHeight)
+            }
         }
-        .frame(width: width, height: laneHeight)
+        .frame(width: width, height: model.rowHeight(track), alignment: .topLeading)
         .background(index % 2 == 0 ? Theme.background : Color(white: 0.145))
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .contentShape(Rectangle())
@@ -236,7 +250,7 @@ private struct ArrangementClip: View {
                 drag = .zero
                 model.groupDrag = .zero
                 let start = model.snap(xTick(x + g.translation.width, model))
-                let shift = Int((g.translation.height / laneHeight).rounded())
+                let shift = model.rowIndex(atY: model.rowTop(trackIndex) + laneHeight / 2 + g.translation.height) - trackIndex
                 model.moveClips(Array(model.selectedClips.union([clip.id])), deltaTicks: start.rawValue - clip.start.rawValue, trackShift: shift)
             })
         .contextMenu { Button("Delete", role: .destructive) { model.apply(.removeClip(clip: clip.id)) } }
@@ -296,8 +310,8 @@ private struct SelectionOverlay: View {
             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                 if r.tracks.contains(track.id) {
                     Rectangle().fill(.white.opacity(0.10))
-                        .frame(width: max(1, tickX(r.end, model) - tickX(r.start, model)), height: laneHeight)
-                        .offset(x: tickX(r.start, model), y: rulerHeight + CGFloat(index) * laneHeight)
+                        .frame(width: max(1, tickX(r.end, model) - tickX(r.start, model)), height: model.rowHeight(track))
+                        .offset(x: tickX(r.start, model), y: rulerHeight + model.rowTop(index))
                         .allowsHitTesting(false)
                 }
             }
@@ -321,5 +335,25 @@ private struct MiniNotes: View {
                 ctx.fill(Path(CGRect(x: x, y: y, width: w, height: max(1.5, rowH - 0.5))), with: .color(.black.opacity(0.6)))
             }
         }
+    }
+}
+
+/// Chooses which parameter the automation row of a track shows.
+private struct AutomationPicker: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+
+    var body: some View {
+        let targets = model.project.automationTargets(of: track)
+        VStack(alignment: .leading, spacing: 4) {
+            Picker("", selection: Binding(
+                get: { model.automationChoice[track.id] ?? targets.first?.address },
+                set: { model.automationChoice[track.id] = $0 })) {
+                ForEach(targets, id: \.address) { Text($0.name).tag(Optional($0.address)) }
+            }
+            .labelsHidden().controlSize(.mini)
+            Spacer()
+        }
+        .padding(.top, 6)
     }
 }

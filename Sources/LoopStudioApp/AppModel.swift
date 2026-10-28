@@ -50,6 +50,9 @@ final class AppModel {
     /// All marked clips. `selectedClip` is the one the clip panel shows.
     var selectedClips: Set<ClipID> = []
     var rangeSelection: RangeSelection?
+    /// Tracks whose automation row is open in the arrangement, and the parameter each one shows.
+    var automationShown: Set<TrackID> = []
+    var automationChoice: [TrackID: ParameterAddress] = [:]
     /// While a clip of a marked group is dragged, the others follow by this offset.
     var groupDrag: CGSize = .zero
     var selectedTrack: TrackID? {
@@ -182,6 +185,37 @@ final class AppModel {
     func backToArrangement() {
         performance = []
         rebuild()
+    }
+
+    // MARK: Arrangement rows
+
+    static let clipRow: CGFloat = 74
+    static let automationRow: CGFloat = 96
+
+    func rowHeight(_ track: Track) -> CGFloat { Self.clipRow + (automationShown.contains(track.id) ? Self.automationRow : 0) }
+    func rowTop(_ index: Int) -> CGFloat { project.tracks.prefix(index).reduce(0) { $0 + rowHeight($1) } }
+    var rowsHeight: CGFloat { max(Self.clipRow, project.tracks.reduce(0) { $0 + rowHeight($1) }) }
+
+    /// The track row at a height measured from the top of the first row.
+    func rowIndex(atY y: CGFloat) -> Int {
+        var top: CGFloat = 0
+        for (i, t) in project.tracks.enumerated() {
+            top += rowHeight(t)
+            if y < top { return i }
+        }
+        return max(0, project.tracks.count - 1)
+    }
+
+    func toggleAutomation(_ track: Track) {
+        if automationShown.contains(track.id) { automationShown.remove(track.id) }
+        else {
+            automationShown.insert(track.id)
+            if automationChoice[track.id] == nil { automationChoice[track.id] = project.automationTargets(of: track).first?.address }
+        }
+    }
+
+    func automationPoints(_ track: Track, _ address: ParameterAddress) -> [AutomationPoint] {
+        track.automation.first { $0.target == address }?.points ?? []
     }
 
     // MARK: Selection
@@ -499,6 +533,16 @@ final class AppModel {
     func createMIDIClip(track: TrackID, at tick: Tick) {
         let clip = MIDIClip(start: snap(tick), length: Tick(barTicks * 2))
         apply(.insertClip(track: track, clip: .midi(clip)))
+        selectedClip = clip.id
+        selectedTrack = track
+        detailOpen = true
+        detailTab = .clip
+    }
+
+    func createDummyClip(track: TrackID, row: Int) {
+        let n = project.tracks.flatMap { $0.slots.compactMap { $0?.clip } }.filter { if case .dummy = $0 { true } else { false } }.count + 1
+        let clip = DummyClip(name: "Auto \(n)", length: Tick(barTicks * 2))
+        apply(.setSlot(track: track, index: row, slot: SessionSlot(clip: .dummy(clip))))
         selectedClip = clip.id
         selectedTrack = track
         detailOpen = true

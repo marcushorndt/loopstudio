@@ -106,6 +106,7 @@ private struct ArrangementHeader: View {
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel)
         .overlay(alignment: .bottom) { AutomationLabels(track: track) }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
+        .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
         .onTapGesture { model.selectedTrack = track.id }
         .contextMenu { TrackMenuItems(track: track, showsAutomation: true) }
         .dropDestination(for: String.self) { items, _ in

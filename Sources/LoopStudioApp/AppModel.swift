@@ -334,6 +334,13 @@ final class AppModel {
         return max(0, project.tracks.count - 1)
     }
 
+    /// Double-click on a track: select it and show it in the inspector.
+    func openTrackInspector(_ id: TrackID) {
+        selectedTrack = id
+        detailTab = .devices
+        detailOpen = true
+    }
+
     /// Lanes shown for a track, without parameters that no longer exist.
     func shownLanes(_ track: Track) -> [ParameterAddress] {
         guard let shown = automationShown[track.id], !shown.isEmpty else { return [] }

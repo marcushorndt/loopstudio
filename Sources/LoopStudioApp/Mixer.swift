@@ -110,6 +110,7 @@ struct MixerStrip: View {
         .padding(6)
         .frame(width: width)
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: 4))
+        .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
         .onTapGesture { model.selectedTrack = track.id }
         .contextMenu {
             Button("Reset Volume to 0 dB") { model.apply(.setVolume(id: track.id, db: 0)) }

@@ -9,7 +9,7 @@ struct DetailPanel: View {
         VStack(spacing: 0) {
             HStack(spacing: 4) {
                 tab("Clip", .clip)
-                tab("Devices", .devices)
+                tab("Track", .devices)
                 Spacer()
             }
             .padding(.horizontal, 10).padding(.vertical, 4)

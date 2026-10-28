@@ -102,6 +102,7 @@ private struct TrackColumn: View {
         .overlay(RoundedRectangle(cornerRadius: 3).stroke(.white, lineWidth: selected ? 1.5 : 0))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { name = track.name; renaming = true }
+        .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
         .onTapGesture { model.selectedTrack = track.id }
         .dropDestination(for: String.self) { items, _ in
             return model.dropDevices(items, on: track.id)

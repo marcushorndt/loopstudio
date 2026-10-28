@@ -84,6 +84,11 @@ extension Project {
                 add(track.id.rawValue, "send.\(send.target.rawValue.uuidString)", "Send to \(target.name)", -60, 0, -60, "dB")
             }
         }
+        for device in track.devices where device.format != "builtin" {
+            for p in device.pluginParams ?? [] {
+                add(device.id.rawValue, p.key, "\(device.name) › \(p.name)", p.min, p.max, p.def, p.unit)
+            }
+        }
         for device in track.devices where device.format == "builtin" {
             guard let spec = BuiltInEffects.spec(device.identifier) else { continue }
             for p in spec.params {

@@ -1,4 +1,5 @@
 import AVFoundation
+import LoopStudioCore
 import AudioToolbox
 
 public func fourCC(_ s: String) -> FourCharCode {
@@ -20,6 +21,9 @@ public final class AudioUnitEffect: @unchecked Sendable {
     /// True for a synth: no audio input, MIDI in.
     public let isInstrument: Bool
     private let midiBlock: AUScheduleMIDIEventBlock?
+    private let parameterBlock: AUScheduleParameterBlock
+    /// Parameters that accept a ramp. Others ignore an event with a ramp, so they get a step.
+    private let rampable: Set<AUParameterAddress>
     public let channels: Int
     public let maxFrames: Int
 
@@ -71,6 +75,9 @@ public final class AudioUnitEffect: @unchecked Sendable {
         try unit.allocateRenderResources()
 
         renderBlock = unit.renderBlock
+        // Valid only once render resources exist.
+        parameterBlock = unit.scheduleParameterBlock
+        rampable = Set(unit.parameterTree?.allParameters.filter { $0.flags.contains(.flag_CanRamp) }.map(\.address) ?? [])
         outputList = AudioBufferList.allocate(maximumBuffers: channels)
         inputPointers = .allocate(capacity: channels)
         inputPointers.initialize(repeating: nil, count: channels)
@@ -138,6 +145,24 @@ public final class AudioUnitEffect: @unchecked Sendable {
         withUnsafePointer(to: &bytes) { raw in
             raw.withMemoryRebound(to: UInt8.self, capacity: 3) { midiBlock(time, 0, 3, $0) }
         }
+    }
+
+    /// Moves a parameter to `value`, starting `sampleOffset` frames into the next `process` call,
+    /// over `ramp` frames. Realtime safe.
+    public func scheduleParameter(_ address: AUParameterAddress, _ value: Float, sampleOffset: Int, ramp: Int) {
+        parameterBlock(AUEventSampleTime(sampleTime) + AUEventSampleTime(sampleOffset), AUAudioFrameCount(rampable.contains(address) ? max(0, ramp) : 0), address, value)
+    }
+
+    /// The parameters automation can move: writable ones with a usable range.
+    public func automatableParameters(limit: Int = 256) -> [PluginParam] {
+        guard let tree = unit.parameterTree else { return [] }
+        return tree.allParameters
+            .filter { $0.flags.contains(.flag_IsWritable) && $0.maxValue > $0.minValue }
+            .prefix(limit)
+            .map { p in
+                PluginParam(key: "au.\(p.address)", name: p.displayName, min: Double(p.minValue), max: Double(p.maxValue),
+                            def: Double(p.value), unit: p.unitName ?? "")
+            }
     }
 
     /// All notes off and all sound off on every channel.

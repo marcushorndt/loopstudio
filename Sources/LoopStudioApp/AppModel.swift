@@ -632,8 +632,21 @@ final class AppModel {
     func syncPlugins() {
         Task { @MainActor in
             if await host.sync(project: project) {
+                recordPluginParams()
                 pluginRevision += 1
                 rebuild()
+            }
+        }
+    }
+
+    /// Stores the automatable parameters of each loaded plugin in the project. Not an edit: no undo step.
+    private func recordPluginParams() {
+        for track in project.allTracks {
+            for device in track.devices where device.format == "audiounit" {
+                guard let unit = host.units[device.id] else { continue }
+                let params = unit.automatableParameters()
+                guard params != (device.pluginParams ?? []) else { continue }
+                _ = try? Command.setPluginParams(track: track.id, device: device.id, params: params).apply(to: &project)
             }
         }
     }

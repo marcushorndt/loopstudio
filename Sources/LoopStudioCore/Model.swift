@@ -279,6 +279,27 @@ extension Clip: Codable {
 public enum TrackKind: String, Codable, Sendable { case audio, midi, group, returnTrack = "return", master }
 
 /// A plugin or built-in effect on a track. The state blob is kept even when the plugin is missing.
+/// One automatable parameter of a hosted plugin, as the plugin reported it when it loaded.
+/// Kept in the project so automation keeps its names and ranges when the plugin is missing.
+public struct PluginParam: Hashable, Codable, Sendable {
+    /// "au.<address>" for an Audio Unit parameter.
+    public var key: String
+    public var name: String
+    public var min: Double
+    public var max: Double
+    public var def: Double
+    public var unit: String
+
+    public init(key: String, name: String, min: Double, max: Double, def: Double, unit: String = "") {
+        self.key = key
+        self.name = name
+        self.min = min
+        self.max = max
+        self.def = def
+        self.unit = unit
+    }
+}
+
 public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
     public var id: DeviceID
     /// "builtin" or "audiounit" (later "vst3").
@@ -291,6 +312,8 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
     public var state: Data?
     /// Parameter values of a built-in effect. A missing key means the default.
     public var params: [String: Double]
+    /// Automatable parameters of a hosted plugin. `nil` until the plugin has loaded once.
+    public var pluginParams: [PluginParam]?
 
     public init(id: DeviceID = DeviceID(), format: String, identifier: String, name: String,
                 bypassed: Bool = false, state: Data? = nil, params: [String: Double] = [:]) {
@@ -303,7 +326,7 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
         self.params = params
     }
 
-    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params }
+    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params, pluginParams }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -314,6 +337,7 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
         bypassed = try c.decodeIfPresent(Bool.self, forKey: .bypassed) ?? false
         state = try c.decodeIfPresent(Data.self, forKey: .state)
         params = try c.decodeIfPresent([String: Double].self, forKey: .params) ?? [:]
+        pluginParams = try c.decodeIfPresent([PluginParam].self, forKey: .pluginParams)
     }
 }
 

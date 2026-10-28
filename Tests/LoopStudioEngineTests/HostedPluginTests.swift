@@ -105,3 +105,34 @@ private func audioUnitSlot(_ id: String, _ name: String) -> DeviceSlot {
     }
     #expect(peak > 0.005, "a live note makes sound with the transport stopped")
 }
+
+@MainActor
+@Test func automationMovesAHostedPluginParameter() async throws {
+    var project = Project(name: "P", sampleRate: rate)
+    let bank = AudioBank()
+    let samples = (0..<Int(rate)).map { 0.4 * Float(sin(2 * .pi * 440 * Double($0) / rate)) }
+    let asset = Asset(sha256: "y", name: "tone", frames: Int64(samples.count), sampleRate: rate, channels: 2)
+    try Command.addAsset(asset: asset).apply(to: &project)
+    bank.insert(PCMBuffer(samples: [samples, samples], sampleRate: rate), for: asset.id)
+    var clip = project.makeAudioClip(asset: asset.id, start: 0, length: 1920)
+    clip.fadeInMs = 0; clip.fadeOutMs = 0
+    let track = Track(name: "A", kind: .audio, clips: [.audio(clip)])
+    try Command.insertTrack(track: track, index: 0).apply(to: &project)
+    let slot = audioUnitSlot(delayUnit, "Delay")
+    try Command.insertDevice(track: track.id, device: slot, index: nil).apply(to: &project)
+
+    let host = PluginHost()
+    _ = await host.sync(project: project)
+    let unit = try #require(host.units[slot.id])
+    let params = unit.automatableParameters()
+    let mix = try #require(params.first { $0.name.localizedCaseInsensitiveContains("dry") || $0.name.localizedCaseInsensitiveContains("mix") })
+    try Command.setPluginParams(track: track.id, device: slot.id, params: params).apply(to: &project)
+    #expect(project.automationTargets(of: project.track(track.id)!).contains { $0.address.parameter == mix.key })
+
+    // Wet/dry held at fully dry: the delay leaves no tail after the clip ends.
+    try Command.setAutomation(track: track.id, target: ParameterAddress(node: slot.id.rawValue, parameter: mix.key),
+                              points: [AutomationPoint(tick: 0, value: mix.min)]).apply(to: &project)
+    let audio = Bounce.render(RenderPlan.compile(project, bank: bank, units: host.units), endFrame: Int64(1.5 * rate))
+    let tail = Int(1.1 * rate)..<Int(1.5 * rate)
+    #expect(audio.left[tail].reduce(0) { max($0, abs($1)) } < 0.01)
+}

@@ -21,10 +21,16 @@ public final class Renderer {
         let bypassed: Bool
         let auto: [(key: String, lane: AutoLane)]
         var live: [String: Double]
+        /// Automated Audio Unit parameters, keyed by their address.
+        let unitAuto: [(address: AUParameterAddress, lane: AutoLane)]
         init(effect: DSPEffect?, unit: AudioUnitEffect?, bypassed: Bool, auto: [String: AutoLane], params: [String: Double]) {
             self.effect = effect; self.unit = unit; self.bypassed = bypassed
             self.auto = auto.map { ($0.key, $0.value) }.sorted { $0.0 < $1.0 }
             self.live = params
+            self.unitAuto = auto.compactMap { key, lane in
+                guard key.hasPrefix("au."), let address = AUParameterAddress(key.dropFirst(3)) else { return nil }
+                return (address, lane)
+            }.sorted { $0.address < $1.address }
         }
     }
     private let scratchIn: UnsafeMutablePointer<Float>
@@ -45,7 +51,7 @@ public final class Renderer {
         for node in plan.nodes {
             var chain: [Slot] = []
             for e in node.effects {
-                if let unit = e.unit { chain.append(Slot(effect: nil, unit: unit, bypassed: e.bypassed, auto: [:], params: [:])); continue }
+                if let unit = e.unit { chain.append(Slot(effect: nil, unit: unit, bypassed: e.bypassed, auto: e.auto, params: [:])); continue }
                 let effect: DSPEffect
                 if let kept = old?.instances[e.device], kept.spec.id == e.kind, kept.sampleRate == plan.sampleRate {
                     effect = kept
@@ -254,7 +260,18 @@ public final class Renderer {
     /// Runs one effect. A built-in effect with automated knobs gets its values set at every grid step.
     private func runSlot(_ slot: Slot, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
                          startFrame: Int64, frames: Int) {
-        if let unit = slot.unit { run(unit, l, r, frames: frames); return }
+        if let unit = slot.unit {
+            // Automation reaches a plugin as scheduled parameter events, one ramp per grid step.
+            if !slot.unitAuto.isEmpty {
+                eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
+                    for (address, lane) in slot.unitAuto {
+                        if let v = lane.value(at: grid + 32) { unit.scheduleParameter(address, v, sampleOffset: offset, ramp: count) }
+                    }
+                }
+            }
+            run(unit, l, r, frames: frames)
+            return
+        }
         guard let effect = slot.effect else { return }
         guard !slot.auto.isEmpty else { effect.process(l, r, frames: frames); return }
         eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in

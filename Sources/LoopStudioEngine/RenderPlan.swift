@@ -198,8 +198,12 @@ public struct RenderPlan {
         }
         func autoParams(_ device: DeviceID, of track: Track) -> [String: AutoLane] {
             var result: [String: AutoLane] = [:]
-            guard let d = track.devices.first(where: { $0.id == device }), let spec = BuiltInEffects.spec(d.identifier) else { return result }
-            for p in spec.params { if let l = lane(device.rawValue, p.key) { result[p.key] = l } }
+            guard let d = track.devices.first(where: { $0.id == device }) else { return result }
+            if let spec = BuiltInEffects.spec(d.identifier), d.format == "builtin" {
+                for p in spec.params { if let l = lane(device.rawValue, p.key) { result[p.key] = l } }
+            } else {
+                for p in d.pluginParams ?? [] { if let l = lane(device.rawValue, p.key) { result[p.key] = l } }
+            }
             return result
         }
 

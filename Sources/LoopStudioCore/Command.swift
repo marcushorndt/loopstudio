@@ -46,6 +46,7 @@ public enum Command: Codable, Sendable {
     case setClipColor(clip: ClipID, colorIndex: Int?)
     case setClipName(clip: ClipID, name: String)
     case setClipEnvelope(clip: ClipID, points: [AutomationPoint])
+    case setPluginParams(track: TrackID, device: DeviceID, params: [PluginParam]?)
     /// Sets the envelope of one parameter on a track. Empty points remove the lane.
     case setAutomation(track: TrackID, target: ParameterAddress, points: [AutomationPoint])
     /// Sets the envelope of one parameter inside a dummy clip (ticks relative to the clip start).
@@ -485,6 +486,17 @@ extension Project {
                 let old = t.devices[i].params[key]
                 t.devices[i].params[key] = value
                 return .setDeviceParam(track: trackID, device: id, key: key, value: old)
+            }
+
+        case .setPluginParams(let trackID, let id, let params):
+            return try withTrack(trackID) { t in
+                guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
+                guard (params ?? []).allSatisfy({ $0.min.isFinite && $0.max.isFinite && $0.min <= $0.max }) else {
+                    throw CommandError.invalidValue("plugin parameter range")
+                }
+                let old = t.devices[i].pluginParams
+                t.devices[i].pluginParams = params
+                return .setPluginParams(track: trackID, device: id, params: old)
             }
 
         case .setDeviceBypass(let trackID, let id, let bypassed):

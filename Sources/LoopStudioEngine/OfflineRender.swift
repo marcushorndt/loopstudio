@@ -54,7 +54,7 @@ public enum OfflineRender {
             await Task.detached(priority: .userInitiated) { for job in jobs { bank.run(job) } }.value
             plan = RenderPlan.compile(project, bank: bank, session: session, units: host.units, arrangementEnds: ends)
         }
-        if !bank.takePendingWarps().isEmpty { warnings.append("some warped clips are not ready and play unwarped in this render") }
+        if !bank.takePendingWarps().isEmpty { warnings.append("some warped clips are not ready and stay silent in this render") }
         return Prepared(plan: plan, warnings: warnings, endFrame: max(plan.endFrame, sessionEnd), host: host)
     }
 }

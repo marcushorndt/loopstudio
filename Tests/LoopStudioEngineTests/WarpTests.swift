@@ -169,7 +169,7 @@ private func frequency(_ x: UnsafePointer<Float>, from: Int, count: Int) -> Doub
     try! Command.insertClip(track: t.id, clip: .audio(clip)).apply(to: &project)
 
     let first = RenderPlan.compile(project, bank: bank)
-    #expect(first.nodes[0].clips[0].pcm === src, "the raw audio stands in at first")
+    #expect(first.nodes[0].clips.isEmpty, "the clip waits in silence for its first warp")
     let jobs = bank.takePendingWarps()
     #expect(jobs.count == 1)
     for job in jobs { bank.run(job) }

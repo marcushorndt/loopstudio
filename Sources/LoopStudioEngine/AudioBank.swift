@@ -61,8 +61,9 @@ public final class AudioBank: @unchecked Sendable {
     public func insert(_ buffer: PCMBuffer, for id: AssetID) { bufferLock.lock(); buffers[id] = buffer; bufferLock.unlock() }
     public func buffer(for id: AssetID) -> PCMBuffer? { bufferLock.lock(); defer { bufferLock.unlock() }; return buffers[id] }
 
-    /// A warp for `clip`, or a stand-in while it is made (see `defersWarps`).
-    func warped(key: String, clip: ClipID, fallback: PCMBuffer, make: @escaping () -> PCMBuffer) -> PCMBuffer {
+    /// A warp for `clip`, or a stand-in while it is made (see `defersWarps`): the clip's last warp.
+    /// `nil` when the clip has none yet. The clip then stays silent, since the raw audio would play off tempo.
+    func warped(key: String, clip: ClipID, make: @escaping () -> PCMBuffer) -> PCMBuffer? {
         guard defersWarps else {
             let made = warped(key: key, make: make)
             warpLock.lock(); lastWarp[clip] = made; warpLock.unlock()
@@ -71,7 +72,7 @@ public final class AudioBank: @unchecked Sendable {
         warpLock.lock(); defer { warpLock.unlock() }
         if let hit = warped[key] { touch(key); lastWarp[clip] = hit; return hit }
         if pending[key] == nil { pending[key] = WarpJob(key: key, make: make) }
-        return lastWarp[clip] ?? fallback
+        return lastWarp[clip]
     }
 
     /// The warps the last plans asked for and did not find. Taking them clears the list.

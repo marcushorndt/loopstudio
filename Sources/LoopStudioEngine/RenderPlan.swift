@@ -310,7 +310,7 @@ public struct RenderPlan {
                         endFrame = max(endFrame, end)
                         continue
                     }
-                    let pcm = warpedAudio(c, raw: raw, startTick: c.start, project: project, bank: bank, trackName: t.name, warnings: &warnings)
+                    guard let pcm = warpedAudio(c, raw: raw, startTick: c.start, project: project, bank: bank, trackName: t.name, warnings: &warnings) else { continue }
                     clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: offsetFrames, loop: c.loop,
                                           gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut),
                                           envelope: envelope(c, from: c.start, start: start, end: end)))
@@ -338,7 +338,7 @@ public struct RenderPlan {
                         continue
                     }
                     // A session clip plays from its start offset and loops its own length, like the clip shows.
-                    let pcm = warpedAudio(c, raw: raw, startTick: e.startTick, project: project, bank: bank, trackName: t.name, warnings: &warnings)
+                    guard let pcm = warpedAudio(c, raw: raw, startTick: e.startTick, project: project, bank: bank, trackName: t.name, warnings: &warnings) else { continue }
                     let offsetFrames = max(0, map.frame(at: e.startTick + c.offset, sampleRate: rate).rawValue - start)
                     let passFrames = max(0, map.frame(at: e.startTick + c.length, sampleRate: rate).rawValue - start)
                     clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: offsetFrames, loop: c.loop,
@@ -420,8 +420,8 @@ public struct RenderPlan {
         let map = project.tempoMap, rate = project.sampleRate
         var plans: [ClipPlan] = []
         for (k, passStart) in starts.enumerated() {
-            let pcm = warpedAudio(c, raw: raw, startTick: passStart, span: pass, project: project, bank: bank,
-                                  trackName: trackName, warnings: &warnings)
+            guard let pcm = warpedAudio(c, raw: raw, startTick: passStart, span: pass, project: project, bank: bank,
+                                        trackName: trackName, warnings: &warnings) else { continue }
             let a = map.frame(at: passStart, sampleRate: rate).rawValue
             let b = min(end, map.frame(at: passStart + pass, sampleRate: rate).rawValue)
             guard b > a else { continue }
@@ -447,7 +447,7 @@ public struct RenderPlan {
     }
 
     private static func warpedAudio(_ c: AudioClip, raw: PCMBuffer, startTick: Tick, span: Tick? = nil, project: Project, bank: AudioBank,
-                                    trackName: String, warnings: inout [String]) -> PCMBuffer {
+                                    trackName: String, warnings: inout [String]) -> PCMBuffer? {
         guard c.warpMode != .off else { return raw }
         let asset = project.asset(c.asset)
         let rate = project.sampleRate
@@ -463,7 +463,7 @@ public struct RenderPlan {
         else if let span, let bpm = constantTempo(project.tempoMap, from: startTick, to: startTick + span) { timing = "bpm \(bpm) span \(span.rawValue)" }
         else { timing = "\(project.tempoMap.points)|\(startTick.rawValue)" }
         let key = "\(c.asset)|\(c.warpMode)|\(asset?.sourceTempo ?? 0)|\(c.warpMarkers)|\(timing)|\(rate)"
-        return bank.warped(key: key, clip: c.id, fallback: raw) {
+        return bank.warped(key: key, clip: c.id) {
             TimeStretch.stretch(raw, mode: c.warpMode, outFrames: mapping.outFrames, source: mapping.source)
         }
     }

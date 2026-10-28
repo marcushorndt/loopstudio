@@ -167,3 +167,104 @@ private func peak(_ x: ArraySlice<Float>) -> Float { x.reduce(0) { max($0, abs($
     } }
     #expect(level() == 0, "the first block of the new renderer applies the knob")
 }
+
+// MARK: Tempo sync
+
+/// Like `run`, but clocks the effect on the 32-frame grid at a constant tempo, as the renderer does.
+private func runClocked(_ id: String, _ params: [String: Double], _ input: [Float], bpm: Double, block: Int) -> [Float] {
+    let fx = DSPEffect.make(id, sampleRate: rate)!
+    fx.configure(params)
+    var l = input, r = input
+    var done = 0
+    let quarter = 60 / bpm
+    while done < input.count {
+        let n = min(block, input.count - done)
+        var k = 0
+        while k < n {
+            let f = done + k, grid = f / 32 * 32
+            let count = min(n - k, grid + 32 - f)
+            fx.clock(frame: Int64(grid), beat: Double(grid) / rate / quarter, quarterSeconds: quarter)
+            l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in
+                fx.process(lp.baseAddress! + f, rp.baseAddress! + f, frames: count)
+            } }
+            k += count
+        }
+        done += n
+    }
+    return l
+}
+
+private func division(_ name: String) -> Double { Double(NoteDivision.index(name)) }
+
+@Test func noteValuesHaveTheirLengths() {
+    #expect(NoteDivision.all[NoteDivision.index("1/4")].quarters == 1)
+    #expect(NoteDivision.all[NoteDivision.index("1/3")].quarters == 4.0 / 3)
+    #expect(NoteDivision.all[NoteDivision.index("1/8.")].quarters == 0.75)
+    #expect(NoteDivision.all[NoteDivision.index("1/16")].quarters == 0.25)
+    let names = NoteDivision.all.map(\.name)
+    for name in ["1/1", "1/2", "1/3", "1/4", "1/6", "1/8", "1/16"] { #expect(names.contains(name)) }
+}
+
+@Test func aSyncedDelayRepeatsOnTheNoteValue() {
+    var impulse = [Float](repeating: 0, count: 48_000)
+    impulse[0] = 1
+    let params = ["timeMsSync": 1, "timeMsDivision": division("1/8"), "feedback": 0, "mix": 1, "pingPong": 0]
+    let out = runClocked("delay", params, impulse, bpm: 120, block: 512)
+    #expect(abs(out[12_000] - 1) < 0.01, "an eighth note at 120 BPM is 250 ms")
+    #expect(peak(out[0..<11_990]) < 0.001)
+    let slow = runClocked("delay", params, impulse, bpm: 60, block: 512)
+    #expect(abs(slow[24_000] - 1) < 0.01, "at 60 BPM it is 500 ms")
+}
+
+@Test func aSyncedReverbPreDelayHoldsTheWetSound() {
+    var impulse = [Float](repeating: 0, count: 48_000)
+    impulse[0] = 1
+    let params = ["preDelayMsSync": 1, "preDelayMsDivision": division("1/16"), "mix": 1]
+    let out = runClocked("reverb", params, impulse, bpm: 120, block: 512)
+    #expect(peak(out[0..<6_000]) == 0, "a sixteenth at 120 BPM is 125 ms of silence")
+    #expect(peak(out[6_000..<24_000]) > 0.0005)
+    let free = run("reverb", ["preDelayMs": 50, "mix": 1], impulse)
+    #expect(peak(free[0..<2_400]) == 0)
+    #expect(peak(free[2_400..<24_000]) > 0.0005)
+}
+
+@Test func theFilterLFOMovesTheSoundAndIgnoresTheBlockSize() {
+    let input = sine(330, 24_000) + sine(3_000, 24_000)
+    let params = ["cutoff": 800, "lfoAmount": 0.8, "lfoRateSync": 1, "lfoRateDivision": division("1/8")]
+    let a = runClocked("filter", params, input, bpm: 120, block: 64)
+    let b = runClocked("filter", params, input, bpm: 120, block: 4096)
+    #expect(a == b)
+    let still = runClocked("filter", ["cutoff": 800], input, bpm: 120, block: 512)
+    #expect(a != still)
+    let free = runClocked("filter", ["cutoff": 800, "lfoAmount": 0.8, "lfoRate": 3], input, bpm: 120, block: 64)
+    #expect(free == runClocked("filter", ["cutoff": 800, "lfoAmount": 0.8, "lfoRate": 3], input, bpm: 120, block: 4096))
+}
+
+@Test func theRendererGivesEffectsTheSongTempo() {
+    var project = Project(name: "T", sampleRate: rate)
+    project.tempoMap = TempoMap(bpm: 90)
+    var track = Track(name: "A", kind: .audio)
+    var delay = BuiltInEffects.makeSlot("delay")!
+    delay.params = ["timeMsSync": 1, "timeMsDivision": division("1/4"), "feedback": 0, "mix": 1, "pingPong": 0]
+    track.devices = [delay]
+    try! Command.insertTrack(track: track, index: 0).apply(to: &project)
+    let renderer = Renderer(plan: RenderPlan.compile(project, bank: AudioBank()), maxBlock: 512)
+    var outL = [Float](repeating: 0, count: 512), outR = outL
+    outL.withUnsafeMutableBufferPointer { lp in outR.withUnsafeMutableBufferPointer { rp in
+        renderer.process(startFrame: 0, frames: 512, outLeft: lp.baseAddress!, outRight: rp.baseAddress!)
+    } }
+    let fx = renderer.instancesForTesting[delay.id]!
+    fx.reset()
+    var impulse = [Float](repeating: 0, count: 40_000)
+    impulse[0] = 1
+    var r = impulse
+    impulse.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in fx.process(lp.baseAddress!, rp.baseAddress!, frames: 40_000) } }
+    #expect(abs(impulse[32_000] - 1) < 0.01, "a quarter note at 90 BPM is 2/3 s")
+}
+
+@Test func syncedKnobsHideTheirSwitchAndNoteValue() {
+    let delay = BuiltInEffects.spec("delay")!
+    #expect(delay.shownParams.map(\.key) == ["timeMs", "feedback", "pingPong", "mix"])
+    #expect(delay.params.contains { $0.key == "timeMsSync" && $0.isSwitch })
+    #expect(BuiltInEffects.makeSlot("delay")!.params["timeMsSync"] == 1, "a new delay follows the tempo")
+}

@@ -138,6 +138,9 @@ public struct RenderPlan {
     public let warnings: [String]
     /// The track of each node, in node order. The master (last) has `nil`.
     public let trackOrder: [TrackID?]
+    /// The song tempo and meter, for effects and plugins that follow the tempo.
+    public internal(set) var tempoMap = TempoMap()
+    var timeSignatures: [TimeSignatureChange] = [TimeSignatureChange(tick: 0, signature: TimeSignature(4, 4))]
 
     public static func dB(_ db: Double) -> Float { db <= -96 ? 0 : Float(pow(10.0, db / 20.0)) }
 
@@ -390,6 +393,8 @@ public struct RenderPlan {
         }
         var plan = RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings,
                               trackOrder: order.map { Optional($0) } + [nil])
+        plan.tempoMap = map
+        plan.timeSignatures = project.timeSignatures.sorted { $0.tick < $1.tick }
         plan.applyDelayCompensation()
         return plan
     }

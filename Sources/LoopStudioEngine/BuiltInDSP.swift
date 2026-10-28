@@ -8,15 +8,39 @@ public class DSPEffect: @unchecked Sendable {
     public let sampleRate: Double
     let spec: EffectSpec
 
+    /// True when a knob can follow the song tempo. The renderer then calls `clock` at every grid step.
+    let followsTempo: Bool
+    /// Seconds per quarter note at the current grid step. Set by `clock`.
+    private(set) var quarterSeconds = 0.5
+
     init(spec: EffectSpec, sampleRate: Double) {
         self.spec = spec
         self.sampleRate = sampleRate
+        followsTempo = spec.params.contains(where: \.syncable)
     }
 
     func value(_ p: [String: Double], _ key: String) -> Float {
         let param = spec.params.first { $0.key == key }!
         return Float(param.clamp(p[key] ?? param.def))
     }
+
+    /// The note value of a syncable knob in quarter notes, or `nil` when the knob is free.
+    func syncedQuarters(_ p: [String: Double], _ key: String) -> Double? {
+        guard let param = spec.params.first(where: { $0.key == key }), param.syncable,
+              value(p, param.syncKey) >= 0.5 else { return nil }
+        return NoteDivision.at(Double(value(p, param.divisionKey))).quarters
+    }
+
+    /// The song position for one grid step: `frame` on the timeline, `beat` in quarter notes, and the tempo.
+    /// Only the audio thread calls it, before `process`. An effect that follows the tempo overrides `tempoChanged`
+    /// or `step`.
+    func clock(frame: Int64, beat: Double, quarterSeconds q: Double) {
+        if q != quarterSeconds { quarterSeconds = q; tempoChanged() }
+        step(frame: frame, beat: beat)
+    }
+
+    func tempoChanged() {}
+    func step(frame: Int64, beat: Double) {}
 
     public func configure(_ params: [String: Double]) {}
     public func reset() {}
@@ -117,11 +141,30 @@ struct Biquad {
 
 final class FilterDSP: DSPEffect, @unchecked Sendable {
     private var left = Biquad(), right = Biquad()
+    private var type = 0, cutoff = 1_000.0, q = 0.707
+    private var lfoAmount = 0.0, lfoHz = 1.0
+    private var lfoQuarters: Double?
 
     override func configure(_ p: [String: Double]) {
+        type = Int(value(p, "type"))
+        cutoff = Double(value(p, "cutoff")); q = Double(value(p, "resonance"))
+        lfoAmount = Double(value(p, "lfoAmount")); lfoHz = Double(value(p, "lfoRate"))
+        lfoQuarters = syncedQuarters(p, "lfoRate")
+        design(cutoff)
+    }
+
+    /// The LFO position comes from the song position, never from a running counter. So a synced LFO sits on
+    /// the beat, and an export sounds exactly like the playback.
+    override func step(frame: Int64, beat: Double) {
+        guard lfoAmount > 0 else { return }
+        let phase = lfoQuarters.map { beat / $0 } ?? Double(frame) / sampleRate * lfoHz
+        let lfo = sin(2 * .pi * (phase - phase.rounded(.down)))
+        design(min(20_000, max(20, cutoff * pow(2, 4 * lfoAmount * lfo))))
+    }
+
+    private func design(_ cutoff: Double) {
         var f = Biquad()
-        let cutoff = Double(value(p, "cutoff")), q = Double(value(p, "resonance"))
-        switch Int(value(p, "type")) {
+        switch type {
         case 1: f.highpass(cutoff, q: q, rate: sampleRate)
         case 2: f.bandpass(cutoff, q: q, rate: sampleRate)
         default: f.lowpass(cutoff, q: q, rate: sampleRate)
@@ -176,9 +219,12 @@ final class DelayDSP: DSPEffect, @unchecked Sendable {
     private var target: Float = 0, current: Float = 0
     private var started = false
     private var feedback: Float = 0.4, mix: Float = 0.3, pingPong = true
+    private var freeMs: Float = 375
+    private var syncQuarters: Double?
 
     override init(spec: EffectSpec, sampleRate: Double) {
-        size = Int(sampleRate * 2.1) + 8
+        // Room for a synced 1/1 at 40 BPM.
+        size = Int(sampleRate * 6.1) + 8
         bufL = .allocate(capacity: size); bufL.initialize(repeating: 0, count: size)
         bufR = .allocate(capacity: size); bufR.initialize(repeating: 0, count: size)
         super.init(spec: spec, sampleRate: sampleRate)
@@ -187,11 +233,21 @@ final class DelayDSP: DSPEffect, @unchecked Sendable {
     deinit { bufL.deallocate(); bufR.deallocate() }
 
     override func configure(_ p: [String: Double]) {
-        target = value(p, "timeMs") * Float(sampleRate) / 1000
-        if !started { current = target } // glide only once audio has run
+        freeMs = value(p, "timeMs")
+        syncQuarters = syncedQuarters(p, "timeMs")
+        updateTarget()
         feedback = value(p, "feedback")
         mix = value(p, "mix")
         pingPong = value(p, "pingPong") >= 0.5
+    }
+
+    override func tempoChanged() { if syncQuarters != nil { updateTarget() } }
+
+    /// A tempo change glides the time like a turned knob, so a tempo ramp does not click.
+    private func updateTarget() {
+        let seconds = syncQuarters.map { $0 * quarterSeconds } ?? Double(freeMs) / 1000
+        target = Float(min(seconds * sampleRate, Double(size - 4)))
+        if !started { current = target } // glide only once audio has run
     }
 
     override func reset() {
@@ -247,9 +303,17 @@ final class ReverbDSP: DSPEffect, @unchecked Sendable {
     private let combs: UnsafeMutablePointer<Comb>   // 8 left, then 8 right
     private let allPasses: UnsafeMutablePointer<AllPass> // 4 left, then 4 right
     private var feedback: Float = 0.8, damp: Float = 0.2, mix: Float = 0.25
+    /// The pre-delay: the wet sound starts this many frames after the dry sound.
+    private let preSize: Int
+    private let preBuf: UnsafeMutablePointer<Float>
+    private var preWrite = 0, preFrames = 0
+    private var preFreeMs: Float = 0
+    private var preQuarters: Double?
 
     override init(spec: EffectSpec, sampleRate: Double) {
         let scale = sampleRate / 44_100
+        preSize = Int(sampleRate * 2) + 2
+        preBuf = .allocate(capacity: preSize); preBuf.initialize(repeating: 0, count: preSize)
         combs = .allocate(capacity: 16)
         allPasses = .allocate(capacity: 8)
         func line(_ n: Int) -> UnsafeMutablePointer<Float> {
@@ -273,24 +337,43 @@ final class ReverbDSP: DSPEffect, @unchecked Sendable {
     deinit {
         for i in 0..<16 { combs[i].buf.deallocate() }
         for i in 0..<8 { allPasses[i].buf.deallocate() }
-        combs.deallocate(); allPasses.deallocate()
+        combs.deallocate(); allPasses.deallocate(); preBuf.deallocate()
     }
 
     override func configure(_ p: [String: Double]) {
         feedback = value(p, "size") * 0.28 + 0.7
         damp = value(p, "damping") * 0.4
         mix = value(p, "mix")
+        preFreeMs = value(p, "preDelayMs")
+        preQuarters = syncedQuarters(p, "preDelayMs")
+        updatePreDelay()
+    }
+
+    override func tempoChanged() { if preQuarters != nil { updatePreDelay() } }
+
+    private func updatePreDelay() {
+        let seconds = preQuarters.map { $0 * quarterSeconds } ?? Double(preFreeMs) / 1000
+        preFrames = min(Int((seconds * sampleRate).rounded()), preSize - 1)
     }
 
     override func reset() {
+        preBuf.update(repeating: 0, count: preSize)
         for i in 0..<16 { combs[i].buf.update(repeating: 0, count: combs[i].size); combs[i].store = 0 }
         for i in 0..<8 { allPasses[i].buf.update(repeating: 0, count: allPasses[i].size) }
     }
 
     override func process(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
-        let fb = feedback, d = damp, m = mix
+        let fb = feedback, d = damp, m = mix, pre = preFrames
         for i in 0..<frames {
-            let input = (l[i] + r[i]) * 0.015
+            var input = (l[i] + r[i]) * 0.015
+            if pre > 0 {
+                preBuf[preWrite] = input
+                var read = preWrite - pre
+                if read < 0 { read += preSize }
+                input = preBuf[read]
+                preWrite += 1
+                if preWrite >= preSize { preWrite = 0 }
+            }
             var outL: Float = 0, outR: Float = 0
             for k in 0..<8 {
                 outL += step(&combs[k], input, fb, d)

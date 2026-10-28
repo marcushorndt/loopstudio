@@ -10,6 +10,14 @@ struct KnobAutomation {
     var clear: () -> Void
 }
 
+/// A knob that can follow the tempo: free (ms or Hz) or a note value.
+struct KnobSync {
+    var synced: Bool
+    /// The unit of the free value, "ms" or "Hz".
+    var unit: String
+    var toggle: () -> Void
+}
+
 struct Knob: View {
     let param: EffectParam
     let value: Double
@@ -18,11 +26,17 @@ struct Knob: View {
     let onReset: () -> Void
     /// Automation of this knob: nil hides the menu entries (a knob with no automation target).
     var automation: KnobAutomation? = nil
+    var sync: KnobSync? = nil
     @State private var startPosition: Double?
+
+    private var rotary: Bool { param.choices.isEmpty || param.rotary }
 
     var body: some View {
         VStack(spacing: 3) {
-            if param.choices.isEmpty {
+            if param.isSwitch {
+                OnOffSwitch(on: value >= 0.5, tint: tint) { onChange(value >= 0.5 ? 0 : 1) }
+                    .frame(width: 44, height: 44)
+            } else if rotary {
                 ZStack {
                     Canvas { ctx, size in
                         let r = min(size.width, size.height) / 2 - 3
@@ -53,8 +67,10 @@ struct Knob: View {
                 }
                 .menuStyle(.borderlessButton).frame(width: 74, height: 44).font(.system(size: 11))
             }
-            Text(param.name).font(.system(size: 10)).foregroundStyle(Theme.dim).lineLimit(1)
-            if param.choices.isEmpty { Text(param.format(value)).font(.system(size: 10, design: .monospaced)) }
+            Text(sync == nil ? param.name : param.name.replacingOccurrences(of: " Note", with: ""))
+                .font(.system(size: 10)).foregroundStyle(Theme.dim).lineLimit(1)
+            if rotary { Text(param.format(value)).font(.system(size: 10, design: .monospaced)) }
+            if let sync { SyncToggle(sync: sync, tint: tint) }
         }
         .frame(width: 66)
         .overlay(alignment: .topTrailing) {
@@ -68,8 +84,61 @@ struct Knob: View {
                 Button("Clear Automation", action: automation.clear).disabled(!automation.hasCurve)
                 Divider()
             }
+            if param.rotary {
+                Menu("Note Value") {
+                    ForEach(Array(param.choices.enumerated()), id: \.offset) { i, name in Button(name) { onChange(Double(i)) } }
+                }
+            }
+            if let sync { Button(sync.synced ? "Free Time (\(sync.unit))" : "Follow the Tempo", action: sync.toggle) }
             Button("Reset to Default", action: onReset)
         }
+    }
+}
+
+/// An On/Off setting as a switch.
+struct OnOffSwitch: View {
+    let on: Bool
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack(alignment: on ? .trailing : .leading) {
+                Capsule().fill(on ? tint : Color.black.opacity(0.45))
+                    .overlay(Capsule().stroke(on ? tint : Theme.line, lineWidth: 1))
+                Circle().fill(.white).padding(2).shadow(color: .black.opacity(0.3), radius: 1, y: 1)
+            }
+            .frame(width: 32, height: 18)
+            .animation(.snappy(duration: 0.15), value: on)
+        }
+        .buttonStyle(.plain)
+        .help(on ? "On" : "Off")
+    }
+}
+
+/// Two small segments under a knob: the free unit, or a note value that follows the tempo.
+private struct SyncToggle: View {
+    let sync: KnobSync
+    let tint: Color
+
+    var body: some View {
+        Button(action: sync.toggle) {
+            HStack(spacing: 0) {
+                segment(Text(sync.unit), on: !sync.synced)
+                segment(Text(Image(systemName: "music.note")), on: sync.synced)
+            }
+            .font(.system(size: 9, weight: .semibold))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.line, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .help(sync.synced ? "Follows the tempo. Click for a free time in \(sync.unit)." : "Free time. Click to follow the tempo with a note value.")
+    }
+
+    private func segment(_ label: Text, on: Bool) -> some View {
+        label.frame(width: 22, height: 14)
+            .foregroundStyle(on ? Color.white : Theme.dim)
+            .background(on ? tint.opacity(0.75) : Color.clear)
     }
 }
 
@@ -184,11 +253,17 @@ private struct DeviceCard: View {
             }
             if let spec {
                 HStack(alignment: .top, spacing: 2) {
-                    ForEach(spec.params, id: \.key) { param in
+                    ForEach(spec.shownParams, id: \.key) { free in
+                        // A synced knob shows its note value instead of the free value.
+                        let synced = free.syncable && (device.params[free.syncKey] ?? 0) >= 0.5
+                        let param = synced ? spec.params.first { $0.key == free.divisionKey } ?? free : free
                         Knob(param: param, value: device.params[param.key] ?? param.def, tint: Theme.accent,
                              onChange: { model.setDeviceParam(track.id, device.id, param.key, param.clamp($0)) },
                              onReset: { model.setDeviceParam(track.id, device.id, param.key, nil) },
-                             automation: knobAutomation(param))
+                             automation: knobAutomation(param),
+                             sync: free.syncable ? KnobSync(synced: synced, unit: free.unit) {
+                                 model.setDeviceParam(track.id, device.id, free.syncKey, synced ? 0 : 1)
+                             } : nil)
                     }
                 }
                 .opacity(device.bypassed ? 0.4 : 1)

@@ -16,6 +16,11 @@ public final class Renderer {
     private let peaks: UnsafeMutablePointer<Float>   // per node: largest sample since the last `takePeak`
     /// Session clock minus timeline clock for the block being rendered.
     private var sessionOffset: Int64 = 0
+    /// The song position of the last grid step asked for, so several effects share one tempo map lookup.
+    private var clockFrame = Int64.min, clockBeat = 0.0, clockQuarter = 0.5
+    /// The block being rendered: its first timeline frame, and whether the transport plays.
+    private var blockStart: Int64 = 0
+    private var blockPlaying = false
     /// Per node, 16 channels x 128 pitches: how many arrangement notes are on. The loop wrap releases them.
     private let held: UnsafeMutablePointer<UInt8>
     /// A track whose sound after its fader is recorded (resampling), and the ring it goes to.
@@ -226,7 +231,21 @@ public final class Renderer {
         }
     }
 
+    /// Tells a plugin where the song is at the start of this block, for its own tempo sync.
+    private func setSong(_ unit: AudioUnitEffect) {
+        let (beat, quarter) = songPosition(blockStart)
+        var sig = TimeSignature(4, 4), from = 0.0
+        for change in plan.timeSignatures where Double(change.tick.rawValue) / Double(Tick.perQuarter) <= beat {
+            sig = change.signature; from = Double(change.tick.rawValue) / Double(Tick.perQuarter)
+        }
+        let bar = Double(sig.ticksPerBar.rawValue) / Double(Tick.perQuarter)
+        let downbeat = bar > 0 ? from + ((beat - from) / bar).rounded(.down) * bar : beat
+        unit.setSongPosition(frame: blockStart, beat: beat, bpm: 60 / quarter, numerator: sig.numerator,
+                             denominator: sig.denominator, downbeat: downbeat, playing: blockPlaying)
+    }
+
     private func run(_ unit: AudioUnitEffect, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
+        setSong(unit)
         scratchIn.update(from: l, count: frames)
         (scratchIn + maxBlock).update(from: r, count: frames)
         guard unit.process(frames: frames, input: inPointers, output: outPointers) == noErr else { return } // keep the dry signal
@@ -257,6 +276,7 @@ public final class Renderer {
     }
 
     private func play(_ unit: AudioUnitEffect, into l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
+        setSong(unit)
         scratchIn.update(repeating: 0, count: 2 * maxBlock)
         guard unit.process(frames: frames, input: inPointers, output: outPointers) == noErr else { return }
         for k in 0..<frames { l[k] += scratchOut[k]; r[k] += scratchOut[maxBlock + k] }
@@ -282,6 +302,7 @@ public final class Renderer {
                         outLeft: UnsafeMutablePointer<Float>, outRight: UnsafeMutablePointer<Float>) {
         precondition(frames <= maxBlock)
         sessionOffset = (sessionFrame ?? startFrame) - startFrame
+        blockStart = startFrame; blockPlaying = transport
         buffers.update(repeating: 0, count: nodeCount * 2 * maxBlock)
 
         for i in 0..<nodeCount {
@@ -416,7 +437,7 @@ public final class Renderer {
         }
         guard let effect = slot.effect else { return }
         if slot.needsConfigure { effect.configure(slot.live); slot.needsConfigure = false }
-        guard !slot.auto.isEmpty else { effect.process(l, r, frames: frames); return }
+        guard !slot.auto.isEmpty || effect.followsTempo else { effect.process(l, r, frames: frames); return }
         eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
             var changed = false
             for (i, (key, lane)) in slot.auto.enumerated() {
@@ -424,8 +445,24 @@ public final class Renderer {
                 if slot.live[key] != v { slot.live[key] = v; changed = true }
             }
             if changed { effect.configure(slot.live) }
+            if effect.followsTempo {
+                let (beat, quarter) = songPosition(grid)
+                effect.clock(frame: grid, beat: beat, quarterSeconds: quarter)
+            }
             effect.process(l + offset, r + offset, frames: count)
         }
+    }
+
+    /// Beat (in quarter notes) and seconds per quarter note at a timeline frame. No allocation.
+    private func songPosition(_ frame: Int64) -> (beat: Double, quarter: Double) {
+        if frame != clockFrame {
+            let map = plan.tempoMap
+            let tick = map.tickAt(seconds: Double(frame) / plan.sampleRate)
+            clockBeat = tick / Double(Tick.perQuarter)
+            clockQuarter = 60 / map.bpm(at: Tick(Int64(tick.rounded(.down))))
+            clockFrame = frame
+        }
+        return (clockBeat, clockQuarter)
     }
 
     @inline(__always)

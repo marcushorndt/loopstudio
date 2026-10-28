@@ -32,6 +32,8 @@ public final class AudioUnitEffect: @unchecked Sendable {
     private let inputPointers: UnsafeMutablePointer<UnsafePointer<Float>?>
     private let pullInput: AURenderPullInputBlock
     private var sampleTime: Float64 = 0
+    /// The song position the plugin reads for its own tempo sync. The renderer sets it before each block.
+    private let song = SongPosition()
 
     /// Latency the plugin reports, in samples. The graph uses it for delay compensation.
     public var latencySamples: Int { Int((unit.latency * sampleRate).rounded()) }
@@ -72,6 +74,27 @@ public final class AudioUnitEffect: @unchecked Sendable {
         unit.outputBusses[0].isEnabled = true
         try unit.outputBusses[0].setFormat(format)
         unit.maximumFramesToRender = AUAudioFrameCount(maxFrames)
+        // A plugin with its own tempo sync (a delay, an LFO, an arpeggiator) asks the host for the tempo and the beat.
+        let song = self.song
+        unit.musicalContextBlock = { tempo, numerator, denominator, beat, toNextBeat, downbeat in
+            tempo?.pointee = song.bpm
+            numerator?.pointee = Double(song.numerator)
+            denominator?.pointee = song.denominator
+            beat?.pointee = song.beat
+            if let toNextBeat {
+                let rest = song.beat.rounded(.up) - song.beat
+                toNextBeat.pointee = Int((rest * 60 / max(song.bpm, 1) * song.sampleRate).rounded())
+            }
+            downbeat?.pointee = song.downbeat
+            return true
+        }
+        unit.transportStateBlock = { flags, position, cycleStart, cycleEnd in
+            flags?.pointee = song.playing ? [.changed, .moving] : [.changed]
+            position?.pointee = song.frame
+            cycleStart?.pointee = 0
+            cycleEnd?.pointee = 0
+            return true
+        }
         try unit.allocateRenderResources()
 
         renderBlock = unit.renderBlock
@@ -104,6 +127,14 @@ public final class AudioUnitEffect: @unchecked Sendable {
         unit.deallocateRenderResources()
         outputList.unsafeMutablePointer.deallocate()
         inputPointers.deallocate()
+    }
+
+    /// Sets the song position the plugin sees in the next `process` call. Realtime safe.
+    func setSongPosition(frame: Int64, beat: Double, bpm: Double, numerator: Int, denominator: Int,
+                         downbeat: Double, playing: Bool) {
+        song.frame = Double(frame); song.beat = beat; song.bpm = bpm
+        song.numerator = numerator; song.denominator = denominator
+        song.downbeat = downbeat; song.playing = playing; song.sampleRate = sampleRate
     }
 
     /// Renders `frames` frames. `input` and `output` hold one pointer per channel.
@@ -184,4 +215,13 @@ public final class AudioUnitEffect: @unchecked Sendable {
               let dictionary = object as? [String: Any] else { return }
         unit.fullState = dictionary
     }
+}
+
+/// What a hosted plugin reads through its musical context and transport blocks. The audio thread writes it
+/// right before the render call that reads it, so it needs no lock.
+private final class SongPosition: @unchecked Sendable {
+    var frame = 0.0, beat = 0.0, bpm = 120.0, downbeat = 0.0
+    var numerator = 4, denominator = 4
+    var playing = false
+    var sampleRate = 48_000.0
 }

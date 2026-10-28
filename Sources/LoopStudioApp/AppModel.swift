@@ -165,6 +165,9 @@ final class AppModel {
     @ObservationIgnored let engine: LiveEngine
     @ObservationIgnored private var bank = AudioBank.live()
     @ObservationIgnored private var warpTask: Task<Void, Never>?
+    /// Every edit since the last save, in the package. After a crash, opening the project replays it.
+    /// No fsync per edit, so a fader drag never waits for the disk; an app crash still keeps the file.
+    @ObservationIgnored private var journal: Journal?
     @ObservationIgnored private var warpRounds = 0
     @ObservationIgnored private var plan: RenderPlan?
     @ObservationIgnored private var renderer: Renderer?
@@ -735,6 +738,7 @@ final class AppModel {
     func apply(_ command: Command, key: String? = nil) {
         do {
             let inverse = try command.apply(to: &project)
+            try? journal?.append(command)
             if let key, let last = lastKey, last.0 == key, Date().timeIntervalSince(last.1) < 0.8, !undoStack.isEmpty {
                 lastKey = (key, Date()) // same gesture: keep the first inverse
             } else {
@@ -750,14 +754,14 @@ final class AppModel {
 
     func undo() {
         guard let inverse = undoStack.popLast() else { return }
-        if let redo = try? inverse.apply(to: &project) { redoStack.append(redo) }
+        if let redo = try? inverse.apply(to: &project) { redoStack.append(redo); try? journal?.append(inverse) }
         lastKey = nil
         changed()
     }
 
     func redo() {
         guard let command = redoStack.popLast() else { return }
-        if let inverse = try? command.apply(to: &project) { undoStack.append(inverse) }
+        if let inverse = try? command.apply(to: &project) { undoStack.append(inverse); try? journal?.append(command) }
         lastKey = nil
         changed()
     }
@@ -1264,6 +1268,7 @@ final class AppModel {
         do {
             try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
             try ProjectPackage.write(project, to: packageURL)
+            try? journal?.reset()
             dirty = false
             UserDefaults.standard.set(packageURL.path, forKey: "lastProject")
         } catch {
@@ -1296,8 +1301,18 @@ final class AppModel {
         saveTask?.cancel()
         do {
             let loaded = try ProjectPackage.read(from: url)
-            reset(to: loaded.project, at: url)
+            // Edits after the last save, from a session that did not end cleanly.
+            let journalURL = url.appendingPathComponent("journal.jsonl")
+            let pending = (try? Journal.read(url: journalURL))?.commands ?? []
+            let replay = pending.isEmpty ? nil : Journal.replay(pending, onto: loaded.project)
+            reset(to: replay?.project ?? loaded.project, at: url)
             loadAllAudio()
+            if let replay {
+                dirty = true
+                scheduleSave()
+                status = "Recovered \(replay.applied) unsaved edit\(replay.applied == 1 ? "" : "s")"
+                    + (replay.failure == nil ? "" : "; the rest could not be applied")
+            }
             syncPlugins()
             UserDefaults.standard.set(url.path, forKey: "lastProject")
             if !loaded.issues.isEmpty {
@@ -1333,6 +1348,7 @@ final class AppModel {
             saveTask?.cancel()
             project = copy
             packageURL = url
+            journal = try? Journal(url: url.appendingPathComponent("journal.jsonl"), durable: false)
             dirty = false
             UserDefaults.standard.set(url.path, forKey: "lastProject")
             status = "Saved as \(url.lastPathComponent)"
@@ -1392,6 +1408,7 @@ final class AppModel {
         engine.seek(to: 0)
         project = new
         packageURL = url
+        journal = try? Journal(url: url.appendingPathComponent("journal.jsonl"), durable: false)
         bank = AudioBank.live()
         warpTask?.cancel()
         host.removeAll()

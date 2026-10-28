@@ -4,6 +4,7 @@ import Foundation
 /// sounds which went through plugins with latency line up with the sounds that did not.
 final class DelayLine {
     let delay: Int
+    let maxBlock: Int
     private let size: Int
     private var left: [Float], right: [Float]
     private var position = 0
@@ -12,6 +13,7 @@ final class DelayLine {
 
     init(delay: Int, maxBlock: Int) {
         self.delay = delay
+        self.maxBlock = maxBlock
         size = delay + maxBlock
         left = [Float](repeating: 0, count: size)
         right = [Float](repeating: 0, count: size)

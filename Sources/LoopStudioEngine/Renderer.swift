@@ -52,6 +52,8 @@ public final class Renderer {
     private let outputLines: [DelayLine?]
     private let sendLines: [[DelayLine?]]
     private let tapLines: [[DelayLine?]]
+    /// Every delay line by connection and delay, for the next renderer to take over.
+    private let delayLines: [String: DelayLine]
     private let instances: [DeviceID: DSPEffect]
     /// The instrument of each node as a slot, so its automation runs like a plugin effect's.
     private let instrumentSlots: [Slot?]
@@ -81,10 +83,27 @@ public final class Renderer {
         }
         chains = built
         instrumentSlots = instruments
-        func line(_ d: Int) -> DelayLine? { d > 0 ? DelayLine(delay: d, maxBlock: maxBlock) : nil }
-        outputLines = plan.nodes.map { line($0.outputDelay) }
-        sendLines = plan.nodes.map { $0.sends.map { line($0.delay) } }
-        tapLines = plan.nodes.map { $0.tapDelays.map(line) }
+        // A connection that keeps its ends and its delay keeps its line, so an edit does not insert
+        // a stretch of silence into a compensated path. Only one renderer runs at a time, so sharing is safe.
+        var kept: [String: DelayLine] = [:]
+        func name(_ node: Int?) -> String { node.flatMap { plan.trackOrder.indices.contains($0) ? plan.trackOrder[$0]?.description : nil } ?? "master" }
+        func line(_ d: Int, _ key: String) -> DelayLine? {
+            guard d > 0 else { return nil }
+            var full = "\(key)|\(d)"
+            while kept[full] != nil { full += "+" } // two equal connections never share one line
+            if let old = old?.delayLines[full], old.maxBlock == maxBlock { kept[full] = old; return old }
+            let new = DelayLine(delay: d, maxBlock: maxBlock)
+            kept[full] = new
+            return new
+        }
+        outputLines = plan.nodes.indices.map { i in line(plan.nodes[i].outputDelay, "out|\(name(i))|\(name(plan.nodes[i].output))") }
+        sendLines = plan.nodes.indices.map { i in
+            plan.nodes[i].sends.map { line($0.delay, "send|\(name(i))|\(name($0.target))|\($0.preFader)") }
+        }
+        tapLines = plan.nodes.indices.map { i in
+            zip(plan.nodes[i].taps, plan.nodes[i].tapDelays).map { line($1, "tap|\(name(i))|\(name($0))") }
+        }
+        delayLines = kept
         instances = made
         self.plan = plan
         self.maxBlock = maxBlock

@@ -411,3 +411,24 @@ private func writeSine(rate: Double, seconds: Double, channels: Int = 2) throws 
     #expect(abs(out.left[24_000] - 24_000 / 96_000) < 1e-6, "after one clip length it loops back to the offset")
     #expect(abs(out.left[36_000] - 36_000 / 96_000) < 1e-6)
 }
+
+@Test func anEditKeepsTheCompensationDelay() {
+    var rig = Rig()
+    let a = rig.asset(seconds: 2) { Float(sin(Double($0) * 0.05)) * 0.4 }
+    let slow = rig.track("Slow"), fast = rig.track("Fast")
+    rig.clip(a, on: slow); rig.clip(a, on: fast)
+    var plan = rig.plan
+    plan.nodes[0].latency = 300
+    plan.applyDelayCompensation()
+    let whole = Bounce.render(plan, startFrame: 0, endFrame: 2_000, block: 500)
+
+    // The same render, but a new renderer (an edit) takes over after 1000 frames.
+    var l = [Float](repeating: 0, count: 2_000), r = l
+    let first = Renderer(plan: plan, maxBlock: 500)
+    l.withUnsafeMutableBufferPointer { lb in r.withUnsafeMutableBufferPointer { rb in
+        for k in stride(from: 0, to: 1_000, by: 500) { first.process(startFrame: Int64(k), frames: 500, outLeft: lb.baseAddress! + k, outRight: rb.baseAddress! + k) }
+        let second = Renderer(plan: plan, maxBlock: 500, reusing: first)
+        for k in stride(from: 1_000, to: 2_000, by: 500) { second.process(startFrame: Int64(k), frames: 500, outLeft: lb.baseAddress! + k, outRight: rb.baseAddress! + k) }
+    } }
+    #expect(zip(whole.left, l).allSatisfy { $0 == $1 })
+}

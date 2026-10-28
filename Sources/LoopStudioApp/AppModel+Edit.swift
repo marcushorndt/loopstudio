@@ -328,10 +328,20 @@ extension AppModel {
         guard var copy = project.track(id), let index = project.tracks.firstIndex(where: { $0.id == id }) else { return }
         copy.id = TrackID()
         copy.name += " copy"
-        copy.clips = copy.clips.map { fresh($0, start: $0.start) }
-        copy.slots = copy.slots.map { slot in slot.map { var s = $0; s.clip = fresh($0.clip, start: $0.clip.start); return s } }
-        copy.devices = copy.devices.map { var d = $0; d.id = DeviceID(); return d }
-        copy.automation = copy.automation.map { var l = $0; l.id = LaneID(); return l }
+        // The copy's automation must drive the copy, not the original track and its devices.
+        var nodes: [UUID: UUID] = [id.rawValue: copy.id.rawValue]
+        copy.devices = copy.devices.map { var d = $0; d.id = DeviceID(); nodes[$0.id.rawValue] = d.id.rawValue; return d }
+        func retarget(_ lanes: [AutomationLane]) -> [AutomationLane] {
+            lanes.map { var l = $0; l.id = LaneID(); l.target.node = nodes[l.target.node] ?? l.target.node; return l }
+        }
+        func retarget(_ clip: Clip) -> Clip {
+            guard case .dummy(var d) = clip else { return clip }
+            d.lanes = retarget(d.lanes)
+            return .dummy(d)
+        }
+        copy.clips = copy.clips.map { retarget(fresh($0, start: $0.start)) }
+        copy.slots = copy.slots.map { slot in slot.map { var s = $0; s.clip = retarget(fresh($0.clip, start: $0.clip.start)); return s } }
+        copy.automation = retarget(copy.automation)
         apply(.insertTrack(track: copy, index: index + 1))
         selectedTrack = copy.id
     }

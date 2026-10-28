@@ -121,10 +121,8 @@ public final class LiveEngine: @unchecked Sendable {
     public var sessionFrame: Int64 { locked { sessionPosition } }
 
     public func play() {
-        locked {
-            if !playing { sessionPosition = position }
-            playing = true; countInRemaining = 0; stampPending = true
-        }
+        // The session clock is not reset here: a resume after a pause continues it. A jump while stopped syncs it.
+        locked { playing = true; countInRemaining = 0; stampPending = true }
     }
 
     /// Host time at which the transport last began to play. For lining up a recording with the timeline.
@@ -138,7 +136,6 @@ public final class LiveEngine: @unchecked Sendable {
     /// Plays only the click for `beats` beats, then starts the transport. Instruments keep running meanwhile.
     public func playAfterCountIn(beats: Int) {
         locked {
-            if !playing { sessionPosition = position }
             guard beats > 0 else { playing = true; return }
             countInRemaining = Int64(beats) * beatFrames
             countInDone = 0

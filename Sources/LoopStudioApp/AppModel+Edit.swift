@@ -6,6 +6,8 @@ struct ClipboardItem {
     var clip: Clip
     var trackOffset: Int
     var startOffset: Int64
+    /// Set for a session slot: its follow action travels with the clip.
+    var slot: SessionSlot? = nil
 }
 
 extension AppModel {
@@ -141,9 +143,10 @@ extension AppModel {
         if found.isEmpty, let id = selectedClip, let (tid, clip) = project.findClip(id), let i = project.tracks.firstIndex(where: { $0.id == tid }) {
             found.append((i, clip))
         }
+        let slots: [ClipID: SessionSlot] = Dictionary(uniqueKeysWithValues: project.tracks.flatMap { $0.slots.compactMap { $0 } }.map { ($0.clip.id, $0) })
         guard !found.isEmpty else { return }
         let firstTrack = found.map(\.0).min()!, firstStart = found.map { $0.1.start.rawValue }.min()!
-        clipboard = found.map { ClipboardItem(clip: $0.1, trackOffset: $0.0 - firstTrack, startOffset: $0.1.start.rawValue - firstStart) }
+        clipboard = found.map { ClipboardItem(clip: $0.1, trackOffset: $0.0 - firstTrack, startOffset: $0.1.start.rawValue - firstStart, slot: slots[$0.1.id]) }
     }
 
     func cutSelection() { copySelection(); deleteSelected() }
@@ -151,6 +154,7 @@ extension AppModel {
     /// Pastes at the cursor, starting on the selected track.
     func pasteClipboard() {
         guard !clipboard.isEmpty else { return }
+        if viewMode == .session { pasteIntoSlots(); return }
         let base = selectedTrack.flatMap { id in project.tracks.firstIndex { $0.id == id } } ?? 0
         var commands: [Command] = [], pasted: [ClipID] = []
         for item in clipboard {
@@ -166,6 +170,26 @@ extension AppModel {
         apply(.batch(commands: commands))
         selectedClips = Set(pasted)
         viewMode = .arrangement
+    }
+
+    /// Session view: puts the copied clips into the selected slot and the slots to its right, same row.
+    private func pasteIntoSlots() {
+        let base = selectedTrack.flatMap { id in project.tracks.firstIndex { $0.id == id } } ?? 0
+        let row = selectedRow ?? 0
+        var commands: [Command] = []
+        for item in clipboard {
+            let index = base + item.trackOffset
+            guard project.tracks.indices.contains(index) else { continue }
+            let track = project.tracks[index]
+            let clip = fresh(item.clip, start: 0)
+            guard fits(clip, track.kind) else { continue }
+            var slot = item.slot ?? SessionSlot(clip: clip)
+            slot.clip = clip
+            // Slots are a connected list; a paste past the end lands on the first free place.
+            commands.append(.setSlot(track: track.id, index: min(row, track.slots.count), slot: slot))
+        }
+        guard !commands.isEmpty else { return }
+        apply(.batch(commands: commands))
     }
 
     /// Copies each marked arrangement clip to just after itself, or the selected session clip into the next free slot.

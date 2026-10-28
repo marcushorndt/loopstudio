@@ -302,7 +302,8 @@ Tools to add as features land: `asset_import` (hash and copy a file into the pro
 | Right-click menus | Clip, lane, ruler, track header, mixer strip, session slot, scene, device, sidebar items. Items show their key. |
 | Warping | Beats and Tones modes, stretched offline with WSOLA (`TimeStretch.swift`) and cached per clip. Source tempo comes from the file name or the clip panel; warp markers and tempo ramps bend time. Deterministic, so a golden test can pin it. |
 | Delay compensation | Each node knows the latency of its plugins. A plan pass (`DelayCompensation.swift`) adds delay lines on the connections that skip a latent plugin, so all paths into a node line up. Sample accurate, same output for every block size. |
-| Open | Audio recording and resampling, per-track hardware outputs, more MCP convenience tools, VST3 bridge, clip colors. |
+| Done since | Audio recording with latency compensation, clip colours, clip names, several automation lanes per track in the arrangement, dummy-clip curves in clips, a multi-lane clip editor, keyboard navigation (arrows, Return), key 0, computer keyboard as MIDI keys (M), session slot copy and paste. |
+| Open | Resampling (master as input), MIDI To, per-track hardware outputs, warp-marker editor, VST3 bridge, pinned return tracks in the arrangement, more MCP convenience tools. |
 
 ## 17. Risks and the spikes that answer them
 

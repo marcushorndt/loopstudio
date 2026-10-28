@@ -49,6 +49,8 @@ To open a project at start, add `"--project", "/path/to/MyProject.loopstudio"` t
 | `follow_simulate` | reads | Run the follow-action dice many times and count outcomes. |
 | `tempo_convert` | reads | Ticks, seconds and frames, using the tempo map. |
 
+`command_apply` takes every edit the app can do: tracks and routing (`setOutput`, `setSends`, `setInputTrack`, `setMonitor`, `setSendsOnly`), clips and session slots, follow actions, devices and their parameters, MIDI notes, automation on tracks and in dummy clips, warping (`setAssetTempo`, `setClipWarp`), tempo, loop and launches. `command_examples` shows a valid JSON for each.
+
 Resources (when a project is open): `loopstudio://project/summary` and `loopstudio://project/full`.
 
 ## Example

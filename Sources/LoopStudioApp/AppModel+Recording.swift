@@ -52,12 +52,13 @@ extension AppModel {
     private func beginRecording(on id: TrackID, status text: String) {
         recordStartTick = currentTick
         recordTrackID = id
+        recordSlot = sessionRecordSlot(id)
         recording = true
         recordingAudio = true
         updateMetronome()
         engine.playAfterCountIn(beats: countInBars * meter.beats)
         transportPlaying = true
-        status = text
+        status = recordSlot.map { "\(text) into slot \($0 + 1)" } ?? text
     }
 
     /// Ends a recording of another track's sound. It starts exactly where the renderer wrote its first frame.
@@ -76,8 +77,7 @@ extension AppModel {
         var clip = project.makeAudioClip(asset: asset.id, start: start, length: Tick(max(1, end.rawValue - start.rawValue)))
         clip.loop = false
         clip.warpMode = .off
-        apply(.insertClip(track: id, clip: .audio(clip)))
-        selectedClips = [clip.id]
+        placeTake(.audio(clip), on: id)
         status = String(format: "Recorded %.1f s", Double(result.frames) / sr)
         if result.droppedFrames > 0 {
             status += String(format: ". Warning: %.2f s were lost (the disk was too slow)", Double(result.droppedFrames) / sr)
@@ -126,13 +126,38 @@ extension AppModel {
         var clip = project.makeAudioClip(asset: asset.id, start: recordStartTick, length: Tick(max(1, endTick.rawValue - recordStartTick.rawValue)))
         clip.loop = false
         clip.warpMode = .off
-        apply(.insertClip(track: id, clip: .audio(clip)))
-        selectedClips = [clip.id]
+        placeTake(.audio(clip), on: id)
         status = String(format: "Recorded %.1f s", Double(trimmed.frames) / take.sampleRate)
         if take.droppedFrames > 0 {
             status += String(format: ". Warning: %.2f s of input were lost (the disk was too slow)", Double(take.droppedFrames) / take.sampleRate)
         }
         if let error = take.writeError { status += ". Warning: writing the take failed: \(error)" }
+    }
+
+    /// In the Session view, with the cursor on an empty slot of the track, the take goes into that slot.
+    func sessionRecordSlot(_ id: TrackID) -> Int? {
+        guard viewMode == .session, let row = selectedSceneRow, let track = project.track(id) else { return nil }
+        return row < track.slots.count && track.slots[row] != nil ? nil : row
+    }
+
+    /// Puts a finished take where the recording was aimed: a Session slot (it loops and starts to play,
+    /// like Live), or the arrangement at the place it was played.
+    func placeTake(_ take: Clip, on id: TrackID) {
+        defer { recordSlot = nil }
+        guard let row = recordSlot else {
+            apply(.insertClip(track: id, clip: take))
+            selectedClips = [take.id]
+            return
+        }
+        var clip = take
+        switch clip {
+        case .audio(var c): c.start = 0; c.loop = true; clip = .audio(c)
+        case .midi(var c): c.start = 0; c.loop = true; clip = .midi(c)
+        case .dummy: break
+        }
+        apply(.setSlot(track: id, index: row, slot: SessionSlot(clip: clip)))
+        selectedClip = clip.id
+        launch(track: id, row: row)
     }
 
     private func nextTakeName() -> String {

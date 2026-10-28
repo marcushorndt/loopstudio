@@ -124,6 +124,8 @@ final class AppModel {
     var recordTrackID: TrackID?
     /// Timeline frame minus session frame when a MIDI take began. Turns its session-clock stamps into timeline frames.
     @ObservationIgnored var recordFrameOffset: Int64 = 0
+    /// Session recording: the empty slot the take goes into. `nil` records into the arrangement.
+    @ObservationIgnored var recordSlot: Int?
     /// Sound card choice. It belongs to this Mac, not to a project. `nil` means the system default.
     var outputUID: String? = UserDefaults.standard.string(forKey: "outputUID") {
         didSet { UserDefaults.standard.set(outputUID, forKey: "outputUID") }
@@ -306,6 +308,7 @@ final class AppModel {
         recordStartTick = currentTick
         // The take belongs to this track, even if the selection changes while it records.
         recordTrackID = selectedTrack
+        recordSlot = selectedTrack.flatMap(sessionRecordSlot)
         // Notes are stamped on the session clock, which does not jump back at the loop end.
         recordFrameOffset = engine.positionFrame - engine.sessionFrame
         recorder.begin()
@@ -313,7 +316,7 @@ final class AppModel {
         updateMetronome()
         engine.playAfterCountIn(beats: countInBars * meter.beats)
         transportPlaying = true
-        status = "Recording"
+        status = recordSlot.map { "Recording into slot \($0 + 1)" } ?? "Recording"
     }
 
     /// Turns what was played into a MIDI clip on the selected track.
@@ -335,8 +338,7 @@ final class AppModel {
         let elapsed = max(1, project.tempoMap.tick(atFrame: Frame(endFrame + offset), sampleRate: sr).rawValue - start)
         let bars = max(1, (elapsed + barTicks - 1) / barTicks)
         let clip = MIDIClip(start: recordStartTick, length: Tick(bars * barTicks), loop: false, notes: notes)
-        apply(.insertClip(track: id, clip: .midi(clip)))
-        selectedClips = [clip.id]
+        placeTake(.midi(clip), on: id)
         status = "Recorded \(notes.count) note\(notes.count == 1 ? "" : "s")"
     }
 

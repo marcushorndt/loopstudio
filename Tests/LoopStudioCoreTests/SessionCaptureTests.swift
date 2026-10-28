@@ -54,3 +54,35 @@ private func setup() -> (Project, TrackID) {
     #expect(beats.filter { $0.accent }.map { $0.tick.rawValue } == [0, 3_840, 7_680, 10_560])
     #expect(beats.allSatisfy { $0.tick.rawValue % 960 == 0 })
 }
+
+@Test func captureCutsTheArrangementFromTheFirstLaunchToNow() throws {
+    var (p, id) = setup()
+    let clipID = p.tracks[0].slots[0]!.clip.id
+    // Two short parts with a gap: the arrangement stayed silent in the gap too.
+    let events = [SessionEvent(track: id, slot: 0, clip: clipID, startTick: 0, endTick: 1_920, cause: .launch),
+                  SessionEvent(track: id, slot: 0, clip: clipID, startTick: 7_680, endTick: 9_600, cause: .launch)]
+    try Command.batch(commands: p.captureCommands(events, until: 11_520)).apply(to: &p)
+    let clips = p.tracks[0].clips.sorted { $0.start < $1.start }
+    #expect(clips.map(\.start) == [0, 7_680, 11_520], "only the tail of the arrangement clip stays")
+}
+
+@Test func captureSkipsASlotThatHoldsAnotherClipNow() {
+    let (p, id) = setup()
+    let events = [SessionEvent(track: id, slot: 0, clip: ClipID(), startTick: 0, endTick: 3_840, cause: .launch)]
+    #expect(p.captureCommands(events, until: 3_840).isEmpty)
+}
+
+@Test func capturedPassesKeepTheAutomationPhase() throws {
+    var (p, id) = setup()
+    var slotClip = p.tracks[0].slots[0]!.clip
+    // A two-bar ramp over a one-bar loop.
+    slotClip.lanes = [AutomationLane(target: ParameterAddress(node: ParameterAddress.ownTrack, parameter: "volume"), points: [AutomationPoint(tick: 0, value: 0), AutomationPoint(tick: 7_680, value: 1)])]
+    slotClip.automationLength = 7_680
+    p.tracks[0].slots[0] = SessionSlot(clip: slotClip)
+    let events = [SessionEvent(track: id, slot: 0, clip: slotClip.id, startTick: 0, endTick: 7_680, cause: .launch)]
+    try Command.batch(commands: p.captureCommands(events, until: 7_680)).apply(to: &p)
+    let clips = p.tracks[0].clips.sorted { $0.start < $1.start }
+    try #require(clips.count == 3, "two passes, then the tail of the arrangement clip")
+    #expect(clips[0].lanes[0].points.first?.value == 0)
+    #expect(abs((clips[1].lanes[0].points.first?.value ?? 0) - 0.5) < 1e-9, "the second pass starts halfway up the ramp")
+}

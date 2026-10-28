@@ -227,7 +227,8 @@ extension AutomationMath {
     public static func rotate(_ points: [AutomationPoint], by offset: Tick, cycle: Tick) -> [AutomationPoint] {
         let phase = Tick(((offset.rawValue % max(1, cycle.rawValue)) + cycle.rawValue) % max(1, cycle.rawValue))
         guard phase > 0, !points.isEmpty else { return points }
-        let inCycle = points.filter { $0.tick < cycle }
+        // A point at or after the cycle end still shapes the segment that runs toward it.
+        let inCycle = points
         let head = tail(inCycle, from: phase).filter { $0.tick < cycle - phase }
         let end = AutomationPoint(tick: cycle - phase - 1, value: value(inCycle, at: cycle - 1) ?? 0)
         let first = inCycle.last { $0.tick <= 0 }

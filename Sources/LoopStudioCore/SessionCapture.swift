@@ -30,54 +30,47 @@ extension Clip {
 
 extension Project {
     /// The commands that write a Session performance into the arrangement, at the times it played,
-    /// up to `now`. Arrangement clips under a captured part are cut away (the rest of them stays).
+    /// up to `now`. From a track's first captured start, its Session part replaced the arrangement, so
+    /// arrangement clips there are cut away (the rest of them stays).
     /// A session clip loops its own length, an arrangement clip its whole source, so every pass of a
-    /// looping session clip becomes its own arrangement clip.
+    /// looping session clip becomes its own arrangement clip. Automation with its own cycle keeps its phase.
     public func captureCommands(_ events: [SessionEvent], until now: Tick) -> [Command] {
         var inserts: [Command] = []
-        var spans: [TrackID: [Range<Tick>]] = [:]
+        var firstStart: [TrackID: Tick] = [:]
         for e in events where e.startTick < now {
-            guard let t = track(e.track), t.slots.indices.contains(e.slot), let slot = t.slots[e.slot] else { continue }
+            // A slot that holds another clip now did not play this event.
+            guard let t = track(e.track), t.slots.indices.contains(e.slot), let slot = t.slots[e.slot], slot.clip.id == e.clip else { continue }
             if case .dummy = slot.clip { continue }
             let end = min(e.endTick, now)
             guard end > e.startTick, slot.clip.length > 0 else { continue }
-            spans[e.track, default: []].append(e.startTick..<end)
+            firstStart[e.track] = min(firstStart[e.track] ?? e.startTick, e.startTick)
             let pass = slot.clip.length
             var at = e.startTick
             while at < end {
-                inserts.append(.insertClip(track: e.track, clip: slot.clip.placed(at: at, length: min(pass, end - at), loop: slot.clip.loops)))
+                var clip = slot.clip.placed(at: at, length: min(pass, end - at), loop: slot.clip.loops)
+                if let cycle = slot.clip.automationLength, at > e.startTick {
+                    clip.lanes = slot.clip.lanes.map { lane in
+                        var lane = lane
+                        lane.id = LaneID()
+                        lane.points = AutomationMath.rotate(lane.points, by: at - e.startTick, cycle: cycle)
+                        return lane
+                    }
+                }
+                inserts.append(.insertClip(track: e.track, clip: clip))
                 if !slot.clip.loops { break }
                 at = at + pass
             }
         }
 
         var cuts: [Command] = []
-        for (id, ranges) in spans {
+        for (id, first) in firstStart {
             guard let t = track(id) else { continue }
-            let merged = Self.merge(ranges)
-            for c in t.clips {
-                let clipRange = c.start..<(c.start + c.length)
-                guard merged.contains(where: { $0.overlaps(clipRange) }) else { continue }
+            for c in t.clips where c.start < now && c.start + c.length > first {
                 cuts.append(.removeClip(clip: c.id))
-                // Keep what lies between the captured parts.
-                var from = c.start
-                for r in merged where r.overlaps(clipRange) {
-                    if let piece = c.slice(from: from, to: r.lowerBound) { cuts.append(.insertClip(track: id, clip: piece)) }
-                    from = max(from, r.upperBound)
-                }
-                if let piece = c.slice(from: from, to: clipRange.upperBound) { cuts.append(.insertClip(track: id, clip: piece)) }
+                if let head = c.slice(from: c.start, to: first) { cuts.append(.insertClip(track: id, clip: head)) }
+                if let tail = c.slice(from: now, to: c.start + c.length) { cuts.append(.insertClip(track: id, clip: tail)) }
             }
         }
         return cuts + inserts
-    }
-
-    private static func merge(_ ranges: [Range<Tick>]) -> [Range<Tick>] {
-        var out: [Range<Tick>] = []
-        for r in ranges.sorted(by: { $0.lowerBound < $1.lowerBound }) {
-            if let last = out.last, r.lowerBound <= last.upperBound {
-                out[out.count - 1] = last.lowerBound..<max(last.upperBound, r.upperBound)
-            } else { out.append(r) }
-        }
-        return out
     }
 }

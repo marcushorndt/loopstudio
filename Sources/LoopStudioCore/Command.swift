@@ -58,6 +58,10 @@ public enum Command: Codable, Sendable {
     case setRandomSeed(seed: UInt32)
     case setAutoLoop(rule: AutoLoopRule)
     case addAsset(asset: Asset)
+    /// The tempo a loop was recorded at. `nil` means unknown.
+    case setAssetTempo(id: AssetID, bpm: Double?)
+    /// Warp mode and markers of an audio clip. Markers pair a source frame with a tick, counted from the start of the audio.
+    case setClipWarp(clip: ClipID, mode: WarpMode, markers: [WarpMarker])
     case removeAsset(id: AssetID)
 
     /// `index` is where the port goes; `nil` means the end.
@@ -359,6 +363,29 @@ extension Project {
             }
             assets.append(asset)
             return .removeAsset(id: asset.id)
+
+        case .setAssetTempo(let id, let bpm):
+            guard let i = assets.firstIndex(where: { $0.id == id }) else { throw CommandError.assetNotFound(id) }
+            if let bpm { guard bpm.isFinite, (20...400).contains(bpm) else { throw CommandError.invalidValue("tempo \(bpm)") } }
+            let old = assets[i].sourceTempo
+            assets[i].sourceTempo = bpm
+            return .setAssetTempo(id: id, bpm: old)
+
+        case .setClipWarp(let id, let mode, let markers):
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            guard case .audio(var c) = clip else { throw CommandError.invalidValue("only audio clips warp") }
+            guard markers.allSatisfy({ $0.sourceFrame >= 0 && $0.tick.rawValue >= 0 }) else { throw CommandError.invalidValue("warp marker") }
+            let sorted = markers.sorted { $0.tick < $1.tick }
+            for i in sorted.indices.dropFirst() {
+                guard sorted[i].tick > sorted[i - 1].tick, sorted[i].sourceFrame > sorted[i - 1].sourceFrame else {
+                    throw CommandError.invalidValue("warp markers must move forward in both time and source")
+                }
+            }
+            let old = Command.setClipWarp(clip: id, mode: c.warpMode, markers: c.warpMarkers)
+            c.warpMode = mode
+            c.warpMarkers = sorted
+            try withTrack(trackID) { t in try t.replaceClip(.audio(c)) }
+            return old
 
         case .removeAsset(let id):
             guard let index = assets.firstIndex(where: { $0.id == id }) else { throw CommandError.assetNotFound(id) }

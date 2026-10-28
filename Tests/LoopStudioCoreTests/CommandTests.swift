@@ -327,3 +327,13 @@ func randomEditsKeepInvariantsAndUndoBackToTheStart(seed: UInt64) throws {
     let slot = try JSONDecoder().decode(DeviceSlot.self, from: Data(json.utf8))
     #expect(slot.params.isEmpty && slot.id == id)
 }
+
+@Test func tempoIsGuessedFromFileNames() {
+    #expect(TempoGuess.fromFileName("Funky Drums 92 BPM.wav") == 92)
+    #expect(TempoGuess.fromFileName("loop_120bpm.aif") == 120)
+    #expect(TempoGuess.fromFileName("pad_85_Am.wav") == 85)
+    #expect(TempoGuess.fromFileName("bpm128 bass.wav") == 128)
+    #expect(TempoGuess.fromFileName("kick.wav") == nil)
+    #expect(TempoGuess.fromFileName("take 7.wav") == nil, "7 is not a tempo")
+    #expect(TempoGuess.fromFileName("sample_999.wav") == nil)
+}

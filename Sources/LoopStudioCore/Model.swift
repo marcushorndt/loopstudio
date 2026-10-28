@@ -472,11 +472,14 @@ public struct Project: Hashable, Codable, Sendable {
     /// and the loop or one-shot setting from the auto-loop rule, judged by the sample's duration.
     public func makeAudioClip(asset assetID: AssetID, start: Tick = 0, length: Tick) -> AudioClip {
         var loop = false
+        var warp = WarpMode.off
         if let asset = asset(assetID), asset.sampleRate > 0 {
             loop = autoLoop.shouldLoop(seconds: Double(asset.frames) / asset.sampleRate)
+            // A loop with a known tempo follows the project tempo, like a warped clip in Live.
+            if loop, asset.sourceTempo != nil { warp = .beats }
         }
         return AudioClip(asset: assetID, start: start, length: length, loop: loop,
-                         fadeInMs: defaultFadeMs, fadeOutMs: defaultFadeMs)
+                         fadeInMs: defaultFadeMs, fadeOutMs: defaultFadeMs, warpMode: warp)
     }
 
     /// Finds a clip in the arrangement or in a session slot.

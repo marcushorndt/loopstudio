@@ -33,11 +33,26 @@ public final class PCMBuffer: @unchecked Sendable {
 /// All audio a project uses, loaded and converted to the project's sample rate.
 public final class AudioBank: @unchecked Sendable {
     private var buffers: [AssetID: PCMBuffer] = [:]
+    private let warpLock = NSLock()
+    private var warped: [String: PCMBuffer] = [:]
 
     public init() {}
 
     public func insert(_ buffer: PCMBuffer, for id: AssetID) { buffers[id] = buffer }
     public func buffer(for id: AssetID) -> PCMBuffer? { buffers[id] }
+
+    /// A stretched copy of a clip's audio. Stretching is slow, so each result is made once per key.
+    public func warped(key: String, make: () -> PCMBuffer) -> PCMBuffer {
+        warpLock.lock()
+        if let hit = warped[key] { warpLock.unlock(); return hit }
+        warpLock.unlock()
+        let made = make()
+        warpLock.lock()
+        warped[key] = made
+        if warped.count > 64 { warped = [key: made] }   // a plain bound; edits make old keys useless anyway
+        warpLock.unlock()
+        return made
+    }
 
     public struct LoadResult {
         public var bank: AudioBank

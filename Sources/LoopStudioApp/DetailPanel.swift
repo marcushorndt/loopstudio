@@ -74,6 +74,7 @@ private struct ClipPanel: View {
             case .audio(let a):
                 Toggle("Loop", isOn: Binding(get: { a.loop }, set: { model.apply(.setClipLoop(clip: a.id, loop: $0)) }))
                 Toggle("Clip active", isOn: Binding(get: { !a.muted }, set: { set(a, muted: !$0) }))
+                warpControls(a)
                 slider("Gain", value: a.gainDb, range: -36...12, format: "%.1f dB") { set(a, gain: $0) }
                 slider("Fade in", value: a.fadeInMs, range: 0...200, format: "%.1f ms") { set(a, fadeIn: $0) }
                 slider("Fade out", value: a.fadeOutMs, range: 0...200, format: "%.1f ms") { set(a, fadeOut: $0) }
@@ -94,6 +95,44 @@ private struct ClipPanel: View {
             Spacer()
         }
         .font(.system(size: 12))
+    }
+
+    @ViewBuilder
+    private func warpControls(_ a: AudioClip) -> some View {
+        let asset = model.project.asset(a.asset)
+        HStack {
+            Toggle("Warp", isOn: Binding(get: { a.warpMode != .off }, set: { model.apply(.setClipWarp(clip: a.id, mode: $0 ? .beats : .off, markers: a.warpMarkers)) }))
+            if a.warpMode != .off {
+                Picker("", selection: Binding(get: { a.warpMode }, set: { model.apply(.setClipWarp(clip: a.id, mode: $0, markers: a.warpMarkers)) })) {
+                    Text("Beats").tag(WarpMode.beats)
+                    Text("Tones").tag(WarpMode.tones)
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 110)
+            }
+        }
+        if a.warpMode != .off {
+            HStack(spacing: 4) {
+                Text("Source").frame(width: 52, alignment: .leading)
+                TextField("BPM", value: Binding(get: { asset?.sourceTempo ?? 0 }, set: { v in
+                    if let asset, v >= 20, v <= 400 { model.apply(.setAssetTempo(id: asset.id, bpm: v)) }
+                }), format: .number.precision(.fractionLength(0...2)))
+                .textFieldStyle(.roundedBorder).frame(width: 70)
+                Button("÷2") { if let t = asset?.sourceTempo, let asset { model.apply(.setAssetTempo(id: asset.id, bpm: t / 2)) } }
+                Button("×2") { if let t = asset?.sourceTempo, let asset { model.apply(.setAssetTempo(id: asset.id, bpm: t * 2)) } }
+                Button("Fit") { fitTempo(a) }.help("Set the source tempo so this clip's audio fills the clip length once")
+            }
+            .controlSize(.small)
+            if asset?.sourceTempo == nil { Text("Enter the tempo of this loop.").font(.caption).foregroundStyle(.orange) }
+        }
+    }
+
+    /// Makes the whole sample span the clip length: sets the source tempo that does it.
+    private func fitTempo(_ a: AudioClip) {
+        guard let asset = model.project.asset(a.asset), asset.sampleRate > 0 else { return }
+        let seconds = Double(asset.frames) / asset.sampleRate
+        let beats = Double(a.length.rawValue) / Double(Tick.perQuarter)
+        guard seconds > 0, beats > 0 else { return }
+        model.apply(.setAssetTempo(id: asset.id, bpm: min(400, max(20, beats * 60 / seconds))))
     }
 
     private func set(_ a: AudioClip, gain: Double? = nil, fadeIn: Double? = nil, fadeOut: Double? = nil, muted: Bool? = nil) {

@@ -105,6 +105,14 @@ public struct TempoMap: Hashable, Codable, Sendable {
         tick(atSeconds: Double(frame.rawValue) / sampleRate)
     }
 
+    /// Fractional tick at a time. Like `tick(atSeconds:)` without the rounding.
+    public func tickAt(seconds: Double) -> Double {
+        let t = tick(atSeconds: seconds)
+        let here = self.seconds(at: t)
+        let tempo = bpm(at: t)
+        return Double(t.rawValue) + (seconds - here) * tempo / 60 * Double(Tick.perQuarter)
+    }
+
     /// The tempo at `tick`. Inside a ramp this is the interpolated value.
     public func bpm(at tick: Tick) -> Double {
         if tick.rawValue < 0 { return points[0].bpm }

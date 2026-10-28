@@ -740,6 +740,8 @@ final class AppModel {
             }
             var asset = imported
             asset.name = url.deletingPathExtension().lastPathComponent
+            // The demo loops are made at 120 BPM.
+            if url.path.contains("/LoopStudio/Demo Samples/") { asset.sourceTempo = 120 }
             try Command.addAsset(asset: asset).apply(to: &project) // not an undo step: the file stays in the project
             loadAudio(asset)
             return asset

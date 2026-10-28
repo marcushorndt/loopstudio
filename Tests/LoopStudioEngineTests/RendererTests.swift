@@ -220,7 +220,7 @@ private func db(_ x: Float) -> Float { 20 * log10(x) }
 
     let warnings = rig.plan.warnings.joined(separator: "\n")
     #expect(warnings.contains("hardware port"))
-    #expect(warnings.contains("warping"))
+    #expect(warnings.contains("no source tempo"))
     #expect(warnings.contains("missing or unreadable"))
     #expect(rig.render().peak == 0.5, "the warped clip still plays, unwarped; the direct-out track is not in the mix")
 }

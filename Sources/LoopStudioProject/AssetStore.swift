@@ -37,7 +37,8 @@ public enum AssetStore {
         catch { throw StoreError.notAudio(source.lastPathComponent) }
         guard file.length > 0 else { throw StoreError.emptyFile(source.lastPathComponent) }
         return Asset(sha256: hash, name: source.lastPathComponent, frames: file.length,
-                     sampleRate: file.fileFormat.sampleRate, channels: Int(file.fileFormat.channelCount))
+                     sampleRate: file.fileFormat.sampleRate, channels: Int(file.fileFormat.channelCount),
+                     sourceTempo: TempoGuess.fromFileName(source.lastPathComponent))
     }
 
     /// The stored file for an asset, whatever its extension.

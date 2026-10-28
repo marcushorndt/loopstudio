@@ -200,11 +200,11 @@ public struct RenderPlan {
 
             if t.kind == .audio && !silent {
                 for case .audio(let c) in t.clips where !c.muted {
-                    guard let pcm = bank.buffer(for: c.asset), pcm.frames > 0 else {
+                    guard let raw = bank.buffer(for: c.asset), raw.frames > 0 else {
                         warnings.append("clip on \"\(t.name)\" has no audio (missing or unreadable file)")
                         continue
                     }
-                    if c.warpMode != .off { warnings.append("clip on \"\(t.name)\" uses warping, which is not rendered yet; it plays unwarped") }
+                    let pcm = warpedAudio(c, raw: raw, startTick: c.start, project: project, bank: bank, trackName: t.name, warnings: &warnings)
                     let start = map.frame(at: c.start, sampleRate: rate).rawValue
                     let end = map.frame(at: c.start + c.length, sampleRate: rate).rawValue
                     guard end > start else { continue }
@@ -227,7 +227,8 @@ public struct RenderPlan {
             if t.kind == .audio && !silent, let session {
                 for e in session.events where e.track == id {
                     guard case .audio(let c)? = project.findClip(e.clip)?.clip, !c.muted,
-                          let pcm = bank.buffer(for: c.asset), pcm.frames > 0 else { continue }
+                          let raw = bank.buffer(for: c.asset), raw.frames > 0 else { continue }
+                    let pcm = warpedAudio(c, raw: raw, startTick: e.startTick, project: project, bank: bank, trackName: t.name, warnings: &warnings)
                     let start = map.frame(at: e.startTick, sampleRate: rate).rawValue
                     let end = map.frame(at: e.endTick, sampleRate: rate).rawValue
                     guard end > start else { continue }
@@ -277,6 +278,25 @@ public struct RenderPlan {
         }
         return RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings,
                           trackOrder: order.map { Optional($0) } + [nil])
+    }
+
+    /// The clip's audio, stretched to the project tempo when warping is on. Otherwise the audio as it is.
+    private static func warpedAudio(_ c: AudioClip, raw: PCMBuffer, startTick: Tick, project: Project, bank: AudioBank,
+                                    trackName: String, warnings: inout [String]) -> PCMBuffer {
+        guard c.warpMode != .off else { return raw }
+        let asset = project.asset(c.asset)
+        let rate = project.sampleRate
+        guard let mapping = WarpMapping.make(sourceFrames: raw.frames, sourceTempo: asset?.sourceTempo, markers: c.warpMarkers,
+                                             assetRate: asset?.sampleRate ?? rate, tempoMap: project.tempoMap,
+                                             startTick: startTick, sampleRate: rate) else {
+            warnings.append("clip on \"\(trackName)\" is warped but has no source tempo or markers; it plays unwarped")
+            return raw
+        }
+        let constant = project.tempoMap.points.count <= 1
+        let key = "\(c.asset)|\(c.warpMode)|\(asset?.sourceTempo ?? 0)|\(c.warpMarkers)|\(project.tempoMap.points)|\(constant ? 0 : startTick.rawValue)|\(rate)"
+        return bank.warped(key: key) {
+            TimeStretch.stretch(raw, mode: c.warpMode, outFrames: mapping.outFrames, source: mapping.source)
+        }
     }
 
     private static func effects(of track: Track, units: [DeviceID: AudioUnitEffect],

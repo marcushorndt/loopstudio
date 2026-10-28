@@ -153,7 +153,8 @@ private struct SlotCell: View {
                     .frame(maxWidth: .infinity, minHeight: slotHeight)
                     .background(Theme.panel.opacity(0.7), in: RoundedRectangle(cornerRadius: 3))
             }
-            .buttonStyle(.plain)
+.buttonStyle(.plain)
+            .contextMenu { Button("New Dummy Clip") { model.createDummyClip(track: track.id, row: row) } }
             .help(track.kind == .midi ? "Create an empty MIDI clip" : "Empty slot. Drop an audio file here.")
         }
     }

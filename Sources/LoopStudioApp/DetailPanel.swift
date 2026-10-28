@@ -42,6 +42,8 @@ private struct ClipPanel: View {
                 VStack(alignment: .leading, spacing: 6) {
                     if case .midi(let m) = clip {
                         PianoRoll(clip: m, tint: Theme.track(track.colorIndex))
+                    } else if case .dummy(let d) = clip {
+                        DummyPanel(clip: d, tint: Theme.track(track.colorIndex))
                     } else {
                     Text(model.clipName(clip)).font(.headline)
                     if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
@@ -84,7 +86,10 @@ private struct ClipPanel: View {
                 Text("Click the grid to add notes. Drag to move. Drag the right edge to resize. Double-click deletes.")
                     .font(.caption).foregroundStyle(Theme.dim)
             case .dummy:
-                Text("A dummy clip only carries follow actions.").font(.caption).foregroundStyle(Theme.dim)
+                Stepper("Length  \(beatsText(clip.length))", onIncrement: { resize(clip.id, clip.start, clip.length, by: 4) },
+                        onDecrement: { resize(clip.id, clip.start, clip.length, by: -4) })
+                Text("A dummy clip draws parameter curves while it plays. Its follow actions chain it to other slots.")
+                    .font(.caption).foregroundStyle(Theme.dim)
             }
             Spacer()
         }
@@ -189,5 +194,43 @@ private struct FollowEditor: View {
 
     private func commit(_ s: SessionSlot, key: String? = nil) {
         model.apply(.setSlot(track: track.id, index: row, slot: s), key: key.map { "\($0)\(s.clip.id)" })
+    }
+}
+
+/// The curves of a dummy clip. Points count from the start of the clip.
+private struct DummyPanel: View {
+    @Environment(AppModel.self) private var model
+    let clip: DummyClip
+    let tint: Color
+    @State private var choice: ParameterAddress?
+
+    var body: some View {
+        let targets = model.project.automationTargets()
+        let address = choice ?? clip.lanes.first?.target ?? targets.first?.address
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Picker("Parameter", selection: Binding(get: { address }, set: { choice = $0 })) {
+                    ForEach(targets, id: \.address) { Text($0.name).tag(Optional($0.address)) }
+                }
+                .controlSize(.small).frame(maxWidth: 300)
+                Text("\(clip.lanes.count) curve" + (clip.lanes.count == 1 ? "" : "s")).font(.caption).foregroundStyle(Theme.dim)
+                Spacer()
+                if let address, clip.lanes.contains(where: { $0.target == address }) {
+                    Button("Remove curve") { model.apply(.setDummyAutomation(clip: clip.id, target: address, points: [])) }.controlSize(.small)
+                }
+            }
+            if let address, let target = model.project.automationTarget(address) {
+                GeometryReader { geo in
+                    AutomationEditor(target: target, points: clip.lanes.first { $0.target == address }?.points ?? [],
+                                     pixelsPerTick: Double(geo.size.width) / Double(max(1, clip.length.rawValue)),
+                                     width: geo.size.width, height: geo.size.height, tint: tint) { pts in
+                        model.apply(.setDummyAutomation(clip: clip.id, target: address, points: pts))
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            } else {
+                Spacer()
+            }
+        }
     }
 }

@@ -156,7 +156,22 @@ final class AppModel {
 
     // MARK: Transport
 
-    func togglePlay() { transportPlaying ? pause() : play() }
+    /// Where Space started playback. Stopping with Space returns here.
+    private var playStart: Tick = 0
+
+    /// Space: play from the cursor, or stop and return to where playback began.
+    func togglePlay() {
+        if transportPlaying {
+            pause()
+            seek(to: playStart)
+        } else {
+            playStart = currentTick
+            play()
+        }
+    }
+
+    /// Shift+Space: pause in place, or continue from there.
+    func togglePause() { transportPlaying ? pause() : play() }
 
     func play() {
         engine.play()
@@ -178,7 +193,10 @@ final class AppModel {
         if !performance.isEmpty { performance = []; rebuild() }
     }
 
-    func seek(to tick: Tick) { engine.seek(to: frame(max(0, tick))) }
+    func seek(to tick: Tick) {
+        engine.seek(to: frame(max(0, tick)))
+        if !transportPlaying { playStart = max(0, tick) }
+    }
 
     var arrangementOverridden: Bool { !performance.isEmpty }
 

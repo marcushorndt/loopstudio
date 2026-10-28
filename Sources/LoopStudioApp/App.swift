@@ -32,6 +32,7 @@ struct LoopStudioApp: App {
             }
             CommandMenu("Transport") {
                 Button(model.transportPlaying ? "Stop" : "Play") { model.togglePlay() }.keyboardShortcut(.space, modifiers: [])
+                Button(model.transportPlaying ? "Pause" : "Continue") { model.togglePause() }.keyboardShortcut(.space, modifiers: .shift)
                 Button("Stop and Rewind") { model.stop() }.keyboardShortcut(".", modifiers: .command)
                 Button("Stop All Clips") { model.stopAllClips() }.keyboardShortcut(".", modifiers: [.command, .shift])
                 Button("Loop Selection") { model.loopSelection() }.keyboardShortcut("l", modifiers: .command)

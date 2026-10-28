@@ -18,6 +18,8 @@ struct SessionView: View {
     @State private var slotsY = ScrollPosition()
     @State private var offsetY: CGFloat = 0
     @State private var visibleHeight: CGFloat = 0
+    /// The full height of the slot grid. The grid is never taller, so the panel below can use the rest.
+    @State private var slotsHeight: CGFloat = 0
 
     private func reveal(row: Int?) {
         guard let row, row < model.sessionRows, visibleHeight > 0 else { return }
@@ -65,7 +67,9 @@ struct SessionView: View {
                     }
                 }
                 .padding(.horizontal, 6).padding(.top, 6)
+                .onGeometryChange(for: CGFloat.self, of: \.size.height) { slotsHeight = $0 }
             }
+            .frame(maxHeight: slotsHeight > 0 ? slotsHeight : nil)
             .scrollPosition($slotsY)
             .onScrollGeometryChange(for: CGFloat.self, of: \.contentOffset.y) { _, y in offsetY = y }
             .onScrollGeometryChange(for: CGFloat.self, of: \.containerSize.height) { _, h in visibleHeight = h }

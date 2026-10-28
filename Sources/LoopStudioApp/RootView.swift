@@ -23,10 +23,17 @@ struct RootView: View {
                     case .arrangement: ArrangementView()
                     }
                 }
-                .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+                // The Session view takes the height of its content; the panel below gets the rest.
+                // The arrangement fills the space itself, so the panel then keeps its own height.
+                .frame(minWidth: 0, maxWidth: .infinity,
+                       maxHeight: model.detailOpen && model.viewMode == .session ? nil : .infinity, alignment: .top)
+                .layoutPriority(1)
                 if model.detailOpen {
                     DetailResizeHandle()
-                    DetailPanel().frame(minWidth: 0, maxWidth: .infinity).frame(height: model.detailHeight).clipped()
+                    DetailPanel()
+                        .frame(minWidth: 0, maxWidth: .infinity, minHeight: model.detailHeight, maxHeight: .infinity)
+                        .clipped()
+                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { model.detailShownHeight = $0 }
                 }
                 StatusBar().frame(minWidth: 0, maxWidth: .infinity).clipped()
             }
@@ -57,6 +64,7 @@ struct StatusBar: View {
             Spacer()
             Text("\(Int(model.sampleRate / 1000)) kHz").foregroundStyle(Theme.dim)
             if let s = model.selectedTrack.flatMap({ model.project.track($0) }) { Text(s.name).foregroundStyle(Theme.dim) }
+            if model.detailOpen { DetailTabs() }
         }
         .font(.caption)
         .padding(.horizontal, 10).padding(.vertical, 4)
@@ -240,8 +248,8 @@ struct DetailResizeHandle: View {
             .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
             .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .onChanged { g in
-                    if startHeight == nil { startHeight = model.detailHeight }
-                    model.detailHeight = min(640, max(150, (startHeight ?? 260) - g.translation.height))
+                    if startHeight == nil { startHeight = max(model.detailHeight, model.detailShownHeight) }
+                    model.detailHeight = min(2_000, max(150, (startHeight ?? 260) - g.translation.height))
                 }
                 .onEnded { _ in startHeight = nil })
             .onTapGesture(count: 2) { model.detailHeight = 260 }

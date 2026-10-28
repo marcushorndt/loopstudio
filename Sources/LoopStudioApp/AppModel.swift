@@ -68,6 +68,10 @@ final class AppModel {
     }
     var detailOpen = true
     /// Height of the inspector, kept per Mac.
+    /// The height the panel has on screen. It is at least `detailHeight` and fills the space the view above
+    /// does not need. The resize handle starts its drag from it.
+    @ObservationIgnored var detailShownHeight: CGFloat = 0
+    /// The smallest height of the bottom panel, set by dragging its top edge.
     var detailHeight: CGFloat = CGFloat(UserDefaults.standard.object(forKey: "detailHeight") as? Double ?? 260) {
         didSet { UserDefaults.standard.set(Double(detailHeight), forKey: "detailHeight") }
     }
@@ -92,11 +96,26 @@ final class AppModel {
         // One selection: no clip in focus means no marked clips either, so Delete cannot hit a clip out of view.
         didSet {
             if let c = selectedClip { if !selectedClips.contains(c) { selectedClips = [c] } } else if oldValue != nil { selectedClips = [] }
+            // Like Live: selecting a clip shows it (its waveform or its notes) in the panel.
+            if let c = selectedClip, c != oldValue { detailTab = .clip }
+            if selectedClip != oldValue { selectedNotes = [] }
         }
     }
     /// All marked clips. `selectedClip` is the one the clip panel shows.
     var selectedClips: Set<ClipID> = [] {
         didSet { if !selectedClips.isEmpty { trackFocused = false } }
+    }
+    /// Notes marked in the piano roll of the selected clip. Delete removes them instead of the clip.
+    var selectedNotes: Set<MIDINote> = []
+    /// The pen of the piano roll: a click or a drag draws notes, a click on a note deletes it.
+    var drawMode = false
+    /// The piano roll plays a note when it is created, moved or its key is clicked. Kept between launches.
+    var previewNotes: Bool = UserDefaults.standard.object(forKey: "previewNotes") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(previewNotes, forKey: "previewNotes") }
+    }
+    /// Columns of the clip panel folded to a thin strip, so the editor gets their room. Kept between launches.
+    var foldedSections: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "foldedSections") ?? []) {
+        didSet { UserDefaults.standard.set(Array(foldedSections), forKey: "foldedSections") }
     }
     /// The last click selected a track (its header or its mixer strip), not a clip. Delete then removes the track.
     var trackFocused = false
@@ -811,6 +830,11 @@ final class AppModel {
     }
 
     func deleteSelected() {
+        if !selectedNotes.isEmpty, detailTab == .clip, let id = selectedClip, case .midi(let m)? = project.findClip(id)?.1 {
+            setNotes(id, m.notes.filter { !selectedNotes.contains($0) })
+            selectedNotes = []
+            return
+        }
         if trackFocused { deleteFocusedTracks(); return }
         var commands: [Command] = []
         for id in selectedClips.isEmpty ? Set(selectedClip.map { [$0] } ?? []) : selectedClips {
@@ -833,6 +857,7 @@ final class AppModel {
         selectedClips = []
         selectedSceneRow = nil
         trackFocused = true
+        detailTab = .devices
     }
 
     /// Removes the marked tracks, or the selected one, and selects the track that takes its place.

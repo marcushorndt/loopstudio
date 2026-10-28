@@ -27,7 +27,7 @@ extension AppModel {
         switch action {
         case .undo: canUndo
         case .redo: canRedo
-        case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil)
+        case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil) || !selectedNotes.isEmpty
         case .cut, .copy, .duplicate: !selectedClips.isEmpty || selectedClip != nil
         case .paste: !clipboard.isEmpty
         case .backToArrangement, .captureSession: arrangementOverridden
@@ -52,6 +52,7 @@ extension AppModel {
         case .paste: pasteClipboard()
         case .duplicate: duplicateSelection()
         case .deleteSelection: deleteSelected()
+        case .drawMode: drawMode.toggle(); status = drawMode ? "Draw mode: click or drag to draw notes, click a note to delete it" : "Draw mode off"
         case .splitAtPlayhead: splitAtPlayhead()
         case .deactivateClip: deactivateSelected()
         case .record: toggleRecordArm()

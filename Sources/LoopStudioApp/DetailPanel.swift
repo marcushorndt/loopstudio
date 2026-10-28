@@ -6,27 +6,38 @@ struct DetailPanel: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 4) {
-                tab("Clip", .clip)
-                tab("Track", .devices)
-                Spacer()
-            }
-            .padding(.horizontal, 10).padding(.vertical, 4)
-            Divider().overlay(Theme.line)
+        // The Clip / Track switch sits in the footer, at the bottom right (`DetailTabs`).
+        Group {
             switch model.detailTab {
-            case .clip: ClipPanel().frame(maxWidth: .infinity)
-            case .devices: DeviceChainView().frame(maxWidth: .infinity)
+            case .clip: ClipPanel().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            case .devices: DeviceChainView().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
         .background(Theme.panel)
     }
+}
+
+/// The Clip / Track switch of the bottom panel, in the footer.
+struct DetailTabs: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 2) {
+            tab("Clip", .clip)
+            tab("Track", .devices)
+        }
+        .padding(2)
+        .background(Theme.panelRaised.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius + 1))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius + 1).strokeBorder(Theme.line, lineWidth: 1))
+    }
 
     private func tab(_ title: String, _ value: DetailTab) -> some View {
-        Button(title) { model.detailTab = value }
-            .buttonStyle(.plain).font(.system(size: 12, weight: model.detailTab == value ? .bold : .regular))
-            .foregroundStyle(model.detailTab == value ? Theme.accent : Theme.dim)
-            .padding(.horizontal, 10).padding(.vertical, 3)
+        let on = model.detailTab == value
+        return Button(title) { model.detailTab = value }
+            .buttonStyle(.plain).font(.system(size: 11, weight: on ? .semibold : .regular))
+            .foregroundStyle(on ? Theme.text : Theme.dim)
+            .padding(.horizontal, 10).padding(.vertical, 2)
+            .background(on ? Theme.accent.opacity(0.35) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
     }
 }
 
@@ -71,6 +82,50 @@ struct PillMenu<Content: View>: View {
     }
 }
 
+/// A column of the clip panel that folds to a thin strip, so the editor next to it gets the room.
+/// The chevron at its top right folds it; a click on the strip opens it again.
+private struct FoldableColumn<Content: View>: View {
+    @Environment(AppModel.self) private var model
+    let id: String
+    let title: String
+    let width: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if model.foldedSections.contains(id) {
+            Button { model.foldedSections.remove(id) } label: {
+                VStack(spacing: 8) {
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                    Text(title.uppercased()).font(.system(size: 10, weight: .semibold)).kerning(0.6)
+                        .fixedSize().rotationEffect(.degrees(90)).frame(width: 14, height: 70)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Theme.dim)
+                .padding(.top, 4)
+                .frame(width: 22)
+                .frame(maxHeight: .infinity)
+                .background(Theme.panelRaised.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.radius))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Show \(title)")
+        } else {
+            content()
+                .frame(width: width)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .overlay(alignment: .topTrailing) {
+                    Button { model.foldedSections.insert(id) } label: {
+                        Image(systemName: "chevron.left").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
+                            .frame(width: 18, height: 18).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Fold \(title) to make room for the editor")
+                    .offset(x: 12, y: -2)
+                }
+        }
+    }
+}
+
 private struct ClipPanel: View {
     @Environment(AppModel.self) private var model
 
@@ -78,18 +133,20 @@ private struct ClipPanel: View {
         if let id = model.selectedClip, let (trackID, clip) = model.project.findClip(id), let track = model.project.track(trackID) {
             let slotRow = track.slots.firstIndex { $0?.clip.id == id }
             HStack(alignment: .top, spacing: 14) {
-                properties(clip, track: track)
-                    .frame(width: 230)
-                if case .audio(let a) = clip { soundColumn(a).frame(width: 250) }
+                FoldableColumn(id: "clip", title: "Clip", width: 230) { properties(clip, track: track) }
+                if case .audio(let a) = clip { FoldableColumn(id: "sound", title: "Sound", width: 250) { soundColumn(a) } }
                 if let row = slotRow, let slot = track.slots[row] {
-                    FollowEditor(track: track, row: row, slot: slot).frame(width: 280)
+                    FoldableColumn(id: "launch", title: "Launch", width: 280) { FollowEditor(track: track, row: row, slot: slot) }
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     SectionHeader(title: model.clipName(clip)) { pagePicker(clip) }
                     mainArea(clip, track: track)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
             .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
             VStack { Spacer(); Text("Select a clip to see its settings.").foregroundStyle(Theme.dim); Spacer() }
                 .frame(maxWidth: .infinity)

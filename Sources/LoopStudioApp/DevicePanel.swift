@@ -175,6 +175,7 @@ struct DeviceChainView: View {
                     Spacer(minLength: 0)
                 }
                 .padding(10)
+                .frame(maxHeight: .infinity, alignment: .topLeading)
             }
             .dropDestination(for: String.self) { items, _ in
                 return model.dropDevices(items, on: track.id)
@@ -207,7 +208,8 @@ struct DeviceChainView: View {
             .buttonStyle(.link).font(.caption)
         }
         .foregroundStyle(Theme.dim)
-        .frame(width: track.devices.isEmpty ? 200 : 130, height: 92)
+        .frame(width: track.devices.isEmpty ? 200 : 130)
+        .frame(maxHeight: .infinity)
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.line, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
     }
 }
@@ -282,6 +284,8 @@ private struct DeviceCard: View {
             }
         }
         .padding(8)
+        // The card is as tall as the panel, like a device in Live.
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Theme.radius))
         .contextMenu { DeviceMenu(track: track, device: device) }
     }

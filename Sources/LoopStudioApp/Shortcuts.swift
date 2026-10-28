@@ -5,7 +5,7 @@ import SwiftUI
 /// shortcut sheet all read this one table, so they cannot disagree.
 enum AppAction: String, CaseIterable, Identifiable {
     case newProject, newDemo, save, saveAs, exportAudio
-    case undo, redo, cut, copy, paste, duplicate, deleteSelection, splitAtPlayhead, deactivateClip
+    case undo, redo, cut, copy, paste, duplicate, deleteSelection, splitAtPlayhead, deactivateClip, drawMode
     case record, toggleMetronome, play, pause, stopRewind, stopAllClips, loopSelection, loopToggle, backToArrangement, captureSession
     case insertAudioTrack, insertMIDITrack, insertReturnTrack, insertGroupTrack, groupTracks, renameTrack, duplicateTrack
     case insertScene, deleteScene, duplicateScene
@@ -20,7 +20,7 @@ enum AppAction: String, CaseIterable, Identifiable {
     var category: Category {
         switch self {
         case .newProject, .newDemo, .save, .saveAs, .exportAudio: .file
-        case .undo, .redo, .cut, .copy, .paste, .duplicate, .deleteSelection, .splitAtPlayhead, .deactivateClip: .edit
+        case .undo, .redo, .cut, .copy, .paste, .duplicate, .deleteSelection, .splitAtPlayhead, .deactivateClip, .drawMode: .edit
         case .record, .toggleMetronome, .play, .pause, .stopRewind, .stopAllClips, .loopSelection, .loopToggle, .backToArrangement, .captureSession: .transport
         case .insertAudioTrack, .insertMIDITrack, .insertReturnTrack, .insertGroupTrack, .groupTracks, .renameTrack, .duplicateTrack: .track
         case .insertScene, .deleteScene, .duplicateScene: .scene
@@ -46,6 +46,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .deleteSelection: "Delete"
         case .splitAtPlayhead: "Split at Playhead"
         case .deactivateClip: "Activate / Deactivate Clip"
+        case .drawMode: "Draw Mode (Pen)"
         case .record: "Arm Recording"
         case .toggleMetronome: "Metronome On/Off"
         case .play: "Play / Stop"
@@ -96,6 +97,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .deleteSelection: KeyBinding("\u{7F}", [])
         case .splitAtPlayhead: KeyBinding("e", .command)
         case .deactivateClip: KeyBinding("0", [])
+        case .drawMode: KeyBinding("b", [])
         case .record: KeyBinding("r", [])
         case .toggleMetronome: KeyBinding("k", .command)
         case .play: KeyBinding(" ", [])

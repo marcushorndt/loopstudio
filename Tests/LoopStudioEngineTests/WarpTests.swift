@@ -154,3 +154,26 @@ private func frequency(_ x: UnsafePointer<Float>, from: Int, count: Int) -> Doub
     #expect(RenderPlan.passStarts(c, pass: 3_840, from: 0, to: 7_680, project: project) == nil, "no change inside the clip")
     #expect(RenderPlan.passStarts(c, pass: 3_840, from: 34_560, to: 42_240, project: project)?.count == 2)
 }
+
+@Test func aLiveBankDefersWarpsToAWorker() {
+    var project = Project(name: "D", sampleRate: rate)
+    let bank = AudioBank.live()
+    let src = sine(440, seconds: 1.2)
+    let asset = Asset(sha256: "d", name: "d", frames: Int64(src.frames), sampleRate: rate, channels: 2, sourceTempo: 100)
+    try! Command.addAsset(asset: asset).apply(to: &project)
+    bank.insert(src, for: asset.id)
+    let t = Track(name: "T", kind: .audio)
+    try! Command.insertTrack(track: t, index: 0).apply(to: &project)
+    var clip = project.makeAudioClip(asset: asset.id, start: 0, length: Tick(1_920))
+    clip.warpMode = .tones
+    try! Command.insertClip(track: t.id, clip: .audio(clip)).apply(to: &project)
+
+    let first = RenderPlan.compile(project, bank: bank)
+    #expect(first.nodes[0].clips[0].pcm === src, "the raw audio stands in at first")
+    let jobs = bank.takePendingWarps()
+    #expect(jobs.count == 1)
+    for job in jobs { bank.run(job) }
+    let second = RenderPlan.compile(project, bank: bank)
+    #expect(second.nodes[0].clips[0].pcm !== src)
+    #expect(bank.takePendingWarps().isEmpty)
+}

@@ -46,7 +46,14 @@ public enum OfflineRender {
                 sessionEnd = project.tempoMap.frame(at: last, sampleRate: project.sampleRate).rawValue
             }
         }
-        let plan = RenderPlan.compile(project, bank: bank, session: session, units: host.units, arrangementEnds: ends)
+        var plan = RenderPlan.compile(project, bank: bank, session: session, units: host.units, arrangementEnds: ends)
+        // A live bank defers warps. An export must not use stand-ins, so make them now, off the main thread.
+        for _ in 0..<3 {
+            let jobs = bank.takePendingWarps()
+            guard !jobs.isEmpty else { break }
+            await Task.detached(priority: .userInitiated) { for job in jobs { bank.run(job) } }.value
+            plan = RenderPlan.compile(project, bank: bank, session: session, units: host.units, arrangementEnds: ends)
+        }
         return Prepared(plan: plan, warnings: warnings, endFrame: max(plan.endFrame, sessionEnd), host: host)
     }
 }

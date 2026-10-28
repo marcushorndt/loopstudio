@@ -35,11 +35,52 @@ public final class AudioBank: @unchecked Sendable {
     private var buffers: [AssetID: PCMBuffer] = [:]
     private let warpLock = NSLock()
     private var warped: [String: PCMBuffer] = [:]
+    /// The last warped buffer each clip played. It stands in while the new one is made.
+    private var lastWarp: [ClipID: PCMBuffer] = [:]
+    private var pending: [String: WarpJob] = [:]
+    private let bufferLock = NSLock()
+
+    /// A warp that a worker makes later. Unchecked: `make` only reads its captured buffers.
+    public struct WarpJob: @unchecked Sendable {
+        public let key: String
+        let make: () -> PCMBuffer
+    }
+
+    /// When true (the live app), a missing warp does not stop the caller: the clip keeps its last
+    /// warped audio, and the job waits in `takePendingWarps()` for a worker.
+    public var defersWarps = false
 
     public init() {}
 
-    public func insert(_ buffer: PCMBuffer, for id: AssetID) { buffers[id] = buffer }
-    public func buffer(for id: AssetID) -> PCMBuffer? { buffers[id] }
+    /// A bank for the live app: warps are made by a worker, never inside a rebuild.
+    public static func live() -> AudioBank { let bank = AudioBank(); bank.defersWarps = true; return bank }
+
+    public func insert(_ buffer: PCMBuffer, for id: AssetID) { bufferLock.lock(); buffers[id] = buffer; bufferLock.unlock() }
+    public func buffer(for id: AssetID) -> PCMBuffer? { bufferLock.lock(); defer { bufferLock.unlock() }; return buffers[id] }
+
+    /// A warp for `clip`, or a stand-in while it is made (see `defersWarps`).
+    func warped(key: String, clip: ClipID, fallback: PCMBuffer, make: @escaping () -> PCMBuffer) -> PCMBuffer {
+        guard defersWarps else {
+            let made = warped(key: key, make: make)
+            warpLock.lock(); lastWarp[clip] = made; warpLock.unlock()
+            return made
+        }
+        warpLock.lock(); defer { warpLock.unlock() }
+        if let hit = warped[key] { lastWarp[clip] = hit; return hit }
+        if pending[key] == nil { pending[key] = WarpJob(key: key, make: make) }
+        return lastWarp[clip] ?? fallback
+    }
+
+    /// The warps the last plans asked for and did not find. Taking them clears the list.
+    public func takePendingWarps() -> [WarpJob] {
+        warpLock.lock(); defer { warpLock.unlock() }
+        let jobs = Array(pending.values)
+        pending = [:]
+        return jobs
+    }
+
+    /// Makes one deferred warp. Slow; call it on a worker.
+    public func run(_ job: WarpJob) { _ = warped(key: job.key, make: job.make) }
 
     /// A stretched copy of a clip's audio. Stretching is slow, so each result is made once per key.
     public func warped(key: String, make: () -> PCMBuffer) -> PCMBuffer {
@@ -49,7 +90,8 @@ public final class AudioBank: @unchecked Sendable {
         let made = make()
         warpLock.lock()
         warped[key] = made
-        if warped.count > 64 { warped = [key: made] }   // a plain bound; edits make old keys useless anyway
+        // A plain bound; edits make old keys useless anyway. Half goes, so the warps of one plan stay together.
+        if warped.count > 256 { for old in warped.keys.prefix(128) where old != key { warped[old] = nil } }
         warpLock.unlock()
         return made
     }

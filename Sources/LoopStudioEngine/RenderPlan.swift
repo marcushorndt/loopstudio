@@ -396,7 +396,8 @@ public struct RenderPlan {
         guard c.warpMode != .off, c.loop, pass.rawValue > 0, end > start,
               constantTempo(project.tempoMap, from: start, to: end) == nil else { return nil }
         let count = (end.rawValue - start.rawValue + pass.rawValue - 1) / pass.rawValue
-        guard count > 1, count <= 1_024 else { return nil }
+        // Every pass holds a stretched copy of the source, so the count is kept small.
+        guard count > 1, count <= 64 else { return nil }
         return (0..<count).map { start + Tick($0 * pass.rawValue) }
     }
 
@@ -457,7 +458,7 @@ public struct RenderPlan {
         else if let span, let bpm = constantTempo(project.tempoMap, from: startTick, to: startTick + span) { timing = "bpm \(bpm) span \(span.rawValue)" }
         else { timing = "\(project.tempoMap.points)|\(startTick.rawValue)" }
         let key = "\(c.asset)|\(c.warpMode)|\(asset?.sourceTempo ?? 0)|\(c.warpMarkers)|\(timing)|\(rate)"
-        return bank.warped(key: key) {
+        return bank.warped(key: key, clip: c.id, fallback: raw) {
             TimeStretch.stretch(raw, mode: c.warpMode, outFrames: mapping.outFrames, source: mapping.source)
         }
     }

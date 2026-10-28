@@ -161,7 +161,9 @@ final class AppModel {
 
     // Engine
     @ObservationIgnored let engine: LiveEngine
-    @ObservationIgnored private var bank = AudioBank()
+    @ObservationIgnored private var bank = AudioBank.live()
+    @ObservationIgnored private var warpTask: Task<Void, Never>?
+    @ObservationIgnored private var warpRounds = 0
     @ObservationIgnored private var plan: RenderPlan?
     @ObservationIgnored private var renderer: Renderer?
     @ObservationIgnored private var performance: [Launch] = []
@@ -1042,7 +1044,44 @@ final class AppModel {
         }
     }
 
-    private static func peaks(of pcm: PCMBuffer, bins: Int) -> [Float] {
+    /// Decodes every sample of the project on workers, in parallel, so a big project opens at once.
+    /// Clips play silence until their audio is in; then one rebuild puts it all in.
+    private func loadAllAudio() {
+        let assets = project.assets.filter { bank.buffer(for: $0.id) == nil }
+        guard !assets.isEmpty else { rebuild(); return }
+        let jobs = assets.compactMap { a in AssetStore.fileURL(for: a, in: packageURL).map { (a.id, a.name, $0) } }
+        let rate = sampleRate, bank = bank
+        status = "Loading \(jobs.count) sample\(jobs.count == 1 ? "" : "s")…"
+        rebuild()
+        Task { [weak self] in
+            let results = await Task.detached(priority: .userInitiated) {
+                await withTaskGroup(of: (AssetID, String, PCMBuffer?, [Float], String?).self) { group in
+                    for (id, name, url) in jobs {
+                        group.addTask {
+                            do {
+                                let pcm = try AudioBank.decode(url, targetRate: rate)
+                                return (id, name, pcm, AppModel.peaks(of: pcm, bins: 1_000), nil)
+                            } catch { return (id, name, nil, [], error.localizedDescription) }
+                        }
+                    }
+                    var all: [(AssetID, String, PCMBuffer?, [Float], String?)] = []
+                    for await r in group { all.append(r) }
+                    return all
+                }
+            }.value
+            guard let self, self.bank === bank else { return } // another project opened meanwhile
+            var failed: [String] = []
+            for (id, name, pcm, peaks, error) in results {
+                if let pcm { bank.insert(pcm, for: id); self.waveforms[id] = peaks }
+                if let error { failed.append("\(name): \(error)") }
+            }
+            if self.status.hasPrefix("Loading ") { self.status = "" }
+            if !failed.isEmpty { self.status = "Cannot read \(failed.prefix(3).joined(separator: "; "))" }
+            self.rebuild()
+        }
+    }
+
+    nonisolated private static func peaks(of pcm: PCMBuffer, bins: Int) -> [Float] {
         let n = max(1, pcm.frames / bins)
         let l = pcm.channel(0), r = pcm.channel(1)
         return (0..<bins).map { b in
@@ -1174,6 +1213,31 @@ final class AppModel {
         } else {
             engine.setLoop(nil)
         }
+        startWarps()
+    }
+
+    /// Time stretching is slow, so the plan does not wait for it: a clip keeps its last warped audio,
+    /// a worker makes the new warps, and one more rebuild puts them in. A newer edit cancels the older work.
+    private func startWarps() {
+        let jobs = bank.takePendingWarps()
+        guard !jobs.isEmpty else { warpRounds = 0; return }
+        warpTask?.cancel()
+        // The cache can hold every warp of a plan, so a second round is rare and a third means a problem.
+        warpRounds += 1
+        guard warpRounds <= 3 else { warpRounds = 0; status = "Some warped clips could not be prepared"; return }
+        let bank = bank
+        warpTask = Task { [weak self] in
+            let worker = Task.detached(priority: .userInitiated) { () -> Bool in
+                for job in jobs {
+                    if Task.isCancelled { return false }
+                    bank.run(job)
+                }
+                return true
+            }
+            let done = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+            guard done, !Task.isCancelled, let self, self.bank === bank else { return }
+            self.rebuild()
+        }
     }
 
     // MARK: Files and projects
@@ -1225,8 +1289,7 @@ final class AppModel {
         do {
             let loaded = try ProjectPackage.read(from: url)
             reset(to: loaded.project, at: url)
-            for asset in project.assets { loadAudio(asset) }
-            rebuild()
+            loadAllAudio()
             syncPlugins()
             UserDefaults.standard.set(url.path, forKey: "lastProject")
             if !loaded.issues.isEmpty {
@@ -1321,7 +1384,8 @@ final class AppModel {
         engine.seek(to: 0)
         project = new
         packageURL = url
-        bank = AudioBank()
+        bank = AudioBank.live()
+        warpTask?.cancel()
         host.removeAll()
         waveforms = [:]
         performance = []

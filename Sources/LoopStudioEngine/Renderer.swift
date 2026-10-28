@@ -53,12 +53,15 @@ public final class Renderer {
     private let sendLines: [[DelayLine?]]
     private let tapLines: [[DelayLine?]]
     private let instances: [DeviceID: DSPEffect]
+    /// The instrument of each node as a slot, so its automation runs like a plugin effect's.
+    private let instrumentSlots: [Slot?]
 
     /// With `reusing`, effects that exist in both plans keep their memory (reverb tails, filter state),
     /// so changing a knob does not cut the sound.
     public init(plan: RenderPlan, maxBlock: Int = 4096, reusing old: Renderer? = nil) {
         var made: [DeviceID: DSPEffect] = [:]
         var built: [[Slot]] = []
+        var instruments: [Slot?] = []
         for node in plan.nodes {
             var chain: [Slot] = []
             for e in node.effects {
@@ -74,8 +77,10 @@ public final class Renderer {
                 chain.append(Slot(effect: effect, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params))
             }
             built.append(chain)
+            instruments.append(node.instrument.map { Slot(effect: nil, unit: $0, bypassed: false, auto: node.instrumentAuto, params: [:]) })
         }
         chains = built
+        instrumentSlots = instruments
         func line(_ d: Int) -> DelayLine? { d > 0 ? DelayLine(delay: d, maxBlock: maxBlock) : nil }
         outputLines = plan.nodes.map { line($0.outputDelay) }
         sendLines = plan.nodes.map { $0.sends.map { line($0.delay) } }
@@ -227,6 +232,7 @@ public final class Renderer {
                     if arrangement < frames { releaseNotes(of: i) }
                     send(instrument, node.sessionMidi, startFrame: startFrame + sessionOffset, frames: frames)
                 }
+                if let slot = instrumentSlots[i] { scheduleAutomation(slot, startFrame: startFrame, frames: frames) }
                 play(instrument, into: l, r, frames: frames)
             }
             for slot in chains[i] where !slot.bypassed { runSlot(slot, l, r, startFrame: startFrame, frames: frames) }
@@ -315,18 +321,21 @@ public final class Renderer {
         }
     }
 
+    /// Automation reaches a plugin as scheduled parameter events, one ramp per grid step.
+    private func scheduleAutomation(_ slot: Slot, startFrame: Int64, frames: Int) {
+        guard let unit = slot.unit, !slot.unitAuto.isEmpty else { return }
+        eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
+            for (address, lane) in slot.unitAuto {
+                if let v = lane.value(at: grid + 32, sessionOffset: sessionOffset) { unit.scheduleParameter(address, v, sampleOffset: offset, ramp: count) }
+            }
+        }
+    }
+
     /// Runs one effect. A built-in effect with automated knobs gets its values set at every grid step.
     private func runSlot(_ slot: Slot, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
                          startFrame: Int64, frames: Int) {
         if let unit = slot.unit {
-            // Automation reaches a plugin as scheduled parameter events, one ramp per grid step.
-            if !slot.unitAuto.isEmpty {
-                eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
-                    for (address, lane) in slot.unitAuto {
-                        if let v = lane.value(at: grid + 32, sessionOffset: sessionOffset) { unit.scheduleParameter(address, v, sampleOffset: offset, ramp: count) }
-                    }
-                }
-            }
+            scheduleAutomation(slot, startFrame: startFrame, frames: frames)
             run(unit, l, r, frames: frames)
             return
         }

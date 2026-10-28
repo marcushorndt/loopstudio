@@ -103,6 +103,8 @@ struct NodePlan {
     var panAuto: AutoLane? = nil
     /// A hosted instrument and the notes it plays, sorted by frame (note-off before note-on on the same frame).
     var instrument: AudioUnitEffect? = nil
+    /// Automated parameters of the instrument, keyed like an effect's ("au.<address>").
+    var instrumentAuto: [String: AutoLane] = [:]
     var midi: [MIDIEvent] = []
     /// Notes of the session clips, in session frames.
     var sessionMidi: [MIDIEvent] = []
@@ -327,8 +329,9 @@ public struct RenderPlan {
             }
             if t.kind == .midi || t.kind == .group || t.kind == .returnTrack { /* summing nodes or not rendered yet */ }
 
-            var (chain, instrument) = effects(of: t, units: units, warnings: &warnings)
+            var (chain, instrument, instrumentDevice) = effects(of: t, units: units, warnings: &warnings)
             chain = chain.map { var e = $0; e.auto = autoParams(e.device, of: t); return e }
+            let instrumentAuto = instrumentDevice.map { autoParams($0, of: t) } ?? [:]
             var midi: [MIDIEvent] = [], sessionMidi: [MIDIEvent] = []
             if t.kind == .midi && !silent && instrument != nil {
                 midi = midiEvents(of: t, session: nil, map: map, rate: rate, endFrame: &endFrame)
@@ -345,7 +348,7 @@ public struct RenderPlan {
                 sends: t.sends.filter { keeps(t.id, $0.target) }.compactMap { s in index[s.target].map {
                     SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader,
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
-                effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, midi: midi, sessionMidi: sessionMidi,
+                effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, instrumentAuto: instrumentAuto, midi: midi, sessionMidi: sessionMidi,
                 arrangementEnd: arrangementEnds[t.id]))
         }
 
@@ -391,9 +394,10 @@ public struct RenderPlan {
     }
 
     private static func effects(of track: Track, units: [DeviceID: AudioUnitEffect],
-                                warnings: inout [String]) -> ([EffectPlan], AudioUnitEffect?) {
+                                warnings: inout [String]) -> ([EffectPlan], AudioUnitEffect?, DeviceID?) {
         var plans: [EffectPlan] = []
         var instrument: AudioUnitEffect?
+        var instrumentDevice: DeviceID?
         for d in track.devices {
             if d.format == "builtin" {
                 guard BuiltInEffects.spec(d.identifier) != nil else { continue }
@@ -401,7 +405,7 @@ public struct RenderPlan {
             } else if d.format == "audiounit" {
                 guard let unit = units[d.id] else { warnings.append("\(d.name) on \"\(track.name)\" is not loaded"); continue }
                 if unit.isInstrument {
-                    if instrument == nil && !d.bypassed { instrument = unit }
+                    if instrument == nil && !d.bypassed { instrument = unit; instrumentDevice = d.id }
                 } else {
                     plans.append(EffectPlan(device: d.id, kind: "audiounit", params: [:], bypassed: d.bypassed, unit: unit))
                 }
@@ -409,7 +413,7 @@ public struct RenderPlan {
                 warnings.append("\(d.name) on \"\(track.name)\" uses an unsupported plugin format")
             }
         }
-        return (plans, instrument)
+        return (plans, instrument, instrumentDevice)
     }
 
     /// Note on and off events for a MIDI track: arrangement clips plus the session clips that play.

@@ -136,3 +136,31 @@ private func audioUnitSlot(_ id: String, _ name: String) -> DeviceSlot {
     let tail = Int(1.1 * rate)..<Int(1.5 * rate)
     #expect(audio.left[tail].reduce(0) { max($0, abs($1)) } < 0.01)
 }
+
+@MainActor
+@Test func automationMovesAnInstrumentParameter() async throws {
+    var project = Project(name: "I", sampleRate: rate)
+    let slot = audioUnitSlot(dls, "DLS")
+    var track = Track(name: "Keys", kind: .midi, devices: [slot])
+    track.clips = [.midi(MIDIClip(start: 0, length: 3840, notes: [MIDINote(tick: 0, length: 1920, pitch: 60)]))]
+    try Command.insertTrack(track: track, index: 0).apply(to: &project)
+
+    let host = PluginHost()
+    _ = await host.sync(project: project)
+    let unit = try #require(host.units[slot.id])
+    let params = unit.automatableParameters()
+    let volume = try #require(params.first { $0.name.localizedCaseInsensitiveContains("volume") && !$0.name.localizedCaseInsensitiveContains("reverb") },
+                              "\(params.map(\.name))")
+    try Command.setPluginParams(track: track.id, device: slot.id, params: params).apply(to: &project)
+    let loud = Bounce.render(RenderPlan.compile(project, bank: AudioBank(), units: host.units), endFrame: Int64(rate)).peak
+
+    try Command.setAutomation(track: track.id, target: ParameterAddress(node: slot.id.rawValue, parameter: volume.key),
+                              points: [AutomationPoint(tick: 0, value: volume.min)]).apply(to: &project)
+    let plan = RenderPlan.compile(project, bank: AudioBank(), units: host.units)
+    #expect(!plan.nodes[0].instrumentAuto.isEmpty)
+    // After the first grid step the volume sits at its minimum.
+    let quietAudio = Bounce.render(plan, endFrame: Int64(rate))
+    let quiet = quietAudio.left[Int(0.1 * rate)...].reduce(0) { max($0, abs($1)) }
+    #expect(loud > 0.01)
+    #expect(quiet < loud / 10, "loud \(loud), quiet \(quiet), range \(volume.min)...\(volume.max)")
+}

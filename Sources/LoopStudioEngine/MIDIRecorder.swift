@@ -26,25 +26,27 @@ public final class MIDIRecorder: @unchecked Sendable {
     }
 
     /// Turns note on and off messages into notes. `toTick` maps a frame to a tick relative to the clip start.
-    /// A note still held at `endFrame` ends there. A note-on of a pitch that is still held closes the old note first.
+    /// A note still held at `endFrame` ends there. A note-on of a pitch that is still held on the same channel
+    /// closes the old note first. Notes pair by channel and pitch, so two channels can hold the same pitch.
     public static func notes(from events: [Event], endFrame: Int64, toTick: (Int64) -> Int64) -> [MIDINote] {
-        var open: [UInt8: (frame: Int64, velocity: UInt8, channel: UInt8)] = [:]
+        struct Key: Hashable { var channel: UInt8; var pitch: UInt8 }
+        var open: [Key: (frame: Int64, velocity: UInt8)] = [:]
         var result: [MIDINote] = []
-        func close(_ pitch: UInt8, at frame: Int64) {
-            guard let o = open.removeValue(forKey: pitch) else { return }
+        func close(_ key: Key, at frame: Int64) {
+            guard let o = open.removeValue(forKey: key) else { return }
             let start = toTick(o.frame), end = max(start + 1, toTick(frame))
-            result.append(MIDINote(tick: Tick(start), length: Tick(end - start), pitch: pitch, velocity: o.velocity, channel: o.channel))
+            result.append(MIDINote(tick: Tick(start), length: Tick(end - start), pitch: key.pitch, velocity: o.velocity, channel: key.channel))
         }
         for e in events {
-            let kind = e.status & 0xF0, channel = e.status & 0x0F
+            let kind = e.status & 0xF0, key = Key(channel: e.status & 0x0F, pitch: e.data1)
             if kind == 0x90 && e.data2 > 0 {
-                close(e.data1, at: e.frame)
-                open[e.data1] = (e.frame, e.data2, channel)
+                close(key, at: e.frame)
+                open[key] = (e.frame, e.data2)
             } else if kind == 0x80 || (kind == 0x90 && e.data2 == 0) {
-                close(e.data1, at: e.frame)
+                close(key, at: e.frame)
             }
         }
-        for pitch in Array(open.keys) { close(pitch, at: endFrame) }
-        return result.sorted { ($0.tick, $0.pitch) < ($1.tick, $1.pitch) }
+        for key in Array(open.keys) { close(key, at: endFrame) }
+        return result.sorted { ($0.tick, $0.pitch, $0.channel) < ($1.tick, $1.pitch, $1.channel) }
     }
 }

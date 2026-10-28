@@ -29,6 +29,19 @@ import Testing
         #expect(notes[0].length == Tick(50) && notes[1].length == Tick(30))
     }
 
+    @Test func samePitchOnTwoChannelsMakesTwoNotes() {
+        let events = [
+            E(frame: 0, status: 0x90, data1: 60, data2: 100),  // channel 1
+            E(frame: 10, status: 0x91, data1: 60, data2: 90),  // channel 2
+            E(frame: 40, status: 0x80, data1: 60, data2: 0),   // channel 1 off
+            E(frame: 70, status: 0x81, data1: 60, data2: 0),   // channel 2 off
+        ]
+        let notes = MIDIRecorder.notes(from: events, endFrame: 100) { $0 }
+        #expect(notes.count == 2)
+        #expect(notes[0].channel == 0 && notes[0].length == Tick(40))
+        #expect(notes[1].channel == 1 && notes[1].tick == Tick(10) && notes[1].length == Tick(60))
+    }
+
     @Test func zeroLengthNoteGetsOneTick() {
         let events = [E(frame: 10, status: 0x90, data1: 60, data2: 100), E(frame: 10, status: 0x80, data1: 60, data2: 0)]
         let notes = MIDIRecorder.notes(from: events, endFrame: 100) { $0 }

@@ -118,6 +118,8 @@ final class AppModel {
         didSet { UserDefaults.standard.set(inputStereo, forKey: "inputStereo") }
     }
     @ObservationIgnored let audioRecorder = AudioInputRecorder()
+    /// Records another track's sound (the track's "Audio From"), straight from the renderer.
+    @ObservationIgnored var resampleWriter: CaptureWriter?
     var recordingAudio = false
     var recordTrackID: TrackID?
     /// Timeline frame minus session frame when a MIDI take began. Turns its session-clock stamps into timeline frames.

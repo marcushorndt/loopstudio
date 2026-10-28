@@ -458,3 +458,30 @@ private func raw(_ plan: RenderPlan, frames: Int, block: Int = 4096) -> [Float] 
     #expect(out.left[0] == 1.0, "Fast lines up with frame 0 of the file, where Slow (no real delay here) already plays")
     #expect(raw(plan, frames: 2_256)[256...].elementsEqual(out.left))
 }
+
+@Test func aTrackCanRecordAnotherTracksSound() {
+    var rig = Rig()
+    let a = rig.asset(seconds: 1) { _ in 0.5 }
+    let source = rig.track("Source", volume: -6)
+    rig.clip(a, on: source)
+    let renderer = Renderer(plan: rig.plan, maxBlock: 256)
+    let ring = CaptureRing(channels: 2, capacity: 10_000)
+    var l = [Float](repeating: 0, count: 256), r = l
+    func block(_ start: Int64, transport: Bool) {
+        l.withUnsafeMutableBufferPointer { lb in r.withUnsafeMutableBufferPointer { rb in
+            renderer.process(startFrame: start, frames: 256, transport: transport, outLeft: lb.baseAddress!, outRight: rb.baseAddress!)
+        } }
+    }
+    renderer.captureTrack = source
+    renderer.captureRing = ring
+    block(0, transport: false)            // a count-in records nothing
+    block(512, transport: true)
+    block(768, transport: true)
+    renderer.captureRing = nil
+    block(1024, transport: true)          // after the stop, nothing more
+    #expect(ring.startFrame == 512)
+    var out = [Float](repeating: 0, count: 1_000), outR = out
+    let n = out.withUnsafeMutableBufferPointer { o in outR.withUnsafeMutableBufferPointer { ro in ring.read(into: o.baseAddress!, ro.baseAddress!, max: 1_000) } }
+    #expect(n == 512)
+    #expect(abs(out[100] - l[100]) < 1e-6, "the recording is what the track sends to the master")
+}

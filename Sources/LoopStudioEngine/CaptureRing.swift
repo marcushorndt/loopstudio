@@ -15,6 +15,7 @@ final class CaptureRing: @unchecked Sendable {
     private let read = Atomic<Int>(0)
     private let droppedFrames = Atomic<Int>(0)
     private let firstHostTime = Atomic<UInt64>(0)
+    private let firstFrame = Atomic<Int64>(-1)
 
     init(channels: Int, capacity: Int) {
         self.channels = max(1, min(2, channels))
@@ -28,6 +29,14 @@ final class CaptureRing: @unchecked Sendable {
     var dropped: Int { droppedFrames.load(ordering: .relaxed) }
     /// Host time of the first captured buffer, 0 before it.
     var startHostTime: UInt64 { firstHostTime.load(ordering: .relaxed) }
+
+    /// Timeline frame of the first buffer, when the producer knows it (the renderer does).
+    var startFrame: Int64? { let f = firstFrame.load(ordering: .relaxed); return f < 0 ? nil : f }
+
+    /// Producer side: keeps the timeline frame of the first buffer only.
+    func noteStart(frame: Int64) {
+        _ = firstFrame.compareExchange(expected: -1, desired: max(0, frame), ordering: .relaxed)
+    }
 
     /// Producer side: keeps the host time of the first buffer only.
     func noteStart(hostTime: UInt64) {

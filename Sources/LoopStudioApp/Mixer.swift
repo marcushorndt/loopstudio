@@ -185,11 +185,11 @@ struct TrackIOSection: View {
     @ViewBuilder private var audioFrom: some View {
         label("Audio From")
         Picker("", selection: Binding(get: { track.inputTrack }, set: { model.apply(.setInputTrack(id: track.id, source: $0)) })) {
-            Text("No Input").tag(TrackID?.none)
+            Text("Ext. In").tag(TrackID?.none)
             Divider()
             ForEach(model.project.tracks.filter { $0.id != track.id && $0.kind != .returnTrack }, id: \.id) { Text($0.name).tag(Optional($0.id)) }
         }
-        .labelsHidden().controlSize(.mini).help("Take the sound of another track as input")
+        .labelsHidden().controlSize(.mini).help("Ext. In records the sound card input (Settings). A track records that track's sound.")
         if track.inputTrack != nil {
             HStack(spacing: 2) {
                 ForEach([(MonitorMode.input, "In"), (.auto, "Auto"), (.off, "Off")], id: \.1) { mode, name in

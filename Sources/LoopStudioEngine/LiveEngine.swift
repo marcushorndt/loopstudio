@@ -23,6 +23,9 @@ public final class LiveEngine: @unchecked Sendable {
     private var loop: Range<Int64>?
     private var resetPending = false
     private var silencePending = false
+    /// Resampling: the track whose sound is recorded, and the ring of the writer that records it.
+    private var captureTrack: TrackID?
+    private var captureRing: CaptureRing?
     /// The renderer that played last, until the audio thread takes over its held notes.
     private var handover: Renderer?
     /// Keeps the handover renderer alive on the control thread, so the audio thread never frees it.
@@ -186,6 +189,18 @@ public final class LiveEngine: @unchecked Sendable {
     }
     public func setLoop(_ range: Range<Int64>?) { locked { loop = range } }
 
+    /// Records the sound of `track` (after its fader) while the transport plays. The first recorded frame
+    /// is in `CaptureWriter.Result.firstFrame`, on the timeline.
+    public func startCapture(track: TrackID, into writer: CaptureWriter) {
+        locked { captureTrack = track; captureRing = writer.ring }
+    }
+
+    /// After this returns, the audio thread writes nothing more into the ring.
+    public func stopCapture() {
+        let old: CaptureRing? = locked { let r = captureRing; captureRing = nil; captureTrack = nil; return r }
+        withExtendedLifetime(old) {}
+    }
+
     public func takePeak(node: Int) -> Float { locked { renderer?.takePeak(node: node) ?? 0 } }
 
     private func locked<T>(_ body: () -> T) -> T {
@@ -220,6 +235,8 @@ public final class LiveEngine: @unchecked Sendable {
         }
         if resetPending { renderer.reset(); resetPending = false; silencePending = false }
         if silencePending { renderer.silenceNotes(); silencePending = false }
+        renderer.captureTrack = captureTrack
+        renderer.captureRing = captureRing
         for i in 0..<liveCount { renderer.sendLive(track: live[i].track, live[i].status, live[i].data1, live[i].data2) }
         liveCount = 0
 

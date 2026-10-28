@@ -37,21 +37,14 @@ public final class AudioInputRecorder: @unchecked Sendable {
 
     private let engine = AVAudioEngine()
     private let lock = NSLock()
-    private var file: AVAudioFile?
     private var url: URL?
     private var rate = 48_000.0
-    private var written: Int64 = 0
     private var inputLatency = 0
-    private var recording = false
-    private var ring: CaptureRing?
-    private var writer: DispatchSourceTimer?
-    private let writeQueue = DispatchQueue(label: "loopstudio.capture.writer", qos: .userInitiated)
-    private var chunk: AVAudioPCMBuffer?
-    private var writeError: String?
+    private var writer: CaptureWriter?
 
     public init() {}
 
-    public var isRecording: Bool { lock.lock(); defer { lock.unlock() }; return recording }
+    public var isRecording: Bool { lock.lock(); defer { lock.unlock() }; return writer != nil }
 
     /// `left` and `right` are channel indexes (from 0) of the device. `right` nil records mono.
     public func start(deviceUID: String?, left: Int, right: Int?, to url: URL) throws {
@@ -79,37 +72,21 @@ public final class AudioInputRecorder: @unchecked Sendable {
         let r = right.map { min(max(0, $0), channels - 1) }
         let outChannels = r == nil ? 1 : 2
 
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: format.sampleRate,
-            AVNumberOfChannelsKey: outChannels, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true,
-        ]
-        let out = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
-        guard let outFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate,
-                                            channels: AVAudioChannelCount(outChannels), interleaved: false) else { throw RecordError.noInput }
-
-        // Ten seconds of buffer: far more than a slow disk needs to catch up.
-        let ring = CaptureRing(channels: outChannels, capacity: Int(format.sampleRate * 10))
-        guard let chunk = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: 8192) else { throw RecordError.noInput }
-
+        let writer = try CaptureWriter(url: url, sampleRate: format.sampleRate, channels: outChannels)
+        let ring = writer.ring
         lock.lock()
-        file = out; self.url = url; rate = format.sampleRate; written = 0; inputLatency = deviceLatency; recording = true
-        self.ring = ring; self.chunk = chunk; writeError = nil
+        self.writer = writer; self.url = url; rate = format.sampleRate; inputLatency = deviceLatency
         lock.unlock()
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, time in
             guard let src = buffer.floatChannelData else { return }
             ring.noteStart(hostTime: time.hostTime)
             ring.write(src[l], r.map { UnsafePointer(src[$0]) }, frames: Int(buffer.frameLength))
         }
-        let timer = DispatchSource.makeTimerSource(queue: writeQueue)
-        timer.schedule(deadline: .now() + .milliseconds(20), repeating: .milliseconds(20))
-        timer.setEventHandler { [weak self] in self?.drain() }
-        writer = timer
-        timer.resume()
         engine.prepare()
         do { try engine.start() } catch {
             input.removeTap(onBus: 0)
-            timer.cancel(); writer = nil
-            lock.lock(); recording = false; file = nil; self.ring = nil; lock.unlock()
+            _ = writer.finish()
+            lock.lock(); self.writer = nil; lock.unlock()
             throw error
         }
     }
@@ -119,35 +96,13 @@ public final class AudioInputRecorder: @unchecked Sendable {
         guard isRecording else { return nil }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        writer?.cancel(); writer = nil
-        writeQueue.sync { drain() } // what is still in the ring
-        lock.lock(); defer { lock.unlock() }
-        recording = false
-        file = nil   // closes the file
-        let dropped = Int64(ring?.dropped ?? 0), host = ring?.startHostTime ?? 0
-        ring = nil; chunk = nil
-        guard let url, written > 0 else { return nil }
-        return Take(url: url, sampleRate: rate, frames: written, firstHostTime: host, inputLatencyFrames: inputLatency,
-                    droppedFrames: dropped, writeError: writeError)
-    }
-
-    /// Writer queue: moves what the ring holds into the file.
-    /// The disk write runs outside the lock, so `isRecording` never waits for storage.
-    private func drain() {
         lock.lock()
-        let ring = ring, chunk = chunk, file = file
+        let writer = writer
+        self.writer = nil
         lock.unlock()
-        guard let ring, let chunk, let file, let dst = chunk.floatChannelData else { return }
-        while true {
-            let n = ring.read(into: dst[0], ring.channels == 2 ? dst[1] : nil, max: Int(chunk.frameCapacity))
-            guard n > 0 else { return }
-            chunk.frameLength = AVAudioFrameCount(n)
-            var failure: String?
-            do { try file.write(from: chunk) } catch { failure = error.localizedDescription }
-            lock.lock()
-            if let failure { if writeError == nil { writeError = failure } } else { written += Int64(n) }
-            lock.unlock()
-        }
+        guard let result = writer?.finish(), let url, result.frames > 0 else { return nil }
+        return Take(url: url, sampleRate: rate, frames: result.frames, firstHostTime: result.firstHostTime,
+                    inputLatencyFrames: inputLatency, droppedFrames: result.droppedFrames, writeError: result.writeError)
     }
 
     private static func latency(of device: AudioObjectID) -> Int {

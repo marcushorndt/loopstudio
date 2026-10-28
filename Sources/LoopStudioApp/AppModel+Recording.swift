@@ -17,6 +17,22 @@ extension AppModel {
 
     func startAudioRecording() async {
         guard let id = selectedTrack else { return }
+        // "Audio From" another track: record its sound after the fader, with no sound card involved.
+        if let source = project.track(id)?.inputTrack {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("LoopStudio-\(UUID().uuidString)", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                let writer = try CaptureWriter(url: folder.appendingPathComponent("\(nextTakeName()).caf"), sampleRate: sampleRate, channels: 2)
+                resampleWriter = writer
+                engine.startCapture(track: source, into: writer)
+            } catch {
+                status = "Cannot record: \(error.localizedDescription)"
+                recordArmed = false
+                return
+            }
+            beginRecording(on: id, status: "Recording \(project.track(source)?.name ?? "the input track")")
+            return
+        }
         guard await microphoneAllowed() else {
             status = "Microphone access is off. Turn it on in System Settings > Privacy & Security > Microphone."
             recordArmed = false
@@ -30,6 +46,10 @@ extension AppModel {
             recordArmed = false
             return
         }
+        beginRecording(on: id, status: "Recording audio")
+    }
+
+    private func beginRecording(on id: TrackID, status text: String) {
         recordStartTick = currentTick
         recordTrackID = id
         recording = true
@@ -37,12 +57,38 @@ extension AppModel {
         updateMetronome()
         engine.playAfterCountIn(beats: countInBars * meter.beats)
         transportPlaying = true
-        status = "Recording audio"
+        status = text
+    }
+
+    /// Ends a recording of another track's sound. It starts exactly where the renderer wrote its first frame.
+    private func finishResampling(_ writer: CaptureWriter) {
+        engine.stopCapture()
+        resampleWriter = nil
+        let result = writer.finish()
+        let url = writer.url
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        guard let id = recordTrackID, result.frames > 0, let first = result.firstFrame else { recordTrackID = nil; status = "Nothing recorded"; return }
+        recordTrackID = nil
+        guard let asset = importAudio(url) else { status = "Could not import the recording"; return }
+        let sr = sampleRate
+        let start = project.tempoMap.tick(atFrame: Frame(first), sampleRate: sr)
+        let end = project.tempoMap.tick(atFrame: Frame(first + result.frames), sampleRate: sr)
+        var clip = project.makeAudioClip(asset: asset.id, start: start, length: Tick(max(1, end.rawValue - start.rawValue)))
+        clip.loop = false
+        clip.warpMode = .off
+        apply(.insertClip(track: id, clip: .audio(clip)))
+        selectedClips = [clip.id]
+        status = String(format: "Recorded %.1f s", Double(result.frames) / sr)
+        if result.droppedFrames > 0 {
+            status += String(format: ". Warning: %.2f s were lost (the disk was too slow)", Double(result.droppedFrames) / sr)
+        }
+        if let error = result.writeError { status += ". Warning: writing the take failed: \(error)" }
     }
 
     /// Cuts the take so it starts where the transport started, makes it an asset, and puts a clip on the track.
     func finishAudioRecording() {
         recordingAudio = false
+        if let writer = resampleWriter { finishResampling(writer); return }
         guard let take = audioRecorder.stop(), let id = recordTrackID else { status = "Nothing recorded"; return }
         recordTrackID = nil
 

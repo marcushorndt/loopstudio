@@ -18,6 +18,10 @@ public final class Renderer {
     private var sessionOffset: Int64 = 0
     /// Per node, 16 channels x 128 pitches: how many arrangement notes are on. The loop wrap releases them.
     private let held: UnsafeMutablePointer<UInt8>
+    /// A track whose sound after its fader is recorded (resampling), and the ring it goes to.
+    /// The engine sets both before every block, under its lock; it owns the ring, so this does not retain it.
+    var captureTrack: TrackID?
+    unowned(unsafe) var captureRing: CaptureRing?
 
     private final class Slot {
         let effect: DSPEffect?
@@ -315,6 +319,10 @@ public final class Renderer {
             peaks[i] = max(peaks[i], peak)
             if node.isMaster { continue }
 
+            if transport, let ring = captureRing, let track = captureTrack, i < plan.trackOrder.count, plan.trackOrder[i] == track {
+                ring.noteStart(frame: startFrame)
+                ring.write(l, r, frames: frames)
+            }
             for (k, send) in node.sends.enumerated() where !send.preFader { sendOut(send, sendLines[i][k], l, r, startFrame: startFrame, frames: frames) }
             if let target = node.output { addDelayed(l, r, to: target, line: outputLines[i], frames: frames) }
             for (k, tap) in node.taps.enumerated() { addDelayed(l, r, to: tap, line: tapLines[i][k], frames: frames) }

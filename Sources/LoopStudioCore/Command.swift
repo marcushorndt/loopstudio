@@ -1,0 +1,327 @@
+import Foundation
+
+public enum CommandError: Error, Equatable {
+    case trackNotFound(TrackID)
+    case clipNotFound(ClipID)
+    case assetNotFound(AssetID)
+    case duplicateID(String)
+    case cannotChangeMaster
+    case wouldCreateCycle
+    case invalidRoute(String)
+    case invalidValue(String)
+    case assetInUse(AssetID)
+}
+
+/// Every edit to a project is a command. Commands are plain data (Codable), so the same type serves
+/// undo, the crash journal, and an agent or script API.
+///
+/// `apply(to:)` is atomic: on a throw the project is unchanged. It returns the inverse command.
+public enum Command: Codable, Sendable {
+    case batch(commands: [Command])
+
+    case insertTrack(track: Track, index: Int)
+    case removeTrack(id: TrackID)
+    case setTrackName(id: TrackID, name: String)
+    case setVolume(id: TrackID, db: Double)
+    case setPan(id: TrackID, pan: Double)
+    case setMute(id: TrackID, mute: Bool)
+    case setSolo(id: TrackID, solo: Bool)
+    case setOutput(id: TrackID, target: TrackID?)
+    case setSends(id: TrackID, sends: [Send])
+
+    case insertClip(track: TrackID, clip: Clip)
+    case removeClip(clip: ClipID)
+    case moveClip(clip: ClipID, toTrack: TrackID, start: Tick)
+    case setClipRange(clip: ClipID, start: Tick, length: Tick)
+    case setClipLoop(clip: ClipID, loop: Bool)
+    /// Puts a clip (with its follow actions) into a session slot, or empties the slot with `nil`.
+    case setSlot(track: TrackID, index: Int, slot: SessionSlot?)
+
+    case setTempoPoints(points: [TempoPoint])
+    case setLoop(loop: LoopRegion?)
+    case setRandomSeed(seed: UInt32)
+    case setAutoLoop(rule: AutoLoopRule)
+    case addAsset(asset: Asset)
+    case removeAsset(id: AssetID)
+}
+
+extension Command {
+    /// Joins two commands into one batch, flattening nested batches.
+    public static func combined(_ first: Command, _ second: Command) -> Command {
+        func parts(_ c: Command) -> [Command] {
+            if case .batch(let commands) = c { return commands }
+            return [c]
+        }
+        return .batch(commands: parts(first) + parts(second))
+    }
+
+    @discardableResult
+    public func apply(to project: inout Project) throws -> Command {
+        var working = project
+        let inverse = try working.perform(self)
+        project = working
+        return inverse
+    }
+}
+
+private let maxSlotIndex = 9_999
+
+extension Project {
+    mutating func perform(_ command: Command) throws -> Command {
+        switch command {
+        case .batch(let commands):
+            var inverses: [Command] = []
+            for c in commands { inverses.append(try perform(c)) }
+            return .batch(commands: inverses.reversed())
+
+        case .insertTrack(let track, let index):
+            guard track.kind != .master else { throw CommandError.cannotChangeMaster }
+            guard allTracks.allSatisfy({ $0.id != track.id }) else { throw CommandError.duplicateID(track.id.description) }
+            guard (0...tracks.count).contains(index) else { throw CommandError.invalidValue("track index \(index)") }
+            tracks.insert(track, at: index)
+            try checkRouting()
+            return .removeTrack(id: track.id)
+
+        case .removeTrack(let id):
+            guard id != master.id else { throw CommandError.cannotChangeMaster }
+            guard let index = tracks.firstIndex(where: { $0.id == id }) else { throw CommandError.trackNotFound(id) }
+            let removed = tracks.remove(at: index)
+            var restore: [Command] = [.insertTrack(track: removed, index: index)]
+            for i in tracks.indices {
+                if tracks[i].output == id {
+                    restore.append(.setOutput(id: tracks[i].id, target: id))
+                    tracks[i].output = nil
+                }
+                if tracks[i].sends.contains(where: { $0.target == id }) {
+                    restore.append(.setSends(id: tracks[i].id, sends: tracks[i].sends))
+                    tracks[i].sends.removeAll { $0.target == id }
+                }
+            }
+            return .batch(commands: restore)
+
+        case .setTrackName(let id, let name):
+            let old = try withTrack(id) { t -> String in defer { t.name = name }; return t.name }
+            return .setTrackName(id: id, name: old)
+
+        case .setVolume(let id, let db):
+            guard !db.isNaN else { throw CommandError.invalidValue("volume NaN") }
+            let value = min(max(db, Track.dbRange.lowerBound), Track.dbRange.upperBound)
+            let old = try withTrack(id) { t -> Double in defer { t.volumeDb = value }; return t.volumeDb }
+            return .setVolume(id: id, db: old)
+
+        case .setPan(let id, let pan):
+            guard !pan.isNaN else { throw CommandError.invalidValue("pan NaN") }
+            let value = min(max(pan, -1), 1)
+            let old = try withTrack(id) { t -> Double in defer { t.pan = value }; return t.pan }
+            return .setPan(id: id, pan: old)
+
+        case .setMute(let id, let mute):
+            let old = try withTrack(id) { t -> Bool in defer { t.mute = mute }; return t.mute }
+            return .setMute(id: id, mute: old)
+
+        case .setSolo(let id, let solo):
+            let old = try withTrack(id) { t -> Bool in defer { t.solo = solo }; return t.solo }
+            return .setSolo(id: id, solo: old)
+
+        case .setOutput(let id, let target):
+            guard id != master.id else { throw CommandError.cannotChangeMaster }
+            // The master is the same as "no output".
+            let normalized = target == master.id ? nil : target
+            let old = try withTrack(id) { t -> TrackID? in defer { t.output = normalized }; return t.output }
+            try checkRouting()
+            return .setOutput(id: id, target: old)
+
+        case .setSends(let id, let sends):
+            guard id != master.id else { throw CommandError.cannotChangeMaster }
+            for send in sends {
+                guard !send.levelDb.isNaN else { throw CommandError.invalidValue("send level NaN") }
+            }
+            let old = try withTrack(id) { t -> [Send] in defer { t.sends = sends }; return t.sends }
+            try checkRouting()
+            return .setSends(id: id, sends: old)
+
+        case .insertClip(let trackID, let clip):
+            try validate(clip)
+            guard findClip(clip.id) == nil else { throw CommandError.duplicateID(clip.id.description) }
+            try withTrack(trackID) { t in
+                guard Self.clip(clip, fits: t.kind) else { throw CommandError.invalidValue("clip does not fit track kind") }
+                t.insertSorted(clip)
+            }
+            return .removeClip(clip: clip.id)
+
+        case .removeClip(let id):
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            try withTrack(trackID) { t in
+                if let i = t.clips.firstIndex(where: { $0.id == id }) { t.clips.remove(at: i) }
+                else { throw CommandError.invalidValue("clip \(id) is in a session slot; empty the slot instead") }
+            }
+            return .insertClip(track: trackID, clip: clip)
+
+        case .moveClip(let id, let toTrack, let start):
+            guard let (fromTrack, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            let moved = clip.with(start: start, length: clip.length)
+            try withTrack(fromTrack) { t in
+                guard let i = t.clips.firstIndex(where: { $0.id == id }) else {
+                    throw CommandError.invalidValue("clip \(id) is in a session slot")
+                }
+                t.clips.remove(at: i)
+            }
+            try withTrack(toTrack) { t in
+                guard Self.clip(moved, fits: t.kind) else { throw CommandError.invalidValue("clip does not fit track kind") }
+                t.insertSorted(moved)
+            }
+            return .moveClip(clip: id, toTrack: fromTrack, start: clip.start)
+
+        case .setClipRange(let id, let start, let length):
+            guard length.rawValue > 0 else { throw CommandError.invalidValue("clip length must be positive") }
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            let changed = clip.with(start: start, length: length)
+            try withTrack(trackID) { t in try t.replaceClip(changed) }
+            return .setClipRange(clip: id, start: clip.start, length: clip.length)
+
+        case .setClipLoop(let id, let loop):
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            var changed = clip
+            var old = loop
+            switch clip {
+            case .audio(var c): old = c.loop; c.loop = loop; changed = .audio(c)
+            case .midi(var c): old = c.loop; c.loop = loop; changed = .midi(c)
+            case .dummy: throw CommandError.invalidValue("a dummy clip has no loop flag")
+            }
+            try withTrack(trackID) { t in try t.replaceClip(changed) }
+            return .setClipLoop(clip: id, loop: old)
+
+        case .setSlot(let trackID, let index, let slot):
+            guard (0...maxSlotIndex).contains(index) else { throw CommandError.invalidValue("slot index \(index)") }
+            if let slot {
+                try validate(slot.clip)
+                try validate(slot.follow)
+            }
+            let existing = try withTrack(trackID) { $0.slots.indices.contains(index) ? $0.slots[index] : nil }
+            if let slot {
+                // The clip ID must be new, unless it is the clip that already sits in this slot.
+                if let found = findClip(slot.clip.id), existing?.clip.id != slot.clip.id || found.track != trackID {
+                    throw CommandError.duplicateID(slot.clip.id.description)
+                }
+            }
+            try withTrack(trackID) { t in
+                guard t.kind != .master else { throw CommandError.cannotChangeMaster }
+                if let slot, !Self.clip(slot.clip, fits: t.kind) {
+                    throw CommandError.invalidValue("clip does not fit track kind")
+                }
+                while t.slots.count <= index { t.slots.append(nil) }
+                t.slots[index] = slot
+                t.trimTrailingEmptySlots()
+            }
+            return .setSlot(track: trackID, index: index, slot: existing)
+
+        case .setTempoPoints(let points):
+            let old = tempoMap.points
+            tempoMap = TempoMap(points: points)
+            return .setTempoPoints(points: old)
+
+        case .setLoop(let region):
+            if let region, region.end <= region.start { throw CommandError.invalidValue("loop end must be after start") }
+            let old = loop
+            loop = region
+            return .setLoop(loop: old)
+
+        case .setRandomSeed(let seed):
+            let old = randomSeed
+            randomSeed = seed
+            return .setRandomSeed(seed: old)
+
+        case .setAutoLoop(let rule):
+            guard rule.minSeconds >= 0, rule.maxSeconds >= rule.minSeconds, !rule.maxSeconds.isNaN else {
+                throw CommandError.invalidValue("auto-loop limits")
+            }
+            let old = autoLoop
+            autoLoop = rule
+            return .setAutoLoop(rule: old)
+
+        case .addAsset(let asset):
+            guard assets.allSatisfy({ $0.id != asset.id }) else { throw CommandError.duplicateID(asset.id.description) }
+            guard asset.frames >= 0, asset.sampleRate > 0, asset.channels > 0 else {
+                throw CommandError.invalidValue("asset format")
+            }
+            assets.append(asset)
+            return .removeAsset(id: asset.id)
+
+        case .removeAsset(let id):
+            guard let index = assets.firstIndex(where: { $0.id == id }) else { throw CommandError.assetNotFound(id) }
+            for t in allTracks {
+                let used = t.clips.contains { $0.usesAsset(id) } || t.slots.contains { $0?.clip.usesAsset(id) ?? false }
+                if used { throw CommandError.assetInUse(id) }
+            }
+            let removed = assets.remove(at: index)
+            return .addAsset(asset: removed)
+        }
+    }
+
+    // MARK: Checks
+
+    private func validate(_ clip: Clip) throws {
+        guard clip.length.rawValue > 0 else { throw CommandError.invalidValue("clip length must be positive") }
+        if case .audio(let audio) = clip {
+            guard asset(audio.asset) != nil else { throw CommandError.assetNotFound(audio.asset) }
+            guard !audio.gainDb.isNaN, audio.fadeInMs >= 0, audio.fadeOutMs >= 0,
+                  audio.fadeInMs.isFinite, audio.fadeOutMs.isFinite else {
+                throw CommandError.invalidValue("clip gain or fade")
+            }
+        }
+    }
+
+    private func validate(_ follow: FollowActions?) throws {
+        guard let follow else { return }
+        for action in [follow.a, follow.b] {
+            guard !action.weight.isNaN, action.weight >= 0 else { throw CommandError.invalidValue("follow weight") }
+            if action.kind == .jump, (action.jumpIndex ?? -1) < 0 {
+                throw CommandError.invalidValue("jump needs a slot index")
+            }
+        }
+        guard follow.time.amount >= 1 else { throw CommandError.invalidValue("follow time must be at least 1") }
+    }
+
+    /// Every route target exists and can take input; no cycles.
+    private func checkRouting() throws {
+        for track in tracks {
+            for target in Routing.edges(of: track) {
+                guard target != track.id else { throw CommandError.wouldCreateCycle }
+                guard let t = self.track(target) else { throw CommandError.trackNotFound(target) }
+                guard t.kind == .group || t.kind == .returnTrack || t.kind == .master else {
+                    throw CommandError.invalidRoute("\(t.name) cannot take input")
+                }
+            }
+            for send in track.sends {
+                guard let t = self.track(send.target), t.kind == .group || t.kind == .returnTrack else {
+                    throw CommandError.invalidRoute("a send needs a return or group track")
+                }
+            }
+            if Set(track.sends.map(\.target)).count != track.sends.count {
+                throw CommandError.invalidRoute("two sends to the same track")
+            }
+        }
+        if Routing.hasCycle(self) { throw CommandError.wouldCreateCycle }
+    }
+}
+
+extension Track {
+    mutating func replaceClip(_ clip: Clip) throws {
+        if let i = clips.firstIndex(where: { $0.id == clip.id }) {
+            clips.remove(at: i)
+            insertSorted(clip)
+        } else if let i = slots.firstIndex(where: { $0?.clip.id == clip.id }), var slot = slots[i] {
+            slot.clip = clip
+            slots[i] = slot
+        } else {
+            throw CommandError.clipNotFound(clip.id)
+        }
+    }
+}
+
+extension Clip {
+    func usesAsset(_ id: AssetID) -> Bool {
+        if case .audio(let a) = self { return a.asset == id }
+        return false
+    }
+}

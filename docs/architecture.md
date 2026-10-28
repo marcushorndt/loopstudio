@@ -1,6 +1,7 @@
 # loopstudio architecture
 
-Status: plan, 2026-10-28. Milestone 0 (single-loop player, `LoopEngine`) is done and tested.
+Status: 2026-10-28. Milestone 0 (single-loop player) and milestone 1 (core model, commands, undo, package format, journal, follow-action resolver) are done: 74 tests pass.
+Decisions made: name `loopstudio`, minimum macOS 26, distribution left open (nothing in the design blocks a later release).
 This document sets the rules for everything after it.
 Edge cases, their rules, and creative ideas are in [edge-cases-and-ideas.md](edge-cases-and-ideas.md). Its section J lists the changes it made to this plan:
 clip fades in the model, a command journal for crash recovery, one file per track for git merges, a per-node CPU watchdog, a single `silenceAll` path for stuck notes, a dummy clock without a device, and a project revision on every background job.
@@ -75,7 +76,8 @@ Pure value types (`struct`, `Codable`, `Sendable`). Every object has a stable `U
 Project
  |- tempoMap, timeSignatures, markers
  |- tracks: [Track]      kind = audio | midi | group | return | master
- |    |- clips: [Clip]   audio clip (asset, warp) or MIDI clip (notes, CCs)
+ |    |- clips: [Clip]   arrangement: audio (asset, warp, loop flag, fades), MIDI (notes), or dummy
+ |    |- slots: [SessionSlot?]   session: a clip, launch quantize, follow actions A/B (see 11a)
  |    |- devices: [DeviceSlot]   plugin or built-in effect, bypass, state blob
  |    |- sends: [Send]   target bus, level, pre/post fader
  |    |- output: OutputRoute     master | track id
@@ -144,6 +146,49 @@ How we enforce it:
 - Built-in parameters (volume, pan, send level, device parameters) use the same path as plugin parameters.
 - Later: LFO and envelope modulation sources that write to the same addresses.
 
+## 11a. Session view, follow actions, fades, loop or one-shot
+
+Model and decision logic are done (milestone 1, `Session.swift`, `Follow.swift`). The engine part comes in milestone 12.
+
+**Slots and blocks.** Each track has a column of session slots. A *block* is a run of occupied slots with no empty slot between them. Dummy clips count as occupied slots, so they can sit inside a block as decision points.
+
+**Follow actions.** Each slot has two actions, A and B, each with a weight. The chance of A is `wA / (wA + wB)`. If both weights are 0, nothing happens and the clip goes on. Actions:
+
+| Action | Plays |
+|---|---|
+| `stop` | nothing; the track stops |
+| `replay` | this slot again |
+| `next`, `previous` | the neighbour in the block; at the edge it wraps or stops (setting `edge`) |
+| `topOfBlock`, `endOfBlock` | the first or last slot of the block |
+| `any` | a random slot of the block, this one included |
+| `other` | a random slot of the block except this one (a one-slot block replays) |
+| `jump` | a fixed slot index |
+
+**When.** `FollowTime` is either a number of ticks after the clip starts, or a number of full passes (`loops`). A follow action starts the next clip on the exact frame, never quantized. Quantize applies only to manual launches.
+
+**Dummy clips.** A dummy clip has no sound. It has a length, follow actions, and optional automation lanes. It is the conductor of a block: for example four bars of nothing, then a 70/30 choice between two fills.
+
+**Reproducible randomness.** Choices come from a counter-based generator: `f(project seed, clip ID, launch count, draw number)`. It has no stored state. Results:
+- A bounce makes the same choices as live playback.
+- The engine can decide the next slot *when a clip starts*, which gives it the whole clip length to prepare the audio (see the head cache below).
+- Skipping or replaying a section cannot shift later choices.
+- The clip ID is hashed with FNV-1a, because Swift's `Hasher` changes on every launch.
+A later "new variation each play" mode changes the seed on each play; the fixed seed stays the default.
+
+**Engine rules (milestone 12).**
+- A manual launch cancels the pending decision of that track.
+- The renderer follows at most 8 transitions per block. More means a zero-length loop: the track stops and the slot is flagged.
+- *Head cache:* the first 200 ms of every slot in a block stay in memory, so a jump to any slot starts without a disk wait.
+- If the chosen target no longer exists when it is time to run (the user deleted it), the track stops and the track shows a note.
+
+**Fades (nothing clicks).**
+- Every audio clip has `fadeInMs` and `fadeOutMs`, 2 ms by default (`Project.defaultFadeMs`). `Project.makeAudioClip` is the one way UI code creates a dropped clip, so a timeline drop and a slot drop get the same fades. 0 means the user chose "no fade".
+- *Declick guard:* the renderer also ramps any node start, stop, seek, mute and bypass over at least 64 frames, whatever the clip fades say.
+- *Joins inside a block:* when clip A ends where clip B starts, plain fade-out then fade-in would dip. The renderer instead overlaps an equal-power crossfade of the fade length across the join, using source audio past the clip edge when it exists, and the plain fades when it does not.
+- *Loop seam:* a looping clip crossfades its end into its start over the fade length.
+
+**Loop or one-shot.** Each clip has a `loop` flag. At drop time the project's `AutoLoopRule` sets it from the sample's length: a sample between `minSeconds` and `maxSeconds` loops (default 0 to 20 s), anything else plays once. With the rule off, every drop plays once. The flag can be changed on any clip afterwards. A one-shot plays through once and then ends, or hands over to its follow action; for a one-shot, `loops(n)` counts as one pass.
+
 ## 12. Devices and failure handling
 
 - Handle sample-rate change, buffer-size change, and device removal. The renderer rebuilds its plan for the new format; the transport position is kept.
@@ -181,7 +226,7 @@ How we enforce it:
 | # | Milestone | Done when |
 |---|---|---|
 | 0 | Single loop player | Done: 4 tests pass |
-| 1 | **Core**: time types, `TempoMap`, project model, commands, undo, JSON package with migrations | Round-trip and property tests pass |
+| 1 | **Core**: time types, `TempoMap`, project model, commands, undo, JSON package with migrations, command journal, follow-action resolver | Done: 70 tests pass, including random edit sequences that undo back to the start |
 | 2 | **Renderer spike** (see section 17) | Custom graph hosting an Apple AU runs 10 min with zero allocations |
 | 3 | Renderer v1: tracks, clips, transport, loop region, offline bounce = realtime | Null test passes |
 | 4 | Mixer: sends, buses, groups, PDC, meters | Routing and latency tests pass |
@@ -192,7 +237,7 @@ How we enforce it:
 | 9 | Automation lanes and drawing | Click-free ramps in a golden test |
 | 10 | Built-in effects (EQ, comp, delay, reverb, filter) | Each has a golden render |
 | 11 | VST3 bridge | One third-party VST3 plays inside a project |
-| 12 | Session view (clip launching, Live-style) | After the arrangement view is stable |
+| 12 | Session engine: launch, follow actions, dummy clips, head cache, block crossfades | A block with weighted follow actions renders identically offline and live |
 
 ## 17. Risks and the spikes that answer them
 
@@ -204,8 +249,8 @@ How we enforce it:
 | SwiftUI may be too slow for a dense timeline | Draw the timeline in a custom `NSView`/Metal layer, with SwiftUI for the chrome; decide after a 1000-clip test |
 | VST3 license or hosting limits | Read the current SDK license and a sample host before milestone 11 |
 
-## 18. Open decisions for Marcus
+## 18. Decisions
 
-1. **App name and bundle id.** Working name: `loopstudio`.
-2. **Minimum macOS.** Package says 15. Raising it to 26 or 27 lets us use the newest APIs and drops compatibility code.
-3. **Distribution.** Personal tool only, or later a product? This decides the VST3 license check, the Link license check, and sandboxing (a sandboxed app limits plugin hosting).
+1. **Name:** `loopstudio`. The bundle id is still open.
+2. **Minimum macOS:** 26 (Swift tools 6.2 in `Package.swift`).
+3. **Distribution:** may open up later. Until then: no sandbox-hostile choices (user-chosen folders only through bookmarks, no private APIs), and the VST3 SDK and Ableton Link licenses are checked before those features start, not before.

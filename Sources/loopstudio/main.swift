@@ -1,5 +1,7 @@
 import Foundation
+import LoopStudioCore
 import LoopStudioEngine
+import LoopStudioProject
 
 let args = Array(CommandLine.arguments.dropFirst())
 
@@ -7,6 +9,7 @@ func usage() -> Never {
     print("""
     usage:
       loopstudio play <file> --source-bpm N [--bpm N] [--seconds N]
+      loopstudio info <project.loopstudio>
       loopstudio units
       loopstudio midi
     """)
@@ -24,6 +27,18 @@ case "units":
 case "midi":
     let names = MIDIDevices.inputNames()
     print(names.isEmpty ? "no MIDI inputs" : names.joined(separator: "\n"))
+case "info":
+    guard args.count > 1 else { usage() }
+    do {
+        let loaded = try ProjectPackage.read(from: URL(fileURLWithPath: args[1]))
+        let p = loaded.project
+        print("\(p.name): \(p.tracks.count) tracks, \(p.assets.count) assets, \(p.sampleRate) Hz")
+        if let from = loaded.migratedFrom { print("migrated from schema \(from)") }
+        for issue in loaded.issues { print("issue: \(issue)") }
+    } catch {
+        print("error: \(error)")
+        exit(1)
+    }
 case "play":
     guard args.count > 1, let source = option("--source-bpm") else { usage() }
     let engine = try LoopEngine()

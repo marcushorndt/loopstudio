@@ -118,7 +118,7 @@ Items marked **(design change)** changed `architecture.md`.
 | Undo after a plugin was removed | The command keeps the plugin state blob. Undo restores the slot, bypassed if the plugin is gone. |
 | Undo while a background job (analysis, warp render) is running | Jobs carry the project revision. A result for an old revision is dropped. |
 | A drag creates 200 commands | Coalesce into one undo step. |
-| Git merge of two edits | **(design change)** One file per track (`tracks/<uuid>.json`), one note or point per line, sorted. Two people editing different tracks merge cleanly. |
+| Git merge of two edits | **(design change, done)** One file per track (`tracks/<uuid>.json`), sorted keys, one field per line. Two edits to different tracks merge cleanly. A file is rewritten only when its bytes change. |
 | Project with 500 tracks | Lazy load of clip audio. UI virtualises rows. |
 | Case-insensitive file system | All paths inside the package are lowercase hashes or UUIDs. |
 
@@ -161,3 +161,33 @@ Items marked **(design change)** changed `architecture.md`.
 6. A dummy clock lets the transport run without a device (section 12).
 7. Background job results carry a project revision number (section 14).
 8. `loopstudio doctor` and the agent API join the CLI target (section 3).
+
+## K. Session blocks, follow actions, fades, loop or one-shot
+
+Added 2026-10-28. Rules marked *(tested)* have a test in milestone 1.
+
+| Case | Rule |
+|---|---|
+| Both weights 0, or a weight is NaN or negative | No follow action; the clip goes on. A bad weight counts as 0. Commands reject NaN and negative weights. *(tested)* |
+| Weight is huge or infinite | Capped at 1e9 so the sum cannot overflow. *(tested)* |
+| `other` or `any` in a one-slot block | Replay. *(tested)* |
+| `jump` to an empty slot or past the end | No follow action. The command also rejects a jump without an index. *(tested)* |
+| `next` at the end of a block | Wraps to the top, or stops when `edge` is `stop`. *(tested)* |
+| Same clip, same launch number, two runs | Same choice. Different project seed gives a different sequence. *(tested)* |
+| Weights 3:1 | A is chosen about 75% of the time over many launches. *(tested)* |
+| The user deletes the target slot while a decision is pending | The decision is checked again at run time. If the target is gone, the track stops and shows a note. |
+| The user launches a clip by hand while a follow action is pending | The pending action of that track is cancelled. |
+| Follow time shorter than the clip | The clip is cut at the follow time, with its fade-out. |
+| Follow time longer than a one-shot | The track is silent until the follow time. |
+| Follow time of 0 | Rejected. The minimum is 1 tick. A loop of zero-length clips cannot hang the renderer: at most 8 transitions per block. |
+| Tempo changes while a clip plays | Ticks stay musical, so the follow time moves with the tempo. |
+| A block has an empty slot in the middle | That splits it into two blocks. Follow actions never cross a gap. |
+| A clip is in a slot and also in the arrangement | Not allowed. A clip ID lives in one place only. *(tested)* |
+| A dummy clip's automation lane points at a deleted parameter | The lane is kept, shown as orphaned, and does nothing. |
+| Clip dropped with fade 0 | Allowed only if the user set it. The declick guard still ramps the start and stop over 64 frames. |
+| Join between two clips in a block | Crossfade across the join, not fade-out then fade-in (no dip). |
+| Loop seam | Short crossfade at the loop wrap. |
+| Very short sample (a single hit) dropped | One-shot if it is below `minSeconds` (set it above 0 to turn this on). |
+| Very long sample (a song) dropped | One-shot (default above 20 s). |
+| Auto-loop rule with min greater than max | Rejected. *(tested)* |
+| Same project rendered offline and live | Same follow-action choices, so the same audio. Part of the null test in milestone 12. |

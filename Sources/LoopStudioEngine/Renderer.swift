@@ -165,6 +165,43 @@ public final class Renderer {
     }
 
     /// Ends the arrangement notes that node `i` still holds.
+    /// Takes over the arrangement notes `old` still holds. Audio thread, once, before the first block.
+    /// A note whose note-off is still ahead in this plan stays held here; any other note gets its note-off
+    /// now, so deleting or moving a playing clip cannot leave a note hanging.
+    func takeOverNotes(from old: Renderer, at frame: Int64) {
+        for i in 0..<old.nodeCount {
+            guard let unit = old.nodes[i].instrument else { continue }
+            let base = old.held + i * 2048
+            var target = -1
+            for j in 0..<nodeCount where nodes[j].instrument === unit { target = j; break }
+            for k in 0..<2048 where base[k] > 0 {
+                if target >= 0, Self.hasNoteOff(nodes[target].midi, key: k, from: frame) {
+                    held[target * 2048 + k] &+= base[k]
+                } else {
+                    unit.sendMIDI(0x80 | UInt8(k >> 7), UInt8(k & 127), 0)
+                }
+                base[k] = 0
+            }
+        }
+    }
+
+    /// True when the next event of `key` (channel << 7 | pitch) at or after `frame` is a note-off.
+    static func hasNoteOff(_ events: [MIDIEvent], key: Int, from frame: Int64) -> Bool {
+        var lo = 0, hi = events.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if events[mid].frame < frame { lo = mid + 1 } else { hi = mid }
+        }
+        while lo < events.count {
+            let e = events[lo]
+            lo += 1
+            let kind = e.status & 0xF0
+            guard kind == 0x80 || kind == 0x90, Int(e.status & 0x0F) << 7 | Int(e.data1 & 127) == key else { continue }
+            return kind == 0x80 || e.data2 == 0
+        }
+        return false
+    }
+
     private func releaseNotes(of i: Int) {
         let base = held + i * 2048
         guard let unit = nodes[i].instrument else { return }

@@ -179,3 +179,52 @@ private func audioUnitSlot(_ id: String, _ name: String) -> DeviceSlot {
     #expect(host.units.isEmpty)
     #expect(!host.isLoading)
 }
+
+@Test func noteOffLookupFindsTheNextEventOfTheKey() {
+    let on = MIDIEvent(frame: 0, status: 0x90, data1: 60, data2: 100)
+    let off = MIDIEvent(frame: 900, status: 0x80, data1: 60, data2: 0)
+    let other = MIDIEvent(frame: 500, status: 0x90, data1: 62, data2: 100)
+    #expect(Renderer.hasNoteOff([on, other, off], key: 60, from: 100))
+    #expect(!Renderer.hasNoteOff([on, other], key: 60, from: 100))
+    #expect(!Renderer.hasNoteOff([on, other, off, MIDIEvent(frame: 1000, status: 0x90, data1: 60, data2: 90)], key: 60, from: 950))
+}
+
+@MainActor
+@Test func deletingAPlayingClipReleasesItsNote() async throws {
+    var project = Project(name: "Stuck", sampleRate: rate)
+    let slot = audioUnitSlot(dls, "DLS")
+    var track = Track(name: "Keys", kind: .midi, devices: [slot])
+    // Organ (program 17 in GM) holds its level while the key is down.
+    track.clips = [.midi(MIDIClip(start: 0, length: 38_400, notes: [MIDINote(tick: 0, length: 38_000, pitch: 60)]))]
+    try Command.insertTrack(track: track, index: 0).apply(to: &project)
+    let host = PluginHost()
+    _ = await host.sync(project: project)
+    let unit = try #require(host.units[slot.id])
+    unit.sendMIDI(0xC0, 16, 0)
+
+    func tail(takeOver: Bool) -> Float {
+        let first = Renderer(plan: RenderPlan.compile(project, bank: AudioBank(), units: host.units), maxBlock: 512)
+        var l = [Float](repeating: 0, count: 512), r = l
+        func run(_ renderer: Renderer, from: Int, blocks: Int) -> Float {
+            var peak: Float = 0
+            for b in 0..<blocks {
+                l.withUnsafeMutableBufferPointer { lb in r.withUnsafeMutableBufferPointer { rb in
+                    renderer.process(startFrame: Int64(from + b * 512), frames: 512, outLeft: lb.baseAddress!, outRight: rb.baseAddress!)
+                } }
+                if b > blocks / 2 { peak = max(peak, l.map(abs).max() ?? 0) }
+            }
+            return peak
+        }
+        _ = run(first, from: 0, blocks: 40)
+        var edited = project
+        edited.tracks[0].clips = []
+        let second = Renderer(plan: RenderPlan.compile(edited, bank: AudioBank(), units: host.units), maxBlock: 512, reusing: first)
+        if takeOver { second.takeOverNotes(from: first, at: 40 * 512) }
+        let peak = run(second, from: 40 * 512, blocks: 200)
+        unit.silenceNotes()
+        return peak
+    }
+    let stuck = tail(takeOver: false)
+    let released = tail(takeOver: true)
+    #expect(released < stuck / 4, "stuck \(stuck), released \(released)")
+}

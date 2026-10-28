@@ -23,6 +23,10 @@ public final class LiveEngine: @unchecked Sendable {
     private var loop: Range<Int64>?
     private var resetPending = false
     private var silencePending = false
+    /// The renderer that played last, until the audio thread takes over its held notes.
+    private var handover: Renderer?
+    /// Keeps the handover renderer alive on the control thread, so the audio thread never frees it.
+    private var retired: Renderer?
     private struct LiveMIDI { var node: Int; var status: UInt8; var data1: UInt8; var data2: UInt8 }
     private let liveCapacity = 512
     private let live: UnsafeMutablePointer<LiveMIDI>
@@ -124,7 +128,11 @@ public final class LiveEngine: @unchecked Sendable {
         os_unfair_lock_lock(lock)
         let old = renderer
         renderer = new
+        // A renderer that never played holds no notes; keep the one that did.
+        if handover == nil { handover = old }
+        let keep = handover
         os_unfair_lock_unlock(lock)
+        retired = keep
         withExtendedLifetime(old) {}
     }
 
@@ -205,6 +213,10 @@ public final class LiveEngine: @unchecked Sendable {
             return
         }
 
+        if let old = handover {
+            if old !== renderer { renderer.takeOverNotes(from: old, at: position) }
+            handover = nil
+        }
         if resetPending { renderer.reset(); resetPending = false; silencePending = false }
         if silencePending { renderer.silenceNotes(); silencePending = false }
         for i in 0..<liveCount { renderer.sendLive(node: live[i].node, live[i].status, live[i].data1, live[i].data2) }

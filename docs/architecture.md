@@ -288,6 +288,20 @@ Tools to add as features land: `asset_import` (hash and copy a file into the pro
 | 11 | VST3 bridge | One third-party VST3 plays inside a project |
 | 12 | Session engine: launch, follow actions, dummy clips, head cache, block crossfades | A block with weighted follow actions renders identically offline and live |
 
+## 16a. Status of the app (updated)
+
+| Area | State |
+|---|---|
+| Renderer | Own mix graph, one realtime callback. Output depends only on the absolute frame, so it is bit-identical across block sizes, with automation too. |
+| App | SwiftUI, Session and Arrangement views, collapsible sidebar, mixer, clip and device panel, piano roll, plugin windows. |
+| Effects | Utility, filter, EQ3, delay, reverb, compressor, limiter. Hosted Audio Units as effects and instruments. |
+| Routing | Group tracks, return tracks (busses), per-track output menu, sends. Input routing between tracks is not built. |
+| Automation | Track lanes and dummy-clip lanes. Envelope editor in the arrangement row and in the dummy-clip panel. |
+| Recording | R arms. Space starts. Optional count-in of 0, 1, 2 or 4 bars. Metronome. MIDI notes become a clip when the transport stops. Audio recording is not built. |
+| Keys | One table, `AppAction` in `Shortcuts.swift`. The menu bar, the right-click menus, the key monitor and the shortcut sheet (⌘/) all read it. Plain keys (Space, Tab, R, Delete) go through an `NSEvent` monitor, so a focused control cannot swallow them. |
+| Right-click menus | Clip, lane, ruler, track header, mixer strip, session slot, scene, device, sidebar items. Items show their key. |
+| Open | Warping, plugin delay compensation, audio recording, audio device and channel picker, more MCP tools, VST3 bridge. |
+
 ## 17. Risks and the spikes that answer them
 
 | Risk | Spike |

@@ -16,7 +16,8 @@ public enum OfflineRender {
     }
 
     @MainActor
-    public static func prepare(_ project: Project, bank: AudioBank) async -> Prepared {
+    public static func prepare(_ project: Project, bank live: AudioBank) async -> Prepared {
+        let bank = live.defersWarps ? live.exportCopy() : live
         let host = PluginHost()
         _ = await host.sync(project: project)
         var warnings = host.failures.sorted { $0.key.description < $1.key.description }

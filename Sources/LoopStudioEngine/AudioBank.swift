@@ -38,6 +38,9 @@ public final class AudioBank: @unchecked Sendable {
     /// When each warp was last asked for, so the eviction drops the oldest.
     private var used: [String: UInt64] = [:]
     private var clock: UInt64 = 0
+    /// The clock at the last two `takePendingWarps()` calls. Warps used since `previousTake` belong to the
+    /// latest plan, and the eviction keeps them.
+    private var lastTake: UInt64 = 0, previousTake: UInt64 = 0
     /// The last warped buffer each clip played. It stands in while the new one is made.
     private var lastWarp: [ClipID: PCMBuffer] = [:]
     private var pending: [String: WarpJob] = [:]
@@ -75,11 +78,22 @@ public final class AudioBank: @unchecked Sendable {
         return lastWarp[clip]
     }
 
+    /// A bank for one export: the same audio and the warps made so far, with its own list of missing warps,
+    /// so the live app and the export do not take each other's jobs.
+    public func exportCopy() -> AudioBank {
+        let copy = AudioBank()
+        copy.defersWarps = true
+        bufferLock.lock(); copy.buffers = buffers; bufferLock.unlock()
+        warpLock.lock(); copy.warped = warped; copy.used = used; copy.clock = clock; copy.lastWarp = lastWarp; warpLock.unlock()
+        return copy
+    }
+
     /// The warps the last plans asked for and did not find. Taking them clears the list.
     public func takePendingWarps() -> [WarpJob] {
         warpLock.lock(); defer { warpLock.unlock() }
         let jobs = Array(pending.values)
         pending = [:]
+        previousTake = lastTake; lastTake = clock
         return jobs
     }
 
@@ -97,7 +111,8 @@ public final class AudioBank: @unchecked Sendable {
         touch(key)
         // Edits make old keys useless. The oldest half goes, so the warps the latest plans use stay.
         if warped.count > 256 {
-            for old in used.sorted(by: { $0.value < $1.value }).prefix(128).map(\.key) { warped[old] = nil; used[old] = nil }
+            let old = used.filter { $0.value < previousTake }.sorted { $0.value < $1.value }.prefix(128).map(\.key)
+            for key in old { warped[key] = nil; used[key] = nil }
         }
         if lastWarp.count > 1_024 { lastWarp = [:] }
         warpLock.unlock()

@@ -203,6 +203,7 @@ private func frequency(_ x: UnsafePointer<Float>, from: Int, count: Int) -> Doub
     var made = 0
     let make = { () -> PCMBuffer in made += 1; return small }
     for i in 0..<256 { _ = bank.warped(key: "k\(i)", make: make) }
+    _ = bank.takePendingWarps(); _ = bank.takePendingWarps()   // two plans later: all of these are old
     _ = bank.warped(key: "k0", make: make)          // k0 is new again
     _ = bank.warped(key: "k256", make: make)        // the bound evicts the oldest half
     made = 0
@@ -210,4 +211,24 @@ private func frequency(_ x: UnsafePointer<Float>, from: Int, count: Int) -> Doub
     #expect(made == 0, "a warp in use stays")
     _ = bank.warped(key: "k1", make: make)
     #expect(made == 1, "an old warp goes")
+}
+
+@Test func theCacheKeepsTheWarpsOfTheLatestPlan() {
+    let bank = AudioBank()
+    let small = PCMBuffer(samples: [[0]], sampleRate: rate)
+    var made = 0
+    let make = { () -> PCMBuffer in made += 1; return small }
+    _ = bank.takePendingWarps()
+    for i in 0..<300 { _ = bank.warped(key: "p\(i)", make: make) }   // one plan with more warps than the bound
+    made = 0
+    for i in 0..<300 { _ = bank.warped(key: "p\(i)", make: make) }
+    #expect(made == 0, "no warp of the plan is evicted by its own warps")
+}
+
+@Test func anExportHasItsOwnMissingWarps() {
+    let live = AudioBank.live()
+    let copy = live.exportCopy()
+    _ = copy.warped(key: "x", clip: ClipID()) { PCMBuffer(samples: [[0]], sampleRate: rate) }
+    #expect(live.takePendingWarps().isEmpty)
+    #expect(copy.takePendingWarps().count == 1)
 }

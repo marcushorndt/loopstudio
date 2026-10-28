@@ -202,7 +202,29 @@ final class AppModel {
     @ObservationIgnored private var warpRounds = 0
     @ObservationIgnored private(set) var plan: RenderPlan?
     @ObservationIgnored private var renderer: Renderer?
-    @ObservationIgnored private var performance: [Launch] = []
+    @ObservationIgnored private var performance: [Launch] = [] {
+        // Each launch remembers the clip it started, so a slot that moves (a scene inserted above it, an undo)
+        // keeps playing the same clip. Launches are only appended, or the list is cleared.
+        didSet {
+            if performance.count < performanceClips.count { performanceClips = [] }
+            for launch in performance.dropFirst(performanceClips.count) {
+                performanceClips.append(launch.slot.flatMap { row in
+                    project.track(launch.track).flatMap { row < $0.slots.count ? $0.slots[row]?.clip.id : nil }
+                })
+            }
+        }
+    }
+    @ObservationIgnored private var performanceClips: [ClipID?] = []
+
+    /// After an edit: points each launch at the row where its clip is now. A clip that is gone stops.
+    private func followMovedSlots() {
+        for (i, clip) in performanceClips.enumerated() {
+            guard let clip, i < performance.count else { continue }
+            let launch = performance[i]
+            let row = project.track(launch.track)?.slots.firstIndex { $0?.clip.id == clip }
+            if row != launch.slot { performance[i].slot = row }
+        }
+    }
     @ObservationIgnored private var undoStack: [Command] = []
     @ObservationIgnored private var redoStack: [Command] = []
     @ObservationIgnored private var lastKey: (String, Date)?
@@ -684,7 +706,10 @@ final class AppModel {
 
     func setBPM(_ value: Double) {
         let v = min(max(value, 20), 999)
-        apply(.setTempoPoints(points: [TempoPoint(tick: 0, bpm: v)]), key: "bpm")
+        // A tempo curve keeps its shape: every point scales by the same factor as the start tempo.
+        let points = project.tempoMap.points
+        let factor = v / max(points[0].bpm, 1)
+        apply(.setTempoPoints(points: points.map { TempoPoint(tick: $0.tick, bpm: $0.bpm * factor, ramp: $0.ramp) }), key: "bpm")
     }
 
     // MARK: Session launching
@@ -819,6 +844,7 @@ final class AppModel {
         dirty = true
         if let c = selectedClip, project.findClip(c) == nil { selectedClip = nil }
         selectedClips = selectedClips.filter { project.findClip($0) != nil }
+        followMovedSlots()
         rebuild()
         syncPlugins()
         scheduleSave()

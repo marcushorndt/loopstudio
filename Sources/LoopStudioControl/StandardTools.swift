@@ -178,11 +178,7 @@ public enum StandardTools {
 
             let length: Tick
             if let t = args.optionalInt("lengthTicks") { length = Tick(Int64(t)) }
-            else {
-                let seconds = Double(asset.frames) / asset.sampleRate
-                let map = project.tempoMap
-                length = map.tick(atSeconds: map.seconds(at: start) + seconds) - start
-            }
+            else { length = project.naturalLength(of: asset, from: start) }
             var clip = project.makeAudioClip(asset: asset.id, start: start, length: max(length, Tick(1)))
             if let loop = args.raw["loop"]?.boolValue { clip.loop = loop }
 

@@ -601,6 +601,17 @@ public struct Project: Hashable, Codable, Sendable {
 
     /// A new audio clip for a dropped sample. It gets the project's default fade (nothing clicks)
     /// and the loop or one-shot setting from the auto-loop rule, judged by the sample's duration.
+    /// The musical length of an asset placed at `start`. A loop that will be warped to the project tempo
+    /// keeps its own beats (four beats at 100 BPM stay four beats at 120 BPM); other audio keeps its seconds.
+    public func naturalLength(of asset: Asset, from start: Tick = 0) -> Tick {
+        let seconds = Double(asset.frames) / max(1, asset.sampleRate)
+        if let bpm = asset.sourceTempo, bpm > 0, autoLoop.shouldLoop(seconds: seconds) {
+            return Tick(max(1, Tick.quarters(seconds * bpm / 60).rawValue))
+        }
+        let end = tempoMap.tick(atSeconds: tempoMap.seconds(at: start) + seconds)
+        return Tick(max(1, (end - start).rawValue))
+    }
+
     public func makeAudioClip(asset assetID: AssetID, start: Tick = 0, length: Tick) -> AudioClip {
         var loop = false
         var warp = WarpMode.off

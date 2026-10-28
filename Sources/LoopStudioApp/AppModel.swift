@@ -1048,10 +1048,7 @@ final class AppModel {
     }
 
     private func lengthTicks(of asset: Asset, from start: Tick) -> Tick {
-        let seconds = Double(asset.frames) / max(1, asset.sampleRate)
-        let map = project.tempoMap
-        let end = map.tick(atSeconds: map.seconds(at: start) + seconds)
-        return Tick(max(1, (end - start).rawValue))
+        project.naturalLength(of: asset, from: start)
     }
 
     @discardableResult

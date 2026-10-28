@@ -210,3 +210,71 @@ extension Project {
         return .batch(commands: commands)
     }
 }
+
+// MARK: Splitting
+
+extension AutomationMath {
+    /// The part of an envelope from `offset` on, with ticks counted from there. It starts with the value at `offset`.
+    public static func tail(_ points: [AutomationPoint], from offset: Tick) -> [AutomationPoint] {
+        guard let start = value(points, at: offset) else { return [] }
+        var curve = Curve.linear, bend: Double?
+        if let before = points.last(where: { $0.tick <= offset }) { curve = before.curve; bend = before.bend }
+        return [AutomationPoint(tick: 0, value: start, curve: curve, bend: bend)]
+            + points.filter { $0.tick > offset }.map { var p = $0; p.tick = p.tick - offset; return p }
+    }
+
+    /// A curve that repeats every `cycle`, rotated so that it starts at `offset` of the old cycle.
+    public static func rotate(_ points: [AutomationPoint], by offset: Tick, cycle: Tick) -> [AutomationPoint] {
+        let phase = Tick(((offset.rawValue % max(1, cycle.rawValue)) + cycle.rawValue) % max(1, cycle.rawValue))
+        guard phase > 0, !points.isEmpty else { return points }
+        let inCycle = points.filter { $0.tick < cycle }
+        let head = tail(inCycle, from: phase).filter { $0.tick < cycle - phase }
+        let end = AutomationPoint(tick: cycle - phase - 1, value: value(inCycle, at: cycle - 1) ?? 0)
+        let first = inCycle.last { $0.tick <= 0 }
+        let wrapped = [AutomationPoint(tick: cycle - phase, value: value(inCycle, at: 0) ?? 0, curve: first?.curve ?? .linear, bend: first?.bend)]
+            + inCycle.filter { $0.tick > 0 && $0.tick < phase }.map { var p = $0; p.tick = p.tick + cycle - phase; return p }
+            + [AutomationPoint(tick: cycle - 1, value: value(inCycle, at: phase - 1) ?? 0)]
+        return head + [end] + wrapped
+    }
+}
+
+extension Clip {
+    /// The second half of a split at `head` ticks into the clip: it starts there and keeps sounding and moving
+    /// as the whole clip did. Notes that cross the cut continue, envelopes and clip automation go on from the
+    /// cut. The caller gives it a new ID; the first half is the old clip shortened to `head`.
+    public func tail(from head: Tick) -> Clip? {
+        guard head > 0, head < length else { return nil }
+        var clip = self
+        let rest = length - head
+        func lanes(_ list: [AutomationLane]) -> [AutomationLane] {
+            list.map { lane in
+                var lane = lane
+                lane.id = LaneID()
+                if let own = automationLength { lane.points = AutomationMath.rotate(lane.points, by: head, cycle: own) }
+                else { lane.points = AutomationMath.tail(lane.points, from: head) }
+                return lane
+            }
+        }
+        switch self {
+        case .audio(var a):
+            a.start = a.start + head; a.length = rest; a.offset = a.offset + head
+            a.gainEnvelope = a.gainEnvelope.map { AutomationMath.tail($0, from: head) }
+            clip = .audio(a)
+        case .midi(var m):
+            m.start = m.start + head; m.length = rest
+            m.notes = m.notes.compactMap { n in
+                let end = n.tick + n.length
+                guard end > head else { return nil }
+                var n = n
+                if n.tick < head { n.length = end - head; n.tick = 0 } else { n.tick = n.tick - head }
+                return n
+            }
+            clip = .midi(m)
+        case .dummy(var d):
+            d.start = d.start + head; d.length = rest
+            clip = .dummy(d)
+        }
+        clip.lanes = lanes(self.lanes)
+        return clip
+    }
+}

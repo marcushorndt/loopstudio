@@ -241,26 +241,17 @@ extension AppModel {
             let marked = t.clips.filter { selectedClips.contains($0.id) }
             let targets = marked.isEmpty && t.id == selectedTrack && selectedClips.isEmpty ? t.clips : marked
             for c in targets where c.start < at && at < c.start + c.length {
-                let head = Tick(at.rawValue - c.start.rawValue), tail = Tick(c.length.rawValue - head.rawValue)
-                switch c {
-                case .audio(var a):
-                    var second = a
-                    second.id = ClipID(); second.start = at; second.length = tail
-                    second.offset = Tick(a.offset.rawValue + head.rawValue)
-                    commands.append(.setClipRange(clip: a.id, start: a.start, length: head))
-                    commands.append(.insertClip(track: t.id, clip: .audio(second)))
-                    a.length = head
-                case .midi(let m):
+                let head = at - c.start
+                guard let second = c.tail(from: head) else { continue }
+                // The first half keeps its notes, envelopes and automation; it only gets shorter.
+                commands.append(.setClipRange(clip: c.id, start: c.start, length: head))
+                if case .midi(let m) = c {
                     let first = m.notes.filter { $0.tick < head }.map { n -> MIDINote in
                         var n = n; n.length = Tick(min(n.length.rawValue, head.rawValue - n.tick.rawValue)); return n
                     }
-                    let later = m.notes.filter { $0.tick >= head }.map { n -> MIDINote in var n = n; n.tick = Tick(n.tick.rawValue - head.rawValue); return n }
-                    let second = MIDIClip(start: at, length: tail, loop: m.loop, notes: later)
-                    commands.append(.setClipRange(clip: m.id, start: m.start, length: head))
                     commands.append(.setMIDINotes(clip: m.id, notes: first))
-                    commands.append(.insertClip(track: t.id, clip: .midi(second)))
-                case .dummy: break
                 }
+                commands.append(.insertClip(track: t.id, clip: fresh(second, start: second.start)))
             }
         }
         if !commands.isEmpty { apply(.batch(commands: commands)) }

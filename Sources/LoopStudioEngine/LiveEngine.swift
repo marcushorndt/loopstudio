@@ -40,6 +40,11 @@ public final class LiveEngine: @unchecked Sendable {
     /// signature maps. Empty: a steady click of `beatFrames`.
     private var clickFrames: [Int64] = []
     private var clickAccents: [Bool] = []
+    /// After the last grid beat the click goes on at the last beat length, in the last bar's meter.
+    private var clickTailBeat: Int64 = 0
+    private var clickTailBar = 4
+    /// Beats from the last accent to the last grid beat.
+    private var clickTailPhase = 0
     private var beatFrames: Int64 = 24_000
     private var beatsPerBar = 4
     private var countInRemaining: Int64 = 0
@@ -177,7 +182,15 @@ public final class LiveEngine: @unchecked Sendable {
     /// The beats of the song, in frames, with the bar accents. The old arrays are freed here, not on the audio thread.
     public func setClickGrid(frames: [Int64], accents: [Bool]) {
         var oldFrames = frames, oldAccents = accents
-        locked { swap(&clickFrames, &oldFrames); swap(&clickAccents, &oldAccents) }
+        let n = min(frames.count, accents.count)
+        let accentIndexes = (0..<n).filter { accents[$0] }
+        let tailBeat = n >= 2 ? max(1, frames[n - 1] - frames[n - 2]) : 0
+        let tailBar = accentIndexes.count >= 2 ? accentIndexes[accentIndexes.count - 1] - accentIndexes[accentIndexes.count - 2] : 4
+        let tailPhase = accentIndexes.last.map { n - 1 - $0 } ?? 0
+        locked {
+            swap(&clickFrames, &oldFrames); swap(&clickAccents, &oldAccents)
+            clickTailBeat = tailBeat; clickTailBar = max(1, tailBar); clickTailPhase = tailPhase
+        }
         withExtendedLifetime((oldFrames, oldAccents)) {}
     }
 
@@ -313,9 +326,15 @@ public final class LiveEngine: @unchecked Sendable {
             let t = clock + Int64(i)
             while beat + 1 < clickFrames.count && clickFrames[beat + 1] <= t { beat += 1 }
             guard beat >= 0 else { continue }
-            let offset = t - clickFrames[beat]
+            var offset = t - clickFrames[beat]
+            var accent = clickAccents[beat]
+            if beat == clickFrames.count - 1, clickTailBeat > 0 {
+                let k = offset / clickTailBeat
+                offset -= k * clickTailBeat
+                accent = (Int64(clickTailPhase) + k) % Int64(clickTailBar) == 0
+            }
             guard offset < length else { continue }
-            let phase = 2 * Double.pi * (clickAccents[beat] ? 1_500 : 1_000) * Double(offset) / sampleRate
+            let phase = 2 * Double.pi * (accent ? 1_500 : 1_000) * Double(offset) / sampleRate
             let v = Float(sin(phase) * exp(-Double(offset) / (sampleRate * 0.008)) * 0.4)
             left[i] += v
             right[i] += v

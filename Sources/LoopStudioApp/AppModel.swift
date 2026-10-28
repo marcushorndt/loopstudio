@@ -347,9 +347,11 @@ final class AppModel {
 
     func toggleMetronome() { metronomeOn.toggle(); updateMetronome() }
 
-    /// The meter at the song start: beats per bar, and how long one beat is (6/8 counts eighths).
+    /// The meter where playback stands: beats per bar, and how long one beat is (6/8 counts eighths).
     var meter: (beats: Int, beatTicks: Int64) {
-        let sig = project.timeSignatures.first?.signature ?? TimeSignature(4, 4)
+        let here = currentTick
+        let sig = project.timeSignatures.sorted { $0.tick < $1.tick }.last { $0.tick <= here }?.signature
+            ?? project.timeSignatures.first?.signature ?? TimeSignature(4, 4)
         return (sig.numerator, sig.ticksPerBar.rawValue / Int64(max(1, sig.numerator)))
     }
 

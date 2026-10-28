@@ -3,3 +3,6 @@
 *.xcodeproj
 xcuserdata/
 .DS_Store
+
+# Reference material, not part of the product
+reference/

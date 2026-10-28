@@ -40,6 +40,8 @@ struct LoopStudioApp: App {
             CommandMenu("Track") {
                 Button("Insert Audio Track") { model.addTrack(kind: .audio) }.keyboardShortcut("t", modifiers: .command)
                 Button("Delete Selected Clips") { model.deleteSelected() }.keyboardShortcut(.delete, modifiers: [])
+                Button("Insert Group Track") { model.addTrack(kind: .group) }
+                Button("Group Selected Tracks") { model.groupSelectedTracks() }.keyboardShortcut("g", modifiers: .command)
                 Button("Insert Return Track") { model.addTrack(kind: .returnTrack) }.keyboardShortcut("t", modifiers: [.command, .option])
                 Button("Insert MIDI Track") { model.addTrack(kind: .midi) }.keyboardShortcut("t", modifiers: [.command, .shift])
             }

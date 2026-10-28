@@ -82,6 +82,8 @@ struct MixerStrip: View {
                 }
             }
 
+            if !isMaster { outputMenu }
+
             HStack(spacing: 6) {
                 Fader(db: track.volumeDb) { model.apply(.setVolume(id: track.id, db: $0), key: "vol\(track.id)") }
                     .frame(width: 44, height: 100)
@@ -109,6 +111,19 @@ struct MixerStrip: View {
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: 4))
         .onTapGesture { model.selectedTrack = track.id }
         .dropDestination(for: String.self) { items, _ in drop(items) }
+    }
+
+    /// Where the track sends its sound: the master, or a group or return track (a bus).
+    private var outputMenu: some View {
+        let options = model.project.tracks.filter { ($0.kind == .group || $0.kind == .returnTrack) && $0.id != track.id }
+        return Picker("", selection: Binding(
+            get: { track.output },
+            set: { model.apply(.setOutput(id: track.id, target: $0)) })) {
+            Text("Master").tag(TrackID?.none)
+            ForEach(options, id: \.id) { Text($0.name).tag(Optional($0.id)) }
+        }
+        .labelsHidden().controlSize(.mini)
+        .help("Output routing")
     }
 
     private func drop(_ items: [String]) -> Bool {

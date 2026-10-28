@@ -407,6 +407,17 @@ final class AppModel {
         selectedTrack = t.id
     }
 
+    /// Puts the marked tracks (or the selected one) into a new group track. The group sits after the last of them.
+    func groupSelectedTracks() {
+        let marked = rangeSelection?.tracks ?? Set(selectedTrack.map { [$0] } ?? [])
+        let members = project.tracks.filter { marked.contains($0.id) && $0.kind != .returnTrack && $0.kind != .group }
+        guard !members.isEmpty else { return }
+        let index = (project.tracks.lastIndex { marked.contains($0.id) } ?? project.tracks.count - 1) + 1
+        let group = Track(name: "Group \(project.tracks.filter { $0.kind == .group }.count + 1)", kind: .group, colorIndex: project.tracks.count)
+        apply(.batch(commands: [.insertTrack(track: group, index: index)] + members.map { .setOutput(id: $0.id, target: group.id) }))
+        selectedTrack = group.id
+    }
+
     func deleteSelected() {
         var commands: [Command] = []
         for id in selectedClips.isEmpty ? Set(selectedClip.map { [$0] } ?? []) : selectedClips {

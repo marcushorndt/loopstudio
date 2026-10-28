@@ -167,6 +167,27 @@ private func db(_ x: Float) -> Float { 20 * log10(x) }
     #expect(rig.render().left[10_000] == 0.5, "only the soloed track's send reaches the return; Other is silent")
 }
 
+@Test func soloingAGroupKeepsItsSources() {
+    var rig = Rig()
+    let a = rig.asset(seconds: 1) { _ in 0.5 }
+    let group = rig.track("Group", .group)
+    let kick = rig.track("Kick", output: group), other = rig.track("Other")
+    rig.clip(a, on: kick); rig.clip(a, on: other)
+    try! Command.setSolo(id: group, solo: true).apply(to: &rig.project)
+    #expect(rig.render().left[10_000] == 0.5, "the group sounds with its source; Other is silent")
+}
+
+@Test func soloingAReturnKeepsOnlyTheSendsIntoIt() {
+    var rig = Rig()
+    let a = rig.asset(seconds: 1) { _ in 0.5 }
+    let fx = rig.track("Return", .returnTrack)
+    let source = rig.track("Source")
+    rig.clip(a, on: source)
+    try! Command.setSends(id: source, sends: [Send(target: fx, levelDb: 0, preFader: false)]).apply(to: &rig.project)
+    try! Command.setSolo(id: fx, solo: true).apply(to: &rig.project)
+    #expect(rig.render().left[10_000] == 0.5, "the send reaches the return, the dry path to the master stays off")
+}
+
 @Test func monoSourcesPlayOnBothSides() {
     var rig = Rig()
     let a = rig.asset(seconds: 1, stereo: false) { _ in 0.4 }

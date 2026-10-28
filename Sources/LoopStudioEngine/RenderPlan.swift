@@ -146,8 +146,10 @@ public struct RenderPlan {
         let rate = project.sampleRate
         let map = project.tempoMap
 
-        // Which tracks are audible: solo keeps soloed tracks and everything they feed.
+        // Which tracks are audible: solo keeps soloed tracks and everything they feed. The tracks that feed a
+        // soloed group or return also play, but only into it ("feeders"): their other paths stay silent.
         var audible = Set(tracks.map(\.id))
+        var feeders = Set<TrackID>()
         let soloed = tracks.filter(\.solo).map(\.id)
         if !soloed.isEmpty {
             var reach = Set<TrackID>()
@@ -156,7 +158,20 @@ public struct RenderPlan {
                 guard reach.insert(id).inserted, let t = project.track(id) else { continue }
                 stack.append(contentsOf: Routing.feeds(of: t, in: project))
             }
-            audible = reach
+            var upstream = Set(soloed)
+            var grew = true
+            while grew {
+                grew = false
+                for t in tracks where !upstream.contains(t.id) && Routing.feeds(of: t, in: project).contains(where: upstream.contains) {
+                    upstream.insert(t.id); grew = true
+                }
+            }
+            feeders = upstream.subtracting(reach)
+            audible = reach.union(feeders)
+        }
+        /// A feeder keeps only the connections that lead to a soloed track.
+        func keeps(_ source: TrackID, _ target: TrackID) -> Bool {
+            !feeders.contains(source) || feeders.contains(target) || soloed.contains(target)
         }
 
         // Order: sources before targets (Kahn). Ties keep project order, so the plan is deterministic.
@@ -316,8 +331,8 @@ public struct RenderPlan {
             let (pl, pr) = balance(t.pan)
             nodes.append(NodePlan(
                 isMaster: false, clips: clips, gain: silent ? 0 : dB(t.volumeDb), panLeft: pl, panRight: pr,
-                output: t.isSendsOnly ? nil : (t.output.flatMap { index[$0] } ?? masterIndex),
-                sends: t.sends.compactMap { s in index[s.target].map {
+                output: t.isSendsOnly || !keeps(t.id, t.output ?? project.master.id) ? nil : (t.output.flatMap { index[$0] } ?? masterIndex),
+                sends: t.sends.filter { keeps(t.id, $0.target) }.compactMap { s in index[s.target].map {
                     SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader,
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
                 effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, midi: midi, sessionMidi: sessionMidi))
@@ -332,7 +347,7 @@ public struct RenderPlan {
                               volumeAuto: lane(project.master.id.rawValue, "volume"), panAuto: lane(project.master.id.rawValue, "pan")))
         // Input taps: a track that takes another track as input gets that track's sound, unless its monitor is off.
         for t in tracks {
-            guard let source = t.inputTrack, t.monitorMode != .off, let from = index[source], let to = index[t.id], from < to else { continue }
+            guard let source = t.inputTrack, t.monitorMode != .off, keeps(source, t.id), let from = index[source], let to = index[t.id], from < to else { continue }
             nodes[from].taps.append(to)
         }
         for i in nodes.indices {

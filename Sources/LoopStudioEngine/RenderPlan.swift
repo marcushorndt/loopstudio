@@ -28,6 +28,8 @@ struct AutoSegment {
     var bends: [Double?]
     /// From a session clip: its frames count on the session clock.
     var session = false
+    /// From an arrangement clip on a track the Session took over: the session frame from which it stays silent.
+    var cut: Int64? = nil
 
     func value(at f: Int64) -> Float {
         guard let first = frames.first, let last = frames.last else { return 0 }
@@ -53,6 +55,7 @@ struct AutoLane {
     func value(at f: Int64, sessionOffset: Int64 = 0) -> Float? {
         for s in segments.reversed() {
             let g = s.session ? f + sessionOffset : f
+            if let cut = s.cut, f + sessionOffset >= cut { continue }
             if g >= s.start && g < s.end { return s.value(at: g) }
         }
         return nil
@@ -231,6 +234,7 @@ public struct RenderPlan {
                 for lane in lanes {
                     if var seg = segment(lane.points, origin: cycle, start: a, end: b) {
                         seg.session = session
+                        if !session { seg.cut = arrangementEnds[owner.id] }
                         segments[lane.target, default: []].append(seg)
                     }
                 }

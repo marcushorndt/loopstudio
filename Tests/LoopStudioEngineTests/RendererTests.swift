@@ -485,3 +485,18 @@ private func raw(_ plan: RenderPlan, frames: Int, block: Int = 4096) -> [Float] 
     #expect(n == 512)
     #expect(abs(out[100] - l[100]) < 1e-6, "the recording is what the track sends to the master")
 }
+
+@Test func sessionTakeOverStopsTheArrangementClipAutomation() throws {
+    var rig = Rig()
+    let a = rig.asset(seconds: 4) { _ in 0.5 }
+    let t = rig.track("T")
+    rig.clip(a, on: t, lengthTick: 7_680)
+    let clip = rig.project.track(t)!.clips[0].id
+    try Command.setClipAutomation(clip: clip, target: ParameterAddress(node: ParameterAddress.ownTrack, parameter: "volume"),
+                                  points: [AutomationPoint(tick: 0, value: -12)]).apply(to: &rig.project)
+    let plan = RenderPlan.compile(rig.project, bank: rig.bank, arrangementEnds: [t: 48_000])
+    let lane = try #require(plan.nodes[0].volumeAuto)
+    #expect(lane.value(at: 24_000) == -12, "before the take-over the clip moves the volume")
+    #expect(lane.value(at: 72_000) == nil, "after it the clip automation stops")
+    #expect(lane.value(at: 24_000, sessionOffset: 48_000) == nil, "the cut counts on the session clock")
+}

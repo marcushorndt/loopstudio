@@ -44,9 +44,13 @@ struct TrackMenuItems: View {
 
     var body: some View {
         AppAction.renameTrack.button(model) { model.renameRequest = track.id }
-        AppAction.duplicateTrack.button(model) { model.duplicateTrack(track.id) }
-        // Only this track: a marked range on other tracks does not widen a right-click delete.
-        AppAction.deleteSelection.button(model, title: "Delete Track") { model.rangeSelection = nil; model.focusTrack(track.id); model.deleteFocusedTracks() }
+        // The master is always there, once: it cannot be duplicated, deleted, grouped or soloed.
+        let isMaster = track.kind == .master
+        if !isMaster {
+            AppAction.duplicateTrack.button(model) { model.duplicateTrack(track.id) }
+            // Only this track: a marked range on other tracks does not widen a right-click delete.
+            AppAction.deleteSelection.button(model, title: "Delete Track") { model.rangeSelection = nil; model.focusTrack(track.id); model.deleteFocusedTracks() }
+        }
         Divider()
         Menu("Color") {
             ForEach(0..<colorNames.count, id: \.self) { i in
@@ -54,8 +58,8 @@ struct TrackMenuItems: View {
             }
         }
         Button(track.mute ? "Unmute" : "Mute") { model.toggleMute(track) }
-        Button(track.solo ? "Unsolo" : "Solo") { model.toggleSolo(track) }
-        if track.kind != .master {
+        if !isMaster { Button(track.solo ? "Unsolo" : "Solo") { model.toggleSolo(track) } }
+        if !isMaster {
             Menu("Add Effect") {
                 ForEach(BuiltInEffects.all, id: \.id) { spec in Button(spec.name) { model.addEffect(spec.id, to: track.id) } }
             }
@@ -69,7 +73,7 @@ struct TrackMenuItems: View {
         Button("Clear Devices") { model.clearDevices(track.id) }.disabled(track.devices.isEmpty)
         Button("Clear Clips") { model.clearTrack(track.id) }.disabled(track.clips.isEmpty && track.slots.allSatisfy { $0 == nil })
         Divider()
-        AppAction.groupTracks.button(model) { model.selectedTrack = track.id; model.groupSelectedTracks() }
+        if !isMaster { AppAction.groupTracks.button(model) { model.selectedTrack = track.id; model.groupSelectedTracks() } }
         AppAction.insertAudioTrack.button(model)
         AppAction.insertMIDITrack.button(model)
         AppAction.insertReturnTrack.button(model)
@@ -207,7 +211,7 @@ struct SlotMenu: View {
             Button("Launch Scene \(row + 1)") { model.launchScene(row) }
         }
         Divider()
-        AppAction.insertScene.button(model, title: "Insert Scene Above") { model.insertScene(at: row) }
+        AppAction.insertScene.button(model, title: "Insert Scene Below") { model.insertScene(at: row + 1) }
         AppAction.duplicateScene.button(model, title: "Duplicate Scene") { model.duplicateScene(row) }
         AppAction.deleteScene.button(model, title: "Delete Scene") { model.deleteScene(row) }
     }
@@ -220,7 +224,7 @@ struct SceneMenu: View {
     var body: some View {
         Button("Launch Scene") { model.launchScene(row) }
         Divider()
-        AppAction.insertScene.button(model, title: "Insert Scene Above") { model.insertScene(at: row) }
+        AppAction.insertScene.button(model, title: "Insert Scene Below") { model.insertScene(at: row + 1) }
         AppAction.duplicateScene.button(model) { model.duplicateScene(row) }
         AppAction.deleteScene.button(model) { model.deleteScene(row) }
     }

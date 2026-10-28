@@ -324,6 +324,19 @@ private struct FollowEditor: View {
     let track: Track
     let row: Int
     let slot: SessionSlot
+    @State private var timeText = ""
+
+    private func timeString(_ f: FollowActions) -> String { MusicalLength.format(Tick(f.time.amount), ticksPerBar: model.barTicks) }
+
+    /// A time in ticks is typed as bars:beats:sixteenths, like the clip lengths.
+    private func commitTime(_ f: FollowActions) {
+        if let ticks = MusicalLength.parse(timeText, ticksPerBar: model.barTicks), ticks.rawValue >= Tick.perQuarter / 4 {
+            var s = slot; s.follow?.time.amount = ticks.rawValue; commit(s)
+        } else {
+            model.status = "Enter the time as bars:beats:sixteenths, for example 2:0:0"
+        }
+        timeText = timeString(f)
+    }
 
     private let kinds: [(FollowActionKind, String)] = [
         (.stop, "Stop"), (.replay, "Play Again"), (.next, "Next"), (.previous, "Previous"), (.topOfBlock, "Top of Block"),
@@ -363,8 +376,17 @@ private struct FollowEditor: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                 HStack {
                     Text("After")
-                    Stepper(value: Binding(get: { Int(f.time.amount) }, set: { var s = slot; s.follow?.time.amount = Int64($0); commit(s, key: "time") }), in: 1...64) {
-                        Text("\(f.time.amount)")
+                    if f.time.unit == .loops {
+                        Stepper(value: Binding(get: { Int(f.time.amount) }, set: { var s = slot; s.follow?.time.amount = Int64($0); commit(s, key: "time") }), in: 1...64) {
+                            Text("\(f.time.amount)")
+                        }
+                    } else {
+                        TextField("bars:beats:16ths", text: $timeText)
+                            .textFieldStyle(.roundedBorder).frame(width: 80)
+                            .onSubmit { commitTime(f) }
+                            .onAppear { timeText = timeString(f) }
+                            .onChange(of: f.time.amount) { timeText = timeString(f) }
+                            .hint("Time until the follow action, as bars:beats:sixteenths")
                     }
                     Picker("", selection: Binding(get: { f.time.unit }, set: { var s = slot; s.follow?.time = FollowTime($0, $0 == .loops ? 1 : Tick.perQuarter * 4); commit(s) })) {
                         Text("loops").tag(FollowTime.Unit.loops)

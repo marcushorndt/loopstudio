@@ -167,6 +167,10 @@ extension Project {
                 restore.append(.setLaunches(launches: launches))
                 launches.removeAll { $0.track == id }
             }
+            // Lanes that pointed at the track or its devices (a send to it, a dummy clip that drove it) go too.
+            let devices = Set(removed.devices.map(\.id.rawValue))
+            let send = "send.\(id.rawValue.uuidString)"
+            restore += dropLanes { $0.node == id.rawValue || devices.contains($0.node) || $0.parameter == send }
             return .batch(commands: restore)
 
         case .setTrackName(let id, let name):
@@ -501,11 +505,13 @@ extension Project {
             }
 
         case .removeDevice(let trackID, let id):
-            return try withTrack(trackID) { t in
+            let restore = try withTrack(trackID) { t -> Command in
                 guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
                 let removed = t.devices.remove(at: i)
                 return .insertDevice(track: trackID, device: removed, index: i)
             }
+            // Its automation goes with it, and comes back on undo.
+            return restore.then(dropLanes { $0.node == id.rawValue })
 
         case .moveDevice(let trackID, let id, let to):
             return try withTrack(trackID) { t in
@@ -613,6 +619,41 @@ extension Project {
             }
         }
         if Routing.hasCycle(self) { throw CommandError.wouldCreateCycle }
+    }
+}
+
+extension Command {
+    /// This command, then `more`, as one undo step.
+    func then(_ more: [Command]) -> Command { more.isEmpty ? self : .batch(commands: [self] + more) }
+}
+
+extension Project {
+    /// Removes every automation lane, on tracks and in clips, whose target matches. Returns the commands
+    /// that put the points back, so the removal undoes with the rest of the change.
+    mutating func dropLanes(_ match: (ParameterAddress) -> Bool) -> [Command] {
+        var restore: [Command] = []
+        for id in allTracks.map(\.id) {
+            try? withTrack(id) { t in
+                for lane in t.automation where match(lane.target) {
+                    restore.append(.setAutomation(track: id, target: lane.target, points: lane.points))
+                }
+                t.automation.removeAll { match($0.target) }
+                func clean(_ clip: inout Clip) {
+                    let gone = clip.lanes.filter { match($0.target) }
+                    guard !gone.isEmpty else { return }
+                    let command: (AutomationLane) -> Command = if case .dummy = clip {
+                        { [id = clip.id] in .setDummyAutomation(clip: id, target: $0.target, points: $0.points) }
+                    } else {
+                        { [id = clip.id] in .setClipAutomation(clip: id, target: $0.target, points: $0.points) }
+                    }
+                    restore += gone.map(command)
+                    clip.lanes.removeAll { match($0.target) }
+                }
+                for i in t.clips.indices { clean(&t.clips[i]) }
+                for i in t.slots.indices { if var slot = t.slots[i] { clean(&slot.clip); t.slots[i] = slot } }
+            }
+        }
+        return restore
     }
 }
 

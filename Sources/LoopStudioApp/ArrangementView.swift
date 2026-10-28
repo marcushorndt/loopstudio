@@ -10,7 +10,7 @@ struct ArrangementView: View {
     @State private var marquee: CGRect?
 
     var body: some View {
-        let tracks = model.project.tracks
+        let tracks = model.orderedTracks
         let bars = totalBars
         let width = CGFloat(Double(bars) * model.pixelsPerBar)
 

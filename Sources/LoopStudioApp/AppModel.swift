@@ -347,17 +347,24 @@ final class AppModel {
     static let automationRow: CGFloat = 76
 
     func rowHeight(_ track: Track) -> CGFloat { Self.clipRow + CGFloat(shownLanes(track).count) * Self.automationRow }
-    func rowTop(_ index: Int) -> CGFloat { project.tracks.prefix(index).reduce(0) { $0 + rowHeight($1) } }
-    var rowsHeight: CGFloat { max(Self.clipRow, project.tracks.reduce(0) { $0 + rowHeight($1) }) }
+    /// Tracks in the order the views show them: normal and group tracks, then the busses (returns).
+    /// The session keeps busses at the right edge, the arrangement keeps them at the bottom.
+    var orderedTracks: [Track] {
+        project.tracks.filter { $0.kind != .returnTrack } + project.tracks.filter { $0.kind == .returnTrack }
+    }
+
+    func rowTop(_ index: Int) -> CGFloat { orderedTracks.prefix(index).reduce(0) { $0 + rowHeight($1) } }
+    var rowsHeight: CGFloat { max(Self.clipRow, orderedTracks.reduce(0) { $0 + rowHeight($1) }) }
 
     /// The track row at a height measured from the top of the first row.
     func rowIndex(atY y: CGFloat) -> Int {
         var top: CGFloat = 0
-        for (i, t) in project.tracks.enumerated() {
+        let tracks = orderedTracks
+        for (i, t) in tracks.enumerated() {
             top += rowHeight(t)
             if y < top { return i }
         }
-        return max(0, project.tracks.count - 1)
+        return max(0, tracks.count - 1)
     }
 
     /// Double-click on a track: select it and show it in the inspector.
@@ -460,7 +467,7 @@ final class AppModel {
     /// Moves every clip in `ids` by the same time and track offset, as one undo step.
     func moveClips(_ ids: [ClipID], deltaTicks: Int64, trackShift: Int) {
         var commands: [Command] = []
-        let tracks = project.tracks
+        let tracks = orderedTracks
         for id in ids {
             guard let (trackID, clip) = project.findClip(id), let from = tracks.firstIndex(where: { $0.id == trackID }),
                   tracks[from].clips.contains(where: { $0.id == id }) else { continue }

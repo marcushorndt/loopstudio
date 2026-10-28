@@ -97,7 +97,7 @@ extension AppModel {
 
     /// Arrow keys. Session view moves through slots; arrangement view moves between tracks.
     func moveSelection(rows: Int, tracks: Int) {
-        let columns = project.tracks
+        let columns = orderedTracks
         guard !columns.isEmpty else { return }
         let current = selectedTrack.flatMap { id in columns.firstIndex { $0.id == id } } ?? 0
         let column = min(max(current + tracks + (viewMode == .arrangement ? rows : 0), 0), columns.count - 1)
@@ -137,10 +137,11 @@ extension AppModel {
 
     func copySelection() {
         var found: [(Int, Clip)] = []
-        for (i, t) in project.tracks.enumerated() {
+        let ordered = orderedTracks
+        for (i, t) in ordered.enumerated() {
             for c in t.clips where selectedClips.contains(c.id) { found.append((i, c)) }
         }
-        if found.isEmpty, let id = selectedClip, let (tid, clip) = project.findClip(id), let i = project.tracks.firstIndex(where: { $0.id == tid }) {
+        if found.isEmpty, let id = selectedClip, let (tid, clip) = project.findClip(id), let i = ordered.firstIndex(where: { $0.id == tid }) {
             found.append((i, clip))
         }
         let slots: [ClipID: SessionSlot] = Dictionary(uniqueKeysWithValues: project.tracks.flatMap { $0.slots.compactMap { $0 } }.map { ($0.clip.id, $0) })
@@ -155,12 +156,13 @@ extension AppModel {
     func pasteClipboard() {
         guard !clipboard.isEmpty else { return }
         if viewMode == .session { pasteIntoSlots(); return }
-        let base = selectedTrack.flatMap { id in project.tracks.firstIndex { $0.id == id } } ?? 0
+        let ordered = orderedTracks
+        let base = selectedTrack.flatMap { id in ordered.firstIndex { $0.id == id } } ?? 0
         var commands: [Command] = [], pasted: [ClipID] = []
         for item in clipboard {
             let index = base + item.trackOffset
-            guard project.tracks.indices.contains(index) else { continue }
-            let track = project.tracks[index]
+            guard ordered.indices.contains(index) else { continue }
+            let track = ordered[index]
             let clip = fresh(item.clip, start: Tick(snap(currentTick).rawValue + item.startOffset))
             guard fits(clip, track.kind) else { continue }
             commands.append(.insertClip(track: track.id, clip: clip))
@@ -174,13 +176,14 @@ extension AppModel {
 
     /// Session view: puts the copied clips into the selected slot and the slots to its right, same row.
     private func pasteIntoSlots() {
-        let base = selectedTrack.flatMap { id in project.tracks.firstIndex { $0.id == id } } ?? 0
+        let ordered = orderedTracks
+        let base = selectedTrack.flatMap { id in ordered.firstIndex { $0.id == id } } ?? 0
         let row = selectedRow ?? 0
         var commands: [Command] = []
         for item in clipboard {
             let index = base + item.trackOffset
-            guard project.tracks.indices.contains(index) else { continue }
-            let track = project.tracks[index]
+            guard ordered.indices.contains(index) else { continue }
+            let track = ordered[index]
             let clip = fresh(item.clip, start: 0)
             guard fits(clip, track.kind) else { continue }
             var slot = item.slot ?? SessionSlot(clip: clip)

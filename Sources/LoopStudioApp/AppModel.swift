@@ -53,6 +53,14 @@ final class AppModel {
     var detailOpen = true
     /// The computer keyboard plays the selected MIDI track.
     var keyboardMIDI = false
+    /// Name of the active colour theme, kept per Mac. Changing it repaints the whole window.
+    var themeName: String = UserDefaults.standard.string(forKey: "theme") ?? ThemePalette.zincDark.name {
+        didSet {
+            UserDefaults.standard.set(themeName, forKey: "theme")
+            Theme.palette = ThemePalette.named(UserDefaults.standard.string(forKey: "theme"))
+        }
+    }
+    var isLightTheme: Bool { themeName == ThemePalette.zincLight.name }
     var keyboardOctave = 3
     var keyboardVelocity = 100
     var detailTab: DetailTab = .clip
@@ -140,6 +148,7 @@ final class AppModel {
         .appendingPathComponent("LoopStudio Projects", isDirectory: true)
 
     init() {
+        Theme.palette = ThemePalette.named(UserDefaults.standard.string(forKey: "theme"))
         let url = Self.projectsFolder.appendingPathComponent("Demo Set.loopstudio")
         let initial = Project(name: "Demo Set")
         project = initial
@@ -486,6 +495,19 @@ final class AppModel {
         guard transportPlaying else { return }
         performance.append(Launch(track: track, slot: nil, tick: project.barBoundary(atOrAfter: currentTick)))
         rebuild()
+    }
+
+    /// Stop button of a track, a bus or the master.
+    func stopClips(of track: Track) {
+        switch track.kind {
+        case .master: stopAllClips()
+        case .returnTrack, .group:
+            guard transportPlaying else { return }
+            let at = project.barBoundary(atOrAfter: currentTick)
+            for t in project.tracks where t.output == track.id && !t.slots.isEmpty { performance.append(Launch(track: t.id, slot: nil, tick: at)) }
+            rebuild()
+        default: stopTrack(track.id)
+        }
     }
 
     func stopAllClips() {

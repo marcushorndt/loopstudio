@@ -36,6 +36,24 @@ struct SessionView: View {
                 }
                 .padding(.horizontal, 6).padding(.top, 6)
             }
+            // Stop buttons stay in view under the slots: tracks, busses and the master.
+            HStack(alignment: .top, spacing: gap) {
+                ScrollView(.horizontal) {
+                    HStack(spacing: gap) {
+                        ForEach(tracks, id: \.id) { StopButton(track: $0, width: columnWidth) }
+                        Color.clear.frame(width: columnWidth * 0.6)
+                    }
+                }
+                .scrollPosition($scrollX)
+                .scrollIndicators(.hidden)
+                .scrollDisabled(true)
+                .frame(height: slotHeight)
+                HStack(spacing: gap) {
+                    ForEach(busses, id: \.id) { StopButton(track: $0, width: columnWidth) }
+                    StopButton(track: model.project.master, width: sceneWidth + 36)
+                }
+            }
+            .padding(.horizontal, 6)
             // The mixer sits under the slots and lines up with the tracks above it.
             HStack(alignment: .bottom, spacing: gap) {
                 ScrollView(.horizontal) {
@@ -70,12 +88,6 @@ private struct TrackColumn: View {
                 Text("Return").font(.caption).foregroundStyle(Theme.dim).frame(height: slotHeight)
             } else {
             ForEach(0..<rows, id: \.self) { row in SlotCell(track: track, row: row) }
-            Button { model.stopTrack(track.id) } label: {
-                Image(systemName: "stop.fill").font(.system(size: 9)).foregroundStyle(Theme.dim)
-                    .frame(maxWidth: .infinity, minHeight: slotHeight)
-                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 3))
-            }
-            .buttonStyle(.plain).help("Stop this track's clip at the next bar")
             }
         }
         .frame(width: columnWidth)
@@ -84,13 +96,16 @@ private struct TrackColumn: View {
     private var header: some View {
         let selected = model.selectedTrack == track.id
         return HStack(spacing: 4) {
-            Text(track.name).lineLimit(1).font(.system(size: 12, weight: .semibold))
+            Text(track.name).lineLimit(1).font(.system(size: 12, weight: .medium)).padding(.leading, 4)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 6).frame(height: 30)
-        .foregroundStyle(.black)
-        .background(Theme.track(track.colorIndex), in: RoundedRectangle(cornerRadius: 3))
-        .overlay(RoundedRectangle(cornerRadius: 3).stroke(.white, lineWidth: selected ? 1.5 : 0))
+        .padding(.horizontal, 8).frame(height: 30)
+        .foregroundStyle(Theme.text)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius))
+        .overlay(alignment: .leading) {
+            Capsule().fill(Theme.track(track.colorIndex)).frame(width: 3).padding(.vertical, 7).padding(.leading, 2)
+        }
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text.opacity(0.7) : Theme.line, lineWidth: 1))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
         .onTapGesture { model.selectedTrack = track.id }
@@ -98,6 +113,25 @@ private struct TrackColumn: View {
             return model.dropDevices(items, on: track.id)
         }
         .contextMenu { TrackMenuItems(track: track) }
+    }
+}
+
+/// Stops the clips of a track at the next bar. A bus stops every track that feeds it; the master stops all clips.
+private struct StopButton: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+    let width: CGFloat
+
+    var body: some View {
+        Button { model.stopClips(of: track) } label: {
+            Image(systemName: "stop.fill").font(.system(size: 9)).foregroundStyle(Theme.dim)
+                .frame(maxWidth: .infinity, minHeight: slotHeight)
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .frame(width: width)
+        .help(track.kind == .master ? "Stop all clips" : (track.kind == .returnTrack ? "Stop every track that feeds this bus" : "Stop this track's clip at the next bar"))
     }
 }
 
@@ -123,9 +157,9 @@ private struct SlotCell: View {
             HStack(spacing: 0) {
                 Button { model.launch(track: track.id, row: row) } label: {
                     Image(systemName: icon(state)).font(.system(size: 11))
-                        .foregroundStyle(isPlaying(state) ? Theme.play : .black.opacity(0.7))
+                        .foregroundStyle(isPlaying(state) ? Theme.play : tint)
                         .frame(width: 26, height: slotHeight)
-                        .background(isPlaying(state) ? Color.black.opacity(0.75) : .black.opacity(0.12))
+                        .background(isPlaying(state) ? Theme.background.opacity(0.7) : Color.clear)
                 }
                 .buttonStyle(.plain)
                 HStack {
@@ -137,18 +171,19 @@ private struct SlotCell: View {
                 .contentShape(Rectangle())
                 .onTapGesture { model.selectedClip = slot.clip.id; model.selectedTrack = track.id }
             }
-            .foregroundStyle(.black.opacity(0.85))
+            .foregroundStyle(Theme.onTint)
             .background(alignment: .leading) {
                 GeometryReader { geo in
-                    Rectangle().fill(isPlaying(state) ? tint : tint.opacity(0.62))
+                    Rectangle().fill(Theme.panel)
+                    Rectangle().fill(Theme.clipBody(slot.clip.colorIndex ?? track.colorIndex, active: isPlaying(state)))
                     if case .dummy(let d) = slot.clip { MiniCurves(clip: d).padding(.leading, 26).padding(.vertical, 2) }
                     if case .playing(let p) = state {
-                        Rectangle().fill(.white.opacity(0.35)).frame(width: geo.size.width * p)
+                        Rectangle().fill(tint.opacity(0.35)).frame(width: geo.size.width * p)
                     }
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3).stroke(state.isQueued && blink ? Theme.accent : (selected ? .white : .clear), lineWidth: 1.5))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(state.isQueued && blink ? Theme.accent : (selected ? Theme.text : tint.opacity(0.5)), lineWidth: selected || state.isQueued ? 1.5 : 1))
             .frame(height: slotHeight)
             .contextMenu { SlotMenu(track: track, row: row) }
         } else {
@@ -157,7 +192,7 @@ private struct SlotCell: View {
             } label: {
                 Image(systemName: track.kind == .midi ? "plus" : "stop.fill").font(.system(size: 8)).foregroundStyle(Theme.dim.opacity(0.5))
                     .frame(maxWidth: .infinity, minHeight: slotHeight)
-                    .background(Theme.panel.opacity(0.7), in: RoundedRectangle(cornerRadius: 3))
+                    .background(Theme.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
             }
 .buttonStyle(.plain)
             .contextMenu { SlotMenu(track: track, row: row) }

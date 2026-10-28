@@ -93,9 +93,9 @@ private struct ArrangementHeader: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 HStack(spacing: 4) {
-                    pill("S", on: track.solo, tint: Color(red: 0.4, green: 0.65, blue: 1)) { model.apply(.setSolo(id: track.id, solo: !track.solo)) }
+                    pill("S", on: track.solo, tint: Theme.track(5)) { model.apply(.setSolo(id: track.id, solo: !track.solo)) }
                     pill("M", on: track.mute, tint: Theme.accent) { model.apply(.setMute(id: track.id, mute: !track.mute)) }
-                    pill("A", on: !model.shownLanes(track).isEmpty, tint: Color(red: 0.95, green: 0.35, blue: 0.35)) { model.toggleAutomation(track) }
+                    pill("A", on: !model.shownLanes(track).isEmpty, tint: Theme.track(0)) { model.toggleAutomation(track) }
                         .help("Show automation")
                 }
             }
@@ -117,8 +117,9 @@ private struct ArrangementHeader: View {
     private func pill(_ label: String, on: Bool, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label).font(.system(size: 10, weight: .bold)).frame(width: 24, height: 18)
-                .foregroundStyle(on ? .black : Theme.dim)
-                .background(on ? tint : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 3))
+                .foregroundStyle(on ? tint : Theme.dim)
+                .background(on ? tint.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(on ? tint.opacity(0.55) : Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -184,7 +185,8 @@ private struct Lane: View {
             }
         }
         .frame(width: width, height: model.rowHeight(track), alignment: .topLeading)
-        .background(index % 2 == 0 ? Theme.background : Color(white: 0.145))
+        .background(Theme.background)
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .contentShape(Rectangle())
         .onTapGesture { model.selectedTrack = track.id; model.clearSelection() }
@@ -216,19 +218,19 @@ private struct ArrangementClip: View {
         let w = max(6, tickX(clip.length, model) + resize)
         let selected = model.selectedClips.contains(clip.id) || model.selectedClip == clip.id
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 4).fill(tint.opacity(0.75))
+            RoundedRectangle(cornerRadius: 5).fill(Theme.clipBody(clip.colorIndex ?? track.colorIndex))
             if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                 let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
-                WaveformView(peaks: peaks, color: .black.opacity(0.55), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
+                WaveformView(peaks: peaks, color: tint.opacity(0.9), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
                     .padding(.top, 16).padding(.bottom, 3)
             }
             if case .dummy(let d) = clip { MiniCurves(clip: d).padding(.top, 16).padding(.bottom, 3).padding(.horizontal, 2) }
             if case .midi(let m) = clip { MiniNotes(clip: m).padding(.top, 16).padding(.bottom, 3).padding(.horizontal, 2) }
-            Text(model.clipName(clip)).font(.system(size: 10, weight: .semibold)).foregroundStyle(.black.opacity(0.85))
-                .padding(.horizontal, 5).padding(.top, 2).lineLimit(1)
+            Text(model.clipName(clip)).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.onTint)
+                .padding(.horizontal, 6).padding(.top, 3).lineLimit(1)
         }
         .frame(width: w, height: laneHeight - 6)
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(selected ? .white : .black.opacity(0.4), lineWidth: selected ? 1.5 : 1))
+        .overlay(RoundedRectangle(cornerRadius: 5).stroke(selected ? Theme.text : tint.opacity(0.55), lineWidth: selected ? 1.5 : 1))
         .overlay(alignment: .trailing) {
             Rectangle().fill(.clear).frame(width: 8).contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 1)
@@ -338,7 +340,7 @@ private struct MiniNotes: View {
                 let x = CGFloat(Double(n.tick.rawValue) / Double(max(1, clip.length.rawValue))) * size.width
                 let w = max(2, CGFloat(Double(n.length.rawValue) / Double(max(1, clip.length.rawValue))) * size.width)
                 let y = CGFloat(Int(hi) - Int(n.pitch)) * rowH
-                ctx.fill(Path(CGRect(x: x, y: y, width: w, height: max(1.5, rowH - 0.5))), with: .color(.black.opacity(0.6)))
+                ctx.fill(Path(CGRect(x: x, y: y, width: w, height: max(1.5, rowH - 0.5))), with: .color(Theme.text.opacity(0.75)))
             }
         }
     }
@@ -362,7 +364,7 @@ struct MiniCurves: View {
                     let pt = CGPoint(x: CGFloat(t) * size.width, y: size.height * (1 - CGFloat(target.position(v))))
                     if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
                 }
-                ctx.stroke(path, with: .color(.black.opacity(0.65)), lineWidth: 1.3)
+                ctx.stroke(path, with: .color(Theme.text.opacity(0.8)), lineWidth: 1.3)
             }
         }
     }

@@ -42,7 +42,7 @@ struct Fader: View {
             ZStack(alignment: .top) {
                 Capsule().fill(Color.black.opacity(0.6)).frame(width: 4).frame(maxWidth: .infinity)
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(LinearGradient(colors: [Color(white: 0.85), Color(white: 0.6)], startPoint: .top, endPoint: .bottom))
+                    .fill(LinearGradient(colors: [Theme.text.opacity(0.95), Theme.text.opacity(0.75)], startPoint: .top, endPoint: .bottom))
                     .overlay(Rectangle().fill(.black.opacity(0.7)).frame(height: 1))
                     .frame(width: 26, height: 14)
                     .offset(y: min(max(0, y - 7), h - 14))
@@ -98,7 +98,7 @@ struct MixerStrip: View {
 
             if !isMaster {
                 HStack(spacing: 4) {
-                    toggle("S", on: track.solo, tint: Color(red: 0.4, green: 0.65, blue: 1)) {
+                    toggle("S", on: track.solo, tint: Theme.track(5)) {
                         model.apply(.setSolo(id: track.id, solo: !track.solo))
                     }
                     toggle("M", on: !track.mute, tint: Theme.accent, invert: true) {
@@ -109,7 +109,8 @@ struct MixerStrip: View {
         }
         .padding(6)
         .frame(width: width)
-        .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: 4))
+        .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(model.selectedTrack == track.id ? Theme.text.opacity(0.35) : Theme.line, lineWidth: 1))
         .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
         .onTapGesture { model.selectedTrack = track.id }
         .contextMenu {
@@ -129,8 +130,9 @@ struct MixerStrip: View {
     private func toggle(_ label: String, on: Bool, tint: Color, invert: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label).font(.system(size: 11, weight: .bold)).frame(width: 34, height: 22)
-                .foregroundStyle(on ? .black : Theme.dim)
-                .background(on ? tint : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 3))
+                .foregroundStyle(on ? tint : Theme.dim)
+                .background(on ? tint.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(on ? tint.opacity(0.55) : Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }

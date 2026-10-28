@@ -16,7 +16,9 @@ struct LoopStudioApp: App {
         WindowGroup("LoopStudio") {
             RootView()
                 .environment(model)
-                .preferredColorScheme(.dark)
+                .id(model.themeName)
+                .tint(Theme.accent)
+                .preferredColorScheme(model.isLightTheme ? .light : .dark)
                 .frame(minWidth: 1320, minHeight: 700)
         }
         .defaultSize(width: 1500, height: 940)
@@ -69,13 +71,18 @@ struct LoopStudioApp: App {
                 AppAction.switchView.button(model)
                 AppAction.toggleDetail.button(model)
             }
+            CommandGroup(after: .toolbar) {
+                Picker("Theme", selection: Bindable(model).themeName) {
+                    ForEach(ThemePalette.all, id: \.name) { Text($0.name).tag($0.name) }
+                }
+            }
             CommandGroup(replacing: .help) {
                 AppAction.showShortcuts.button(model)
             }
         }
 
         Settings {
-            AudioSettingsView().environment(model).preferredColorScheme(.dark)
+            AudioSettingsView().environment(model).preferredColorScheme(model.isLightTheme ? .light : .dark)
         }
     }
 }

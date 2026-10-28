@@ -9,6 +9,8 @@ struct RootView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
+                .background(Theme.panel)
+                .scrollContentBackground(.hidden)
                 .navigationSplitViewColumnWidth(min: 240, ideal: 290, max: 440)
         } detail: {
             VStack(spacing: 0) {
@@ -130,6 +132,7 @@ struct TransportBar: View {
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Theme.panel)
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
     }
 
     private var tempoField: some View {
@@ -148,10 +151,11 @@ struct TransportBar: View {
 
     private func tile(_ symbol: String, on: Bool, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 14, weight: .semibold))
-                .frame(width: 34, height: 30)
-                .foregroundStyle(on ? Color.black : tint)
-                .background(on ? tint : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 5))
+            Image(systemName: symbol).font(.system(size: 13, weight: .medium))
+                .frame(width: 32, height: 28)
+                .foregroundStyle(on ? tint : Theme.text.opacity(0.85))
+                .background(on ? tint.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.5) : Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }

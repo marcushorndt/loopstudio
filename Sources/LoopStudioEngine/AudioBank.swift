@@ -35,6 +35,9 @@ public final class AudioBank: @unchecked Sendable {
     private var buffers: [AssetID: PCMBuffer] = [:]
     private let warpLock = NSLock()
     private var warped: [String: PCMBuffer] = [:]
+    /// When each warp was last asked for, so the eviction drops the oldest.
+    private var used: [String: UInt64] = [:]
+    private var clock: UInt64 = 0
     /// The last warped buffer each clip played. It stands in while the new one is made.
     private var lastWarp: [ClipID: PCMBuffer] = [:]
     private var pending: [String: WarpJob] = [:]
@@ -66,7 +69,7 @@ public final class AudioBank: @unchecked Sendable {
             return made
         }
         warpLock.lock(); defer { warpLock.unlock() }
-        if let hit = warped[key] { lastWarp[clip] = hit; return hit }
+        if let hit = warped[key] { touch(key); lastWarp[clip] = hit; return hit }
         if pending[key] == nil { pending[key] = WarpJob(key: key, make: make) }
         return lastWarp[clip] ?? fallback
     }
@@ -85,16 +88,23 @@ public final class AudioBank: @unchecked Sendable {
     /// A stretched copy of a clip's audio. Stretching is slow, so each result is made once per key.
     public func warped(key: String, make: () -> PCMBuffer) -> PCMBuffer {
         warpLock.lock()
-        if let hit = warped[key] { warpLock.unlock(); return hit }
+        if let hit = warped[key] { touch(key); warpLock.unlock(); return hit }
         warpLock.unlock()
         let made = make()
         warpLock.lock()
         warped[key] = made
-        // A plain bound; edits make old keys useless anyway. Half goes, so the warps of one plan stay together.
-        if warped.count > 256 { for old in warped.keys.prefix(128) where old != key { warped[old] = nil } }
+        touch(key)
+        // Edits make old keys useless. The oldest half goes, so the warps the latest plans use stay.
+        if warped.count > 256 {
+            for old in used.sorted(by: { $0.value < $1.value }).prefix(128).map(\.key) { warped[old] = nil; used[old] = nil }
+        }
+        if lastWarp.count > 1_024 { lastWarp = [:] }
         warpLock.unlock()
         return made
     }
+
+    /// Call with `warpLock` held.
+    private func touch(_ key: String) { clock += 1; used[key] = clock }
 
     public struct LoadResult {
         public var bank: AudioBank

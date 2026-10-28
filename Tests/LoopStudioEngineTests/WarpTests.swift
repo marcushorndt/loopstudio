@@ -196,3 +196,18 @@ private func frequency(_ x: UnsafePointer<Float>, from: Int, count: Int) -> Doub
     let at60 = RenderPlan.compile(project, bank: bank).nodes[0].clips[0].pcm.frames
     #expect(abs(Double(at60) - 2 * Double(at120)) < rate * 0.01, "half the tempo, twice the length")
 }
+
+@Test func theCacheDropsTheOldestWarps() {
+    let bank = AudioBank()
+    let small = PCMBuffer(samples: [[0]], sampleRate: rate)
+    var made = 0
+    let make = { () -> PCMBuffer in made += 1; return small }
+    for i in 0..<256 { _ = bank.warped(key: "k\(i)", make: make) }
+    _ = bank.warped(key: "k0", make: make)          // k0 is new again
+    _ = bank.warped(key: "k256", make: make)        // the bound evicts the oldest half
+    made = 0
+    _ = bank.warped(key: "k0", make: make)
+    #expect(made == 0, "a warp in use stays")
+    _ = bank.warped(key: "k1", make: make)
+    #expect(made == 1, "an old warp goes")
+}

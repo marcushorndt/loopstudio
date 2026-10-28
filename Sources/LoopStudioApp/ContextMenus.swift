@@ -45,7 +45,7 @@ struct TrackMenuItems: View {
     var body: some View {
         AppAction.renameTrack.button(model) { model.renameRequest = track.id }
         AppAction.duplicateTrack.button(model) { model.duplicateTrack(track.id) }
-        Button("Delete Track", role: .destructive) { model.removeTrack(track.id) }
+        AppAction.deleteSelection.button(model, title: "Delete Track") { model.focusTrack(track.id); model.deleteFocusedTracks() }
         Divider()
         Menu("Color") {
             ForEach(0..<colorNames.count, id: \.self) { i in

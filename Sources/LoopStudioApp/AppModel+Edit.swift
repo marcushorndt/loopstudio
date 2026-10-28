@@ -27,7 +27,8 @@ extension AppModel {
         switch action {
         case .undo: canUndo
         case .redo: canRedo
-        case .cut, .copy, .deleteSelection, .duplicate: !selectedClips.isEmpty || selectedClip != nil
+        case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil)
+        case .cut, .copy, .duplicate: !selectedClips.isEmpty || selectedClip != nil
         case .paste: !clipboard.isEmpty
         case .backToArrangement, .captureSession: arrangementOverridden
         case .renameTrack: selectedTrack != nil || selectedClip != nil

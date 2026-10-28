@@ -120,7 +120,7 @@ private struct ArrangementHeader: View {
         .overlay(alignment: .bottom) { AutomationLabels(track: track) }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
-        .onTapGesture { model.selectedTrack = track.id }
+        .onTapGesture { model.focusTrack(track.id) }
         .contextMenu {
             if track.kind == .master { AutomationLanesMenu(track: track) } else { TrackMenuItems(track: track, showsAutomation: true) }
         }

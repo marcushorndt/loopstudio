@@ -60,6 +60,8 @@ struct Fader: View {
 struct MixerStrip: View {
     /// Room for Audio From, the monitor buttons and Audio To.
     static let ioHeight: CGFloat = 92
+    /// The send knobs: rows of four, each 42 points high.
+    static func sendsHeight(_ returns: Int) -> CGFloat { returns == 0 ? 0 : CGFloat((returns + 3) / 4) * 46 - 4 }
     @Environment(AppModel.self) private var model
     let track: Track
     let isMaster: Bool
@@ -74,22 +76,17 @@ struct MixerStrip: View {
 
             // Every strip has the same rows at the same heights, so faders line up across the mixer.
             let returns = model.project.tracks.filter { $0.kind == .returnTrack }
-            VStack(spacing: 4) {
+            // The sends as knobs, like Live: one per return track, four to a row.
+            HStack(alignment: .top, spacing: 0) {
                 if !isMaster && track.kind != .returnTrack {
-                    ForEach(returns, id: \.id) { ret in
-                        HStack(spacing: 4) {
-                            Text(String(ret.name.prefix(1))).font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.track(ret.colorIndex))
-                            Slider(value: Binding(
-                                get: { (model.sendLevel(track, to: ret.id) + 48) / 48 },
-                                set: { model.setSend(from: track, to: ret.id, db: $0 <= 0.01 ? -96 : -48 + 48 * $0) }), in: 0...1)
-                                .controlSize(.mini)
-                        }
-                        .frame(height: 16)
-                        .help("Send to \(ret.name)")
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(36), spacing: 4), count: min(4, max(1, returns.count))),
+                              alignment: .leading, spacing: 4) {
+                        ForEach(returns, id: \.id) { ret in SendKnob(track: track, ret: ret) }
                     }
                 }
+                Spacer(minLength: 0)
             }
-            .frame(height: CGFloat(returns.count) * 20, alignment: .top)
+            .frame(height: Self.sendsHeight(returns.count), alignment: .top)
 
             Group {
                 if isMaster {
@@ -129,7 +126,7 @@ struct MixerStrip: View {
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius))
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(model.selectedTrack == track.id ? Theme.text.opacity(0.35) : Theme.line, lineWidth: 1))
         .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
-        .onTapGesture { model.selectedTrack = track.id }
+        .onTapGesture { model.focusTrack(track.id) }
         .contextMenu {
             Button("Reset Volume to 0 dB") { model.apply(.setVolume(id: track.id, db: 0)) }
             Button("Center Pan") { model.apply(.setPan(id: track.id, pan: 0)) }
@@ -159,6 +156,53 @@ struct MixerStrip: View {
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.55) : Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// One send as a small knob in the colour of its return track. Drag up or down; double-click turns it off.
+struct SendKnob: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+    let ret: Track
+    @State private var start: Double?
+
+    /// -48 dB to 0 dB over the knob; the bottom is off.
+    private var position: Double { (model.sendLevel(track, to: ret.id) + 48) / 48 }
+    private var address: ParameterAddress { ParameterAddress(node: track.id.rawValue, parameter: "send.\(ret.id.rawValue.uuidString)") }
+
+    private func set(_ p: Double) {
+        let q = min(max(p, 0), 1)
+        model.setSend(from: track, to: ret.id, db: q <= 0.01 ? -96 : -48 + 48 * q)
+    }
+
+    var body: some View {
+        let db = model.sendLevel(track, to: ret.id)
+        VStack(spacing: 1) {
+            KnobDial(position: max(0, min(1, position)), tint: Theme.track(ret.colorIndex), lineWidth: 3)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        if start == nil { start = max(0, min(1, position)) }
+                        set((start ?? 0) - Double(g.translation.height) / 140)
+                    }
+                    .onEnded { _ in start = nil })
+                .simultaneousGesture(TapGesture(count: 2).onEnded { set(0) })
+            Text(start != nil ? (db <= -47.5 ? "-inf" : String(format: "%.0f", db)) : String(ret.name.prefix(1)))
+                .font(.system(size: 9, weight: .bold, design: start != nil ? .monospaced : .default))
+                .foregroundStyle(start != nil ? Theme.text : Theme.track(ret.colorIndex))
+                .lineLimit(1)
+        }
+        .frame(width: 36)
+        .help("Send to \(ret.name): \(db <= -47.5 ? "off" : String(format: "%.1f dB", db))")
+        .contextMenu {
+            Button("Send Off") { set(0) }
+            Button("Send at 0 dB") { set(1) }
+            Divider()
+            Button(model.isLaneShown(track, address) ? "Hide Send Automation" : "Show Send Automation") {
+                model.toggleLaneAndReveal(track, address)
+            }
+        }
     }
 }
 

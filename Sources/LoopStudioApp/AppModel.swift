@@ -95,7 +95,11 @@ final class AppModel {
         }
     }
     /// All marked clips. `selectedClip` is the one the clip panel shows.
-    var selectedClips: Set<ClipID> = []
+    var selectedClips: Set<ClipID> = [] {
+        didSet { if !selectedClips.isEmpty { trackFocused = false } }
+    }
+    /// The last click selected a track (its header or its mixer strip), not a clip. Delete then removes the track.
+    var trackFocused = false
     var rangeSelection: RangeSelection?
     var clipboard: [ClipboardItem] = []
     /// Record is prepared with R. Space then starts it.
@@ -807,6 +811,7 @@ final class AppModel {
     }
 
     func deleteSelected() {
+        if trackFocused { deleteFocusedTracks(); return }
         var commands: [Command] = []
         for id in selectedClips.isEmpty ? Set(selectedClip.map { [$0] } ?? []) : selectedClips {
             guard let (track, clip) = project.findClip(id) else { continue }
@@ -820,6 +825,28 @@ final class AppModel {
     }
 
     func removeTrack(_ id: TrackID) { apply(.removeTrack(id: id)) }
+
+    /// A click on a track header or a mixer strip: the track is selected and the clips are not.
+    func focusTrack(_ id: TrackID) {
+        selectedTrack = id
+        selectedClip = nil
+        selectedClips = []
+        trackFocused = true
+    }
+
+    /// Removes the marked tracks, or the selected one, and selects the track that takes its place.
+    func deleteFocusedTracks() {
+        guard let id = selectedTrack, project.track(id)?.kind != .master else { return }
+        let marked = rangeSelection?.tracks.contains(id) == true ? rangeSelection!.tracks : [id]
+        let doomed = project.tracks.filter { marked.contains($0.id) && $0.kind != .master }
+        guard let first = project.tracks.firstIndex(where: { marked.contains($0.id) }), !doomed.isEmpty else { return }
+        apply(.batch(commands: doomed.map { .removeTrack(id: $0.id) }))
+        rangeSelection = nil
+        let left = project.tracks.filter { $0.kind != .master }
+        selectedTrack = left.isEmpty ? nil : left[min(first, left.count - 1)].id
+        trackFocused = selectedTrack != nil
+        status = doomed.count == 1 ? "Deleted track \(doomed[0].name)" : "Deleted \(doomed.count) tracks"
+    }
 
     // MARK: Plugins
 

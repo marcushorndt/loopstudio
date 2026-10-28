@@ -106,7 +106,7 @@ private struct TrackColumn: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text.opacity(0.7) : Theme.line, lineWidth: 1))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
-        .onTapGesture { model.selectedTrack = track.id }
+        .onTapGesture { model.focusTrack(track.id) }
         .dropDestination(for: String.self) { items, _ in
             return model.dropDevices(items, on: track.id)
         }

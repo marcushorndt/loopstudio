@@ -37,21 +37,7 @@ struct Knob: View {
                 OnOffSwitch(on: value >= 0.5, tint: tint) { onChange(value >= 0.5 ? 0 : 1) }
                     .frame(width: 44, height: 44)
             } else if rotary {
-                ZStack {
-                    Canvas { ctx, size in
-                        let r = min(size.width, size.height) / 2 - 3
-                        let c = CGPoint(x: size.width / 2, y: size.height / 2)
-                        let from = Angle.degrees(135), span = 270.0
-                        var track = Path(); track.addArc(center: c, radius: r, startAngle: from, endAngle: .degrees(135 + span), clockwise: false)
-                        ctx.stroke(track, with: .color(.black.opacity(0.55)), style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                        let p = param.position(value)
-                        var arc = Path(); arc.addArc(center: c, radius: r, startAngle: from, endAngle: .degrees(135 + span * p), clockwise: false)
-                        ctx.stroke(arc, with: .color(tint), style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                        let a = Angle.degrees(135 + span * p).radians
-                        var needle = Path(); needle.move(to: c); needle.addLine(to: CGPoint(x: c.x + cos(a) * (r - 6), y: c.y + sin(a) * (r - 6)))
-                        ctx.stroke(needle, with: .color(.white), style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    }
-                }
+                KnobDial(position: param.position(value), tint: tint)
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0)
@@ -91,6 +77,28 @@ struct Knob: View {
             }
             if let sync { Button(sync.synced ? "Free Time (\(sync.unit))" : "Follow the Tempo", action: sync.toggle) }
             Button("Reset to Default", action: onReset)
+        }
+    }
+}
+
+/// The drawing of a rotary knob: a 270 degree arc, filled up to `position` (0...1), and a needle.
+struct KnobDial: View {
+    let position: Double
+    let tint: Color
+    var lineWidth: CGFloat = 4
+
+    var body: some View {
+        Canvas { ctx, size in
+            let r = min(size.width, size.height) / 2 - lineWidth / 2 - 1
+            let c = CGPoint(x: size.width / 2, y: size.height / 2)
+            let from = Angle.degrees(135), span = 270.0
+            var track = Path(); track.addArc(center: c, radius: r, startAngle: from, endAngle: .degrees(135 + span), clockwise: false)
+            ctx.stroke(track, with: .color(.black.opacity(0.55)), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+            var arc = Path(); arc.addArc(center: c, radius: r, startAngle: from, endAngle: .degrees(135 + span * position), clockwise: false)
+            ctx.stroke(arc, with: .color(tint), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+            let a = Angle.degrees(135 + span * position).radians
+            var needle = Path(); needle.move(to: c); needle.addLine(to: CGPoint(x: c.x + cos(a) * (r - lineWidth - 2), y: c.y + sin(a) * (r - lineWidth - 2)))
+            ctx.stroke(needle, with: .color(.white), style: StrokeStyle(lineWidth: max(1.5, lineWidth / 2), lineCap: .round))
         }
     }
 }

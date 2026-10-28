@@ -14,7 +14,8 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 240, ideal: 290, max: 440)
         } detail: {
             VStack(spacing: 0) {
-                TransportBar()
+                // A bar wider than the window must not widen the whole column: it is cut at the edge instead.
+                TransportBar().frame(minWidth: 0, maxWidth: .infinity, alignment: .leading).clipped()
                 Divider().overlay(Theme.line)
                 Group {
                     switch model.viewMode {
@@ -22,12 +23,12 @@ struct RootView: View {
                     case .arrangement: ArrangementView()
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
                 if model.detailOpen {
                     DetailResizeHandle()
-                    DetailPanel().frame(height: model.detailHeight)
+                    DetailPanel().frame(minWidth: 0, maxWidth: .infinity).frame(height: model.detailHeight).clipped()
                 }
-                StatusBar()
+                StatusBar().frame(minWidth: 0, maxWidth: .infinity).clipped()
             }
             .background(Theme.background)
             .toolbar {
@@ -101,19 +102,14 @@ struct TransportBar: View {
                 .frame(width: 130, alignment: .leading)
             }
 
-            HStack(spacing: 4) {
-                tile("repeat", on: model.project.loop?.enabled == true, tint: Theme.accent) { model.toggleLoop() }
-                    .help("Loop on/off (⇧⌘L)")
-                Button("Loop Selection") { model.loopSelection() }.controlSize(.small).fixedSize()
-                    .help("Loop the marked range or clips and turn the loop on (⌘L)")
-                if model.arrangementOverridden {
-                    Button("Back to Arrangement") { model.backToArrangement() }
-                        .buttonStyle(.borderedProminent).tint(Theme.accent).controlSize(.small)
-                }
-                Button("Stop All Clips") { model.stopAllClips() }.controlSize(.small).fixedSize().disabled(!model.transportPlaying)
+            // In a narrow window the buttons lose their text labels, so the bar never grows wider than the window.
+            ViewThatFits(in: .horizontal) {
+                loopButtons(labels: true)
+                loopButtons(labels: false)
             }
+            .frame(minWidth: 0, alignment: .leading)
 
-            Spacer()
+            Spacer(minLength: 0)
 
             Picker("", selection: Bindable(model).viewMode) {
                 Text("Session").tag(ViewMode.session)
@@ -133,6 +129,28 @@ struct TransportBar: View {
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Theme.panel)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
+    }
+
+    private func loopButtons(labels: Bool) -> some View {
+        HStack(spacing: 4) {
+            tile("repeat", on: model.project.loop?.enabled == true, tint: Theme.accent) { model.toggleLoop() }
+                .help("Loop on/off (⇧⌘L)")
+            Button { model.loopSelection() } label: { label("Loop Selection", "arrow.left.and.right", labels) }
+                .controlSize(.small).fixedSize()
+                .help("Loop the marked range or clips and turn the loop on (⌘L)")
+            if model.arrangementOverridden {
+                Button { model.backToArrangement() } label: { label("Back to Arrangement", "arrow.uturn.backward.circle", labels) }
+                    .buttonStyle(.borderedProminent).tint(Theme.accent).controlSize(.small).fixedSize()
+                    .help("Back to Arrangement: the arrangement plays again on all tracks")
+            }
+            Button { model.stopAllClips() } label: { label("Stop All Clips", "stop.circle", labels) }
+                .controlSize(.small).fixedSize().disabled(!model.transportPlaying)
+                .help("Stop All Clips")
+        }
+    }
+
+    @ViewBuilder private func label(_ text: String, _ symbol: String, _ withText: Bool) -> some View {
+        if withText { Text(text) } else { Image(systemName: symbol) }
     }
 
     private var tempoField: some View {

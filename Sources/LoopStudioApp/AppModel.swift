@@ -934,7 +934,7 @@ final class AppModel {
         if let track = liveTarget.current.track {
             heldKeys[pitch] = track
             engine.sendLiveMIDI(track: track, 0x90, pitch, velocity)
-            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame, 0x90, pitch, velocity) }
+            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: mach_absolute_time()), 0x90, pitch, velocity) }
         }
     }
 
@@ -942,7 +942,7 @@ final class AppModel {
     func noteOff(_ pitch: UInt8) {
         if let track = heldKeys.removeValue(forKey: pitch) ?? liveTarget.current.track {
             engine.sendLiveMIDI(track: track, 0x80, pitch, 0)
-            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame, 0x80, pitch, 0) }
+            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: mach_absolute_time()), 0x80, pitch, 0) }
         }
     }
 

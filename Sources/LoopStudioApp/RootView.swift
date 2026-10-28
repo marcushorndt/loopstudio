@@ -41,6 +41,17 @@ struct RootView: View {
         .onChange(of: model.renameRequest) { _, id in
             renameText = id.flatMap { model.project.track($0)?.name } ?? ""
         }
+        .onChange(of: model.clipRenameRequest) { _, id in
+            renameText = id.flatMap { model.project.findClip($0)?.1.ownName } ?? ""
+        }
+        .alert("Rename Clip", isPresented: Binding(get: { model.clipRenameRequest != nil }, set: { if !$0 { model.clipRenameRequest = nil } })) {
+            TextField("Name", text: $renameText)
+            Button("Rename") {
+                if let id = model.clipRenameRequest { model.apply(.setClipName(clip: id, name: renameText)) }
+                model.clipRenameRequest = nil
+            }
+            Button("Cancel", role: .cancel) { model.clipRenameRequest = nil }
+        }
         .alert("Rename Track", isPresented: Binding(get: { model.renameRequest != nil }, set: { if !$0 { model.renameRequest = nil } })) {
             TextField("Name", text: $renameText)
             Button("Rename") {

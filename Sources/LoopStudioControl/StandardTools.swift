@@ -501,6 +501,7 @@ public enum StandardTools {
             ("setAudioInput", .setAudioInput(id: track.id, port: PortID(uuid(6)))),
             ("setMIDIInput", .setMIDIInput(id: TrackID(uuid(7)), selection: MIDIInputSelection(sourceUID: 12345, sourceName: "Keys", channel: nil))),
             ("setClipColor", .setClipColor(clip: ClipID(uuid(4)), colorIndex: 3)),
+            ("setClipName", .setClipName(clip: ClipID(uuid(4)), name: "Verse")),
             ("setTrackColor", .setTrackColor(id: track.id, colorIndex: 5)),
             ("setInputTrack (Audio From another track)", .setInputTrack(id: TrackID(uuid(7)), source: track.id)),
             ("setMonitor", .setMonitor(id: TrackID(uuid(7)), mode: .auto)),

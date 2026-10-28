@@ -101,6 +101,8 @@ public struct AudioClip: Hashable, Codable, Sendable, Identifiable {
     public var warpMarkers: [WarpMarker]
     /// Own colour, an index into the palette. `nil` follows the track.
     public var colorIndex: Int?
+    /// Own name. `nil` shows the asset name (audio) or a default.
+    public var name: String?
 
     public init(id: ClipID = ClipID(), asset: AssetID, start: Tick = 0, length: Tick, offset: Tick = 0,
                 loop: Bool = false, gainDb: Double = 0,
@@ -145,6 +147,7 @@ public struct MIDIClip: Hashable, Codable, Sendable, Identifiable {
     public var loop: Bool
     public var notes: [MIDINote]
     public var colorIndex: Int?
+    public var name: String?
 
     public init(id: ClipID = ClipID(), start: Tick = 0, length: Tick, loop: Bool = false, notes: [MIDINote] = []) {
         self.id = id
@@ -208,6 +211,24 @@ public enum Clip: Hashable, Sendable, Identifiable {
         case .audio(let c): c.colorIndex
         case .midi(let c): c.colorIndex
         case .dummy(let c): c.colorIndex
+        }
+    }
+
+    /// The clip's own name; empty for none.
+    public var ownName: String {
+        switch self {
+        case .audio(let c): c.name ?? ""
+        case .midi(let c): c.name ?? ""
+        case .dummy(let c): c.name
+        }
+    }
+
+    public func with(name: String) -> Clip {
+        let value: String? = name.isEmpty ? nil : name
+        switch self {
+        case .audio(var c): c.name = value; return .audio(c)
+        case .midi(var c): c.name = value; return .midi(c)
+        case .dummy(var c): c.name = name; return .dummy(c)
         }
     }
 

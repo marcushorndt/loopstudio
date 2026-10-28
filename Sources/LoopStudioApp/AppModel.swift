@@ -47,7 +47,9 @@ final class AppModel {
 
     // UI state
     var viewMode: ViewMode = .session
-    var sidebarTab: SidebarTab = .audio
+    var sidebarTab: SidebarTab = SidebarTab(rawValue: UserDefaults.standard.string(forKey: "sidebarTab") ?? "") ?? .audio {
+        didSet { UserDefaults.standard.set(sidebarTab.rawValue, forKey: "sidebarTab") }
+    }
     var detailOpen = true
     var detailTab: DetailTab = .clip
     var selectedClip: ClipID? {
@@ -93,6 +95,8 @@ final class AppModel {
     var shortcutsOpen = false
     /// Set to ask the session view to start renaming this track.
     var renameRequest: TrackID?
+    /// Set to rename a clip; takes the place of a track rename while a clip is selected.
+    var clipRenameRequest: ClipID?
     var selectedSceneRow: Int?
     /// Tracks whose automation row is open in the arrangement, and the parameter each one shows.
     /// The automation lanes shown under each track in the arrangement, top to bottom.
@@ -878,8 +882,8 @@ final class AppModel {
 
     func clipName(_ clip: Clip) -> String {
         switch clip {
-        case .audio(let c): assetName(c.asset)
-        case .midi: "MIDI clip"
+        case .audio(let c): c.name ?? assetName(c.asset)
+        case .midi(let c): c.name ?? "MIDI clip"
         case .dummy(let c): c.name.isEmpty ? "Dummy" : c.name
         }
     }

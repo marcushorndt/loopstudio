@@ -44,6 +44,7 @@ public enum Command: Codable, Sendable {
     case setClipLoop(clip: ClipID, loop: Bool)
     /// Own colour of a clip. `nil` goes back to the track colour.
     case setClipColor(clip: ClipID, colorIndex: Int?)
+    case setClipName(clip: ClipID, name: String)
     /// Sets the envelope of one parameter on a track. Empty points remove the lane.
     case setAutomation(track: TrackID, target: ParameterAddress, points: [AutomationPoint])
     /// Sets the envelope of one parameter inside a dummy clip (ticks relative to the clip start).
@@ -297,6 +298,12 @@ extension Project {
             c.notes = notes.sorted { ($0.tick, $0.pitch) < ($1.tick, $1.pitch) }
             try withTrack(trackID) { t in try t.replaceClip(.midi(c)) }
             return .setMIDINotes(clip: id, notes: old)
+
+        case .setClipName(let id, let name):
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            let old = Command.setClipName(clip: id, name: clip.ownName)
+            try withTrack(trackID) { t in try t.replaceClip(clip.with(name: name)) }
+            return old
 
         case .setClipColor(let id, let colorIndex):
             guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }

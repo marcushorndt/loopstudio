@@ -15,6 +15,7 @@ extension AppModel {
         switch action {
         case .play: transportPlaying ? "Stop" : (recordArmed ? "Start Recording" : "Play")
         case .record: recording ? "Stop Recording" : (recordArmed ? "Disarm Recording" : "Arm Recording")
+        case .renameTrack: selectedClip != nil ? "Rename Clip" : "Rename Track"
         case .pause: transportPlaying ? "Pause" : "Continue"
         default: action.title
         }
@@ -27,7 +28,8 @@ extension AppModel {
         case .cut, .copy, .deleteSelection, .duplicate: !selectedClips.isEmpty || selectedClip != nil
         case .paste: !clipboard.isEmpty
         case .backToArrangement: arrangementOverridden
-        case .groupTracks, .renameTrack, .duplicateTrack: selectedTrack != nil
+        case .renameTrack: selectedTrack != nil || selectedClip != nil
+        case .groupTracks, .duplicateTrack: selectedTrack != nil
         default: true
         }
     }
@@ -59,7 +61,8 @@ extension AppModel {
         case .insertReturnTrack: addTrack(kind: .returnTrack)
         case .insertGroupTrack: addTrack(kind: .group)
         case .groupTracks: groupSelectedTracks()
-        case .renameTrack: renameRequest = selectedTrack
+        case .renameTrack:
+            if let clip = selectedClip { clipRenameRequest = clip } else { renameRequest = selectedTrack }
         case .duplicateTrack: if let t = selectedTrack { duplicateTrack(t) }
         case .insertScene: insertScene(at: (selectedSceneRow ?? project.tracks.map(\.slots.count).max() ?? 0 - 1) + 1)
         case .deleteScene: if let r = selectedSceneRow { deleteScene(r) }

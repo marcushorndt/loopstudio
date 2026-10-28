@@ -396,3 +396,18 @@ private func writeSine(rate: Double, seconds: Double, channels: Int = 2) throws 
     #expect(out.left[24_000] == 0.5, "before the launch: the arrangement plays alone")
     #expect(abs(out.left[72_000] - 0.1) < 0.0001, "after the launch: only the session clip")
 }
+
+@Test func sessionClipPlaysFromItsOffsetAndLoopsItsLength() throws {
+    var rig = Rig()
+    let ramp = rig.asset(seconds: 2) { Float($0) / 96_000 }
+    let t = rig.track("T")
+    var c = rig.project.makeAudioClip(asset: ramp, start: 0, length: 960) // 0.5 s
+    c.offset = 960; c.loop = true; c.fadeInMs = 0; c.fadeOutMs = 0
+    try Command.setSlot(track: t, index: 0, slot: SessionSlot(clip: .audio(c), quantize: .none)).apply(to: &rig.project)
+    try Command.setLaunches(launches: [Launch(track: t, slot: 0, tick: 0)]).apply(to: &rig.project)
+    let plan = RenderPlan.compile(rig.project, bank: rig.bank, session: SessionSimulator.run(rig.project, horizon: 3_840))
+    let out = Bounce.render(plan, startFrame: 0, endFrame: 72_000, block: 512)
+    #expect(abs(out.left[0] - 24_000 / 96_000) < 1e-6, "starts at the clip offset, not at the file start")
+    #expect(abs(out.left[24_000] - 24_000 / 96_000) < 1e-6, "after one clip length it loops back to the offset")
+    #expect(abs(out.left[36_000] - 36_000 / 96_000) < 1e-6)
+}

@@ -14,6 +14,8 @@ struct ClipPlan {
     var envelope: AutoSegment? = nil
     /// A session clip: its frames count on the session clock, which never jumps back at the loop end.
     var session = false
+    /// Frames of one loop pass, from `sourceOffset`. 0: a looping clip repeats the whole source.
+    var loopLength: Int64 = 0
 }
 
 /// One envelope, in frames. Active inside [start, end).
@@ -314,9 +316,13 @@ public struct RenderPlan {
                         fadeIn = Int64(Double(fadeIn) * scale)
                         fadeOut = Int64(Double(fadeOut) * scale)
                     }
-                    clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: 0, loop: c.loop,
+                    // A session clip plays from its start offset and loops its own length, like the clip shows.
+                    let offsetFrames = max(0, map.frame(at: e.startTick + c.offset, sampleRate: rate).rawValue - start)
+                    let passFrames = max(0, map.frame(at: e.startTick + c.length, sampleRate: rate).rawValue - start)
+                    clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: offsetFrames, loop: c.loop,
                                           gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut),
-                                          envelope: envelope(c, from: e.startTick, start: start, end: end), session: true))
+                                          envelope: envelope(c, from: e.startTick, start: start, end: end), session: true,
+                                          loopLength: c.loop ? passFrames : 0))
                 }
             }
             if t.kind == .midi || t.kind == .group || t.kind == .returnTrack { /* summing nodes or not rendered yet */ }

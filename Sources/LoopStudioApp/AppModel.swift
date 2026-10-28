@@ -1196,7 +1196,7 @@ final class AppModel {
         }
     }
 
-    private func rebuild() {
+    private func rebuild(afterWarps: Bool = false) {
         var p = project
         p.launches = performance
 
@@ -1225,18 +1225,19 @@ final class AppModel {
         } else {
             engine.setLoop(nil)
         }
-        startWarps()
+        startWarps(afterWarps: afterWarps)
     }
 
     /// Time stretching is slow, so the plan does not wait for it: a clip keeps its last warped audio,
     /// a worker makes the new warps, and one more rebuild puts them in. A newer edit cancels the older work.
-    private func startWarps() {
+    private func startWarps(afterWarps: Bool = false) {
         let jobs = bank.takePendingWarps()
         guard !jobs.isEmpty else { warpRounds = 0; return }
+        // The cache can hold every warp of a plan, so a second round after the worker is rare and a third means a problem.
+        // An edit starts the count again.
+        warpRounds = afterWarps ? warpRounds + 1 : 0
+        guard warpRounds < 3 else { warpRounds = 0; status = "Some warped clips could not be prepared"; return }
         warpTask?.cancel()
-        // The cache can hold every warp of a plan, so a second round is rare and a third means a problem.
-        warpRounds += 1
-        guard warpRounds <= 3 else { warpRounds = 0; status = "Some warped clips could not be prepared"; return }
         let bank = bank
         warpTask = Task { [weak self] in
             let worker = Task.detached(priority: .userInitiated) { () -> Bool in
@@ -1248,7 +1249,7 @@ final class AppModel {
             }
             let done = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
             guard done, !Task.isCancelled, let self, self.bank === bank else { return }
-            self.rebuild()
+            self.rebuild(afterWarps: true)
         }
     }
 

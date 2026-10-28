@@ -209,7 +209,7 @@ private struct ArrangementClip: View {
     private var shown: CGSize { drag != .zero ? drag : (model.selectedClips.contains(clip.id) ? model.groupDrag : .zero) }
 
     var body: some View {
-        let tint = Theme.track(track.colorIndex)
+        let tint = Theme.track(clip.colorIndex ?? track.colorIndex)
         let x = tickX(clip.start, model)
         let w = max(6, tickX(clip.length, model) + resize)
         let selected = model.selectedClips.contains(clip.id) || model.selectedClip == clip.id

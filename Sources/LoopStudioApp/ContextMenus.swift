@@ -1,8 +1,39 @@
 import LoopStudioCore
+import AppKit
 import SwiftUI
 
 /// Right-click menu content, shared by the views. Items that have a key show it, because they are built
 /// from `AppAction`.
+
+/// A small coloured dot that keeps its colour inside a menu.
+@MainActor private func swatch(_ color: Color) -> Image {
+    let size = NSSize(width: 12, height: 12)
+    let image = NSImage(size: size, flipped: false) { rect in
+        NSColor(color).setFill()
+        NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
+        return true
+    }
+    image.isTemplate = false
+    return Image(nsImage: image)
+}
+
+struct ClipColorMenu: View {
+    @Environment(AppModel.self) private var model
+    let clip: Clip
+    let track: Track
+
+    var body: some View {
+        Menu("Color") {
+            Button("Track Color") { model.apply(.setClipColor(clip: clip.id, colorIndex: nil)) }
+            Divider()
+            ForEach(0..<Theme.trackColors.count, id: \.self) { i in
+                Button { model.apply(.setClipColor(clip: clip.id, colorIndex: i)) } label: {
+                    Text(colorNames[i]); swatch(Theme.track(i))
+                }
+            }
+        }
+    }
+}
 
 private let colorNames = ["Red", "Orange", "Yellow", "Green", "Teal", "Blue", "Violet", "Pink"]
 
@@ -91,6 +122,7 @@ struct ArrangementClipMenu: View {
         case .dummy:
             EmptyView()
         }
+        ClipColorMenu(clip: clip, track: track)
         Button("Show in Clip Panel") { model.selectedClip = clip.id; model.detailTab = .clip; model.detailOpen = true }
     }
 }
@@ -159,6 +191,7 @@ struct SlotMenu: View {
             case .midi(let m): Button(m.loop ? "Loop Off" : "Loop On") { model.apply(.setClipLoop(clip: m.id, loop: !m.loop)) }
             case .dummy: EmptyView()
             }
+            ClipColorMenu(clip: slot.clip, track: track)
             Button("Show in Clip Panel") { model.selectedClip = slot.clip.id; model.selectedTrack = track.id; model.detailTab = .clip; model.detailOpen = true }
         } else {
             if track.kind == .midi { Button("New MIDI Clip") { model.createMIDIClip(track: track.id, row: row) } }

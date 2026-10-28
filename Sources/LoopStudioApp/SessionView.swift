@@ -126,7 +126,7 @@ private struct SlotCell: View {
     @ViewBuilder
     private func cell(_ state: SlotState, blink: Bool) -> some View {
         let slot = row < track.slots.count ? track.slots[row] : nil
-        let tint = Theme.track(track.colorIndex)
+        let tint = Theme.track(slot?.clip.colorIndex ?? track.colorIndex)
         if let slot {
             let selected = model.selectedClip == slot.clip.id
             HStack(spacing: 0) {

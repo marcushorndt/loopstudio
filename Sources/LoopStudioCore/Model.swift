@@ -99,6 +99,8 @@ public struct AudioClip: Hashable, Codable, Sendable, Identifiable {
     public var muted: Bool
     public var warpMode: WarpMode
     public var warpMarkers: [WarpMarker]
+    /// Own colour, an index into the palette. `nil` follows the track.
+    public var colorIndex: Int?
 
     public init(id: ClipID = ClipID(), asset: AssetID, start: Tick = 0, length: Tick, offset: Tick = 0,
                 loop: Bool = false, gainDb: Double = 0,
@@ -142,6 +144,7 @@ public struct MIDIClip: Hashable, Codable, Sendable, Identifiable {
     public var length: Tick
     public var loop: Bool
     public var notes: [MIDINote]
+    public var colorIndex: Int?
 
     public init(id: ClipID = ClipID(), start: Tick = 0, length: Tick, loop: Bool = false, notes: [MIDINote] = []) {
         self.id = id
@@ -160,6 +163,7 @@ public struct DummyClip: Hashable, Codable, Sendable, Identifiable {
     public var start: Tick
     public var length: Tick
     public var lanes: [AutomationLane]
+    public var colorIndex: Int?
 
     public init(id: ClipID = ClipID(), name: String = "", start: Tick = 0, length: Tick, lanes: [AutomationLane] = []) {
         self.id = id
@@ -196,6 +200,22 @@ public enum Clip: Hashable, Sendable, Identifiable {
         case .audio(let c): c.length
         case .midi(let c): c.length
         case .dummy(let c): c.length
+        }
+    }
+
+    public var colorIndex: Int? {
+        switch self {
+        case .audio(let c): c.colorIndex
+        case .midi(let c): c.colorIndex
+        case .dummy(let c): c.colorIndex
+        }
+    }
+
+    public func with(colorIndex: Int?) -> Clip {
+        switch self {
+        case .audio(var c): c.colorIndex = colorIndex; return .audio(c)
+        case .midi(var c): c.colorIndex = colorIndex; return .midi(c)
+        case .dummy(var c): c.colorIndex = colorIndex; return .dummy(c)
         }
     }
 

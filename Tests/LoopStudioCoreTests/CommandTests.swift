@@ -337,3 +337,20 @@ func randomEditsKeepInvariantsAndUndoBackToTheStart(seed: UInt64) throws {
     #expect(TempoGuess.fromFileName("take 7.wav") == nil, "7 is not a tempo")
     #expect(TempoGuess.fromFileName("sample_999.wav") == nil)
 }
+
+@Test func clipColorSetsAndUndoes() throws {
+    var project = Project(name: "C")
+    let t = Track(name: "T", kind: .midi)
+    try Command.insertTrack(track: t, index: 0).apply(to: &project)
+    let clip = MIDIClip(start: 0, length: 3_840)
+    try Command.insertClip(track: t.id, clip: .midi(clip)).apply(to: &project)
+    let undo = try Command.setClipColor(clip: clip.id, colorIndex: 4).apply(to: &project)
+    #expect(project.findClip(clip.id)?.clip.colorIndex == 4)
+    _ = try undo.apply(to: &project)
+    #expect(project.findClip(clip.id)?.clip.colorIndex == nil)
+    // A slot clip takes a colour too.
+    let slotClip = MIDIClip(length: 3_840)
+    try Command.setSlot(track: t.id, index: 0, slot: SessionSlot(clip: .midi(slotClip))).apply(to: &project)
+    try Command.setClipColor(clip: slotClip.id, colorIndex: 2).apply(to: &project)
+    #expect(project.findClip(slotClip.id)?.clip.colorIndex == 2)
+}

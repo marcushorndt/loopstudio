@@ -39,6 +39,8 @@ struct LoopStudioApp: App {
                 AppAction.splitAtPlayhead.button(model)
             }
             CommandMenu("Transport") {
+                AppAction.record.button(model)
+                AppAction.toggleMetronome.button(model)
                 AppAction.play.button(model)
                 AppAction.pause.button(model)
                 AppAction.stopRewind.button(model)

@@ -13,7 +13,8 @@ extension AppModel {
 
     func title(of action: AppAction) -> String {
         switch action {
-        case .play: transportPlaying ? "Stop" : "Play"
+        case .play: transportPlaying ? "Stop" : (recordArmed ? "Start Recording" : "Play")
+        case .record: recording ? "Stop Recording" : (recordArmed ? "Disarm Recording" : "Arm Recording")
         case .pause: transportPlaying ? "Pause" : "Continue"
         default: action.title
         }
@@ -44,6 +45,8 @@ extension AppModel {
         case .duplicate: duplicateSelection()
         case .deleteSelection: deleteSelected()
         case .splitAtPlayhead: splitAtPlayhead()
+        case .record: toggleRecordArm()
+        case .toggleMetronome: toggleMetronome()
         case .play: togglePlay()
         case .pause: togglePause()
         case .stopRewind: stop()

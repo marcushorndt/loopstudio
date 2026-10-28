@@ -23,6 +23,12 @@ public final class LiveEngine: @unchecked Sendable {
     private let liveCapacity = 512
     private let live: UnsafeMutablePointer<LiveMIDI>
     private var liveCount = 0
+    // Metronome and count-in, guarded by `lock`.
+    private var metronome = false
+    private var beatFrames: Int64 = 24_000
+    private var beatsPerBar = 4
+    private var countInRemaining: Int64 = 0
+    private var countInDone: Int64 = 0
     public let sampleRate: Double
 
     public init(sampleRate: Double) {
@@ -67,8 +73,24 @@ public final class LiveEngine: @unchecked Sendable {
     /// The next frame to play.
     public var positionFrame: Int64 { locked { position } }
 
-    public func play() { locked { playing = true } }
-    public func pause() { locked { playing = false; silencePending = true } }
+    public func play() { locked { playing = true; countInRemaining = 0 } }
+
+    /// Sets the click. `beatFrames` is the length of one beat in frames at the current tempo.
+    public func setMetronome(enabled: Bool, beatFrames: Int64, beatsPerBar: Int) {
+        locked { metronome = enabled; self.beatFrames = max(1, beatFrames); self.beatsPerBar = max(1, beatsPerBar) }
+    }
+
+    /// Plays only the click for `beats` beats, then starts the transport. Instruments keep running meanwhile.
+    public func playAfterCountIn(beats: Int) {
+        locked {
+            guard beats > 0 else { playing = true; return }
+            countInRemaining = Int64(beats) * beatFrames
+            countInDone = 0
+        }
+    }
+
+    public var isCountingIn: Bool { locked { countInRemaining > 0 } }
+    public func pause() { locked { playing = false; countInRemaining = 0; silencePending = true } }
     public func seek(to frame: Int64) { locked { position = max(0, frame); resetPending = true } }
 
     /// Queues a MIDI message for the instrument of a render node. Safe from any thread (a MIDI callback, the UI).
@@ -115,26 +137,46 @@ public final class LiveEngine: @unchecked Sendable {
         liveCount = 0
 
         // Stopped: no clips, but instruments and effects keep running, so live notes sound and tails ring out.
-        guard playing else {
-            var done = 0
-            while done < frameCount {
-                let n = min(frameCount - done, renderer.maxBlock)
-                renderer.process(startFrame: position, frames: n, transport: false, outLeft: left + done, outRight: right + done)
-                done += n
+        // A count-in is the same, with a click, and it starts the transport when it ends.
+        var done = 0
+        while !playing && done < frameCount {
+            var n = min(frameCount - done, renderer.maxBlock)
+            if countInRemaining > 0 { n = Int(min(Int64(n), countInRemaining)) }
+            renderer.process(startFrame: position, frames: n, transport: false, outLeft: left + done, outRight: right + done)
+            if countInRemaining > 0 {
+                addClick(left + done, right + done, n, clock: countInDone)
+                countInDone += Int64(n)
+                countInRemaining -= Int64(n)
+                if countInRemaining <= 0 { countInRemaining = 0; playing = true }
             }
-            return
+            done += n
         }
 
-        var done = 0
         while done < frameCount {
             var n = min(frameCount - done, renderer.maxBlock)
             if let loop, position < loop.upperBound {
                 n = min(n, Int(loop.upperBound - position))
             }
             renderer.process(startFrame: position, frames: n, outLeft: left + done, outRight: right + done)
+            if metronome { addClick(left + done, right + done, n, clock: position) }
             position += Int64(n)
             done += n
             if let loop, position >= loop.upperBound { position = loop.lowerBound; renderer.silenceNotes() }
+        }
+    }
+
+    /// Adds the click for `count` frames. `clock` is the frame count since a beat grid that starts at 0.
+    private func addClick(_ left: UnsafeMutablePointer<Float>, _ right: UnsafeMutablePointer<Float>, _ count: Int, clock: Int64) {
+        let length = Int64(sampleRate * 0.04)
+        for i in 0..<count {
+            let t = clock + Int64(i)
+            let offset = t % beatFrames
+            guard offset < length else { continue }
+            let accent = (t / beatFrames) % Int64(beatsPerBar) == 0
+            let phase = 2 * Double.pi * (accent ? 1_500 : 1_000) * Double(offset) / sampleRate
+            let v = Float(sin(phase) * exp(-Double(offset) / (sampleRate * 0.008)) * 0.4)
+            left[i] += v
+            right[i] += v
         }
     }
 }

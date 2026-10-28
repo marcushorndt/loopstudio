@@ -51,6 +51,16 @@ final class AppModel {
     var selectedClips: Set<ClipID> = []
     var rangeSelection: RangeSelection?
     var clipboard: [ClipboardItem] = []
+    /// Record is prepared with R. Space then starts it.
+    var recordArmed = false
+    var recording = false
+    var metronomeOn = false
+    /// Bars of click before recording starts. 0 means none.
+    var countInBars: Int = UserDefaults.standard.object(forKey: "countInBars") as? Int ?? 1 {
+        didSet { UserDefaults.standard.set(countInBars, forKey: "countInBars") }
+    }
+    var recordStartTick: Tick = 0
+    @ObservationIgnored let recorder = MIDIRecorder()
     var shortcutsOpen = false
     /// Set to ask the session view to start renaming this track.
     var renameRequest: TrackID?
@@ -171,8 +181,68 @@ final class AppModel {
             seek(to: playStart)
         } else {
             playStart = currentTick
-            play()
+            if recordArmed { startRecording() } else { play() }
         }
+    }
+
+    // MARK: Recording
+
+    /// R: get ready to record. Space starts it.
+    func toggleRecordArm() {
+        if recording { finishRecording(); return }
+        if !recordArmed {
+            guard recordTargetOK() else { return }
+            status = countInBars > 0 ? "Record armed. Space starts it after \(countInBars) bar\(countInBars == 1 ? "" : "s") of count-in." : "Record armed. Space starts it."
+        } else {
+            status = ""
+        }
+        recordArmed.toggle()
+    }
+
+    private func recordTargetOK() -> Bool {
+        guard let id = selectedTrack, let t = project.track(id) else { status = "Select a MIDI track to record"; return false }
+        if t.kind == .audio { status = "Audio recording is not available yet. Select a MIDI track."; return false }
+        guard t.kind == .midi else { status = "Select a MIDI track to record"; return false }
+        return true
+    }
+
+    private func startRecording() {
+        guard recordTargetOK() else { recordArmed = false; play(); return }
+        recordStartTick = currentTick
+        recorder.begin()
+        recording = true
+        updateMetronome()
+        engine.playAfterCountIn(beats: countInBars * 4)
+        transportPlaying = true
+        status = "Recording"
+    }
+
+    /// Turns what was played into a MIDI clip on the selected track.
+    func finishRecording() {
+        guard recording else { return }
+        recording = false
+        recordArmed = false
+        let events = recorder.end()
+        guard let id = selectedTrack else { return }
+        let endFrame = engine.positionFrame
+        let sr = sampleRate, map = project.tempoMap, start = recordStartTick.rawValue
+        let notes = MIDIRecorder.notes(from: events, endFrame: endFrame) { frame in
+            max(0, map.tick(atFrame: Frame(frame), sampleRate: sr).rawValue - start)
+        }
+        guard !notes.isEmpty else { status = "Nothing recorded"; return }
+        let elapsed = max(1, project.tempoMap.tick(atFrame: Frame(endFrame), sampleRate: sr).rawValue - start)
+        let bars = max(1, (elapsed + barTicks - 1) / barTicks)
+        let clip = MIDIClip(start: recordStartTick, length: Tick(bars * barTicks), loop: false, notes: notes)
+        apply(.insertClip(track: id, clip: .midi(clip)))
+        selectedClips = [clip.id]
+        status = "Recorded \(notes.count) note\(notes.count == 1 ? "" : "s")"
+    }
+
+    func toggleMetronome() { metronomeOn.toggle(); updateMetronome() }
+
+    func updateMetronome() {
+        let beat = Int64((60.0 / max(20, bpm)) * sampleRate)
+        engine.setMetronome(enabled: metronomeOn, beatFrames: beat, beatsPerBar: 4)
     }
 
     /// Shift+Space: pause in place, or continue from there.
@@ -184,6 +254,7 @@ final class AppModel {
     }
 
     func pause() {
+        if recording { finishRecording() }
         engine.pause()
         transportPlaying = false
     }
@@ -522,10 +593,13 @@ final class AppModel {
 
     private func startMIDI() {
         let monitor = MIDIInputMonitor()
-        let target = liveTarget, engine = engine
+        let target = liveTarget, engine = engine, recorder = recorder
         monitor.handler = { status, a, b in
             let node = target.node
-            if node >= 0 { engine.sendLiveMIDI(node: node, status, a, b) }
+            if node >= 0 {
+                engine.sendLiveMIDI(node: node, status, a, b)
+                if engine.isPlaying { recorder.capture(frame: engine.positionFrame, status, a, b) }
+            }
         }
         midiMonitor = monitor
         midiSources = monitor.sourceCount
@@ -539,11 +613,17 @@ final class AppModel {
     }
 
     func noteOn(_ pitch: UInt8, velocity: UInt8 = 100) {
-        if liveTarget.node >= 0 { engine.sendLiveMIDI(node: liveTarget.node, 0x90, pitch, velocity) }
+        if liveTarget.node >= 0 {
+            engine.sendLiveMIDI(node: liveTarget.node, 0x90, pitch, velocity)
+            if engine.isPlaying { recorder.capture(frame: engine.positionFrame, 0x90, pitch, velocity) }
+        }
     }
 
     func noteOff(_ pitch: UInt8) {
-        if liveTarget.node >= 0 { engine.sendLiveMIDI(node: liveTarget.node, 0x80, pitch, 0) }
+        if liveTarget.node >= 0 {
+            engine.sendLiveMIDI(node: liveTarget.node, 0x80, pitch, 0)
+            if engine.isPlaying { recorder.capture(frame: engine.positionFrame, 0x80, pitch, 0) }
+        }
     }
 
     /// A short note, for clicking in the piano roll.
@@ -764,6 +844,7 @@ final class AppModel {
         plan = compiled
         warnings = compiled.warnings
         updateLiveTarget()
+        updateMetronome()
         let next = Renderer(plan: compiled, reusing: renderer)
         renderer = next
         engine.setRenderer(next)

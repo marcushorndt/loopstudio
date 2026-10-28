@@ -81,7 +81,18 @@ struct TransportBar: View {
                     .help("Play / pause (Space)")
                 tile("stop.fill", on: false, tint: Theme.dim) { model.stop() }
                     .help("Stop; press again to go to the start (⌘.)")
-                tile("record.circle", on: false, tint: .red) {}.disabled(true).opacity(0.4).help("Recording comes later")
+                tile(model.recordArmed ? "record.circle.fill" : "record.circle", on: model.recordArmed, tint: .red) { model.toggleRecordArm() }
+                    .help("Arm recording (R). Space starts it.")
+                tile("metronome", on: model.metronomeOn, tint: Theme.accent) { model.toggleMetronome() }
+                    .help("Metronome (⌘K)")
+                Menu {
+                    ForEach([0, 1, 2, 4], id: \.self) { n in
+                        Button(n == 0 ? "No count-in" : "\(n) bar\(n == 1 ? "" : "s") count-in") { model.countInBars = n }
+                    }
+                } label: {
+                    Text(model.countInBars == 0 ? "No pre" : "Pre \(model.countInBars)").font(.system(size: 10, design: .monospaced))
+                }
+                .menuStyle(.borderlessButton).frame(width: 58).help("Count-in before recording")
             }
 
             tempoField

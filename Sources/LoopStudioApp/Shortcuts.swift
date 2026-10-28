@@ -6,7 +6,7 @@ import SwiftUI
 enum AppAction: String, CaseIterable, Identifiable {
     case newProject, newDemo, save
     case undo, redo, cut, copy, paste, duplicate, deleteSelection, splitAtPlayhead
-    case play, pause, stopRewind, stopAllClips, loopSelection, loopToggle, backToArrangement
+    case record, toggleMetronome, play, pause, stopRewind, stopAllClips, loopSelection, loopToggle, backToArrangement
     case insertAudioTrack, insertMIDITrack, insertReturnTrack, insertGroupTrack, groupTracks, renameTrack, duplicateTrack
     case insertScene, deleteScene, duplicateScene
     case sessionView, arrangementView, switchView, toggleDetail, showShortcuts
@@ -19,7 +19,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         switch self {
         case .newProject, .newDemo, .save: .file
         case .undo, .redo, .cut, .copy, .paste, .duplicate, .deleteSelection, .splitAtPlayhead: .edit
-        case .play, .pause, .stopRewind, .stopAllClips, .loopSelection, .loopToggle, .backToArrangement: .transport
+        case .record, .toggleMetronome, .play, .pause, .stopRewind, .stopAllClips, .loopSelection, .loopToggle, .backToArrangement: .transport
         case .insertAudioTrack, .insertMIDITrack, .insertReturnTrack, .insertGroupTrack, .groupTracks, .renameTrack, .duplicateTrack: .track
         case .insertScene, .deleteScene, .duplicateScene: .scene
         case .sessionView, .arrangementView, .switchView, .toggleDetail, .showShortcuts: .view
@@ -39,6 +39,8 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .duplicate: "Duplicate"
         case .deleteSelection: "Delete"
         case .splitAtPlayhead: "Split at Playhead"
+        case .record: "Arm Recording"
+        case .toggleMetronome: "Metronome On/Off"
         case .play: "Play / Stop"
         case .pause: "Pause / Continue"
         case .stopRewind: "Stop and Rewind"
@@ -76,6 +78,8 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .duplicate: KeyBinding("d", .command)
         case .deleteSelection: KeyBinding("\u{7F}", [])
         case .splitAtPlayhead: KeyBinding("e", .command)
+        case .record: KeyBinding("r", [])
+        case .toggleMetronome: KeyBinding("k", .command)
         case .play: KeyBinding(" ", [])
         case .pause: KeyBinding(" ", .shift)
         case .stopRewind: KeyBinding(".", .command)

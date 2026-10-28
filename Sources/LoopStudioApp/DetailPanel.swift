@@ -37,10 +37,11 @@ private struct ClipPanel: View {
         if let id = model.selectedClip, let (trackID, clip) = model.project.findClip(id), let track = model.project.track(trackID) {
             let slotRow = track.slots.firstIndex { $0?.clip.id == id }
             HStack(alignment: .top, spacing: 14) {
-                ScrollView { properties(clip, track: track) }
-                    .frame(width: 270)
+                properties(clip, track: track)
+                    .frame(width: 230)
+                if case .audio(let a) = clip { soundColumn(a).frame(width: 250) }
                 if let row = slotRow, let slot = track.slots[row] {
-                    ScrollView { FollowEditor(track: track, row: row, slot: slot) }.frame(width: 300)
+                    FollowEditor(track: track, row: row, slot: slot).frame(width: 280)
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     if case .midi(let m) = clip {
@@ -83,9 +84,6 @@ private struct ClipPanel: View {
                 Toggle("Loop", isOn: Binding(get: { a.loop }, set: { model.apply(.setClipLoop(clip: a.id, loop: $0)) }))
                 Toggle("Clip active", isOn: Binding(get: { !a.muted }, set: { set(a, muted: !$0) }))
                 warpControls(a)
-                slider("Gain", value: a.gainDb, range: -36...12, format: "%.1f dB") { set(a, gain: $0) }
-                slider("Fade in", value: a.fadeInMs, range: 0...200, format: "%.1f ms") { set(a, fadeIn: $0) }
-                slider("Fade out", value: a.fadeOutMs, range: 0...200, format: "%.1f ms") { set(a, fadeOut: $0) }
                 Stepper("Length  \(beatsText(a.length))", onIncrement: { resize(a.id, a.start, a.length, by: 1) },
                         onDecrement: { resize(a.id, a.start, a.length, by: -1) })
             case .midi(let m):
@@ -100,6 +98,18 @@ private struct ClipPanel: View {
                 Text("A dummy clip draws parameter curves while it plays. Its follow actions chain it to other slots.")
                     .font(.caption).foregroundStyle(Theme.dim)
             }
+            Spacer()
+        }
+        .font(.system(size: 12))
+    }
+
+    /// Level and fades of an audio clip, in their own column.
+    private func soundColumn(_ a: AudioClip) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Sound").font(.caption.bold()).foregroundStyle(Theme.dim)
+            slider("Gain", value: a.gainDb, range: -36...12, format: "%.1f dB") { set(a, gain: $0) }
+            slider("Fade in", value: a.fadeInMs, range: 0...200, format: "%.1f ms") { set(a, fadeIn: $0) }
+            slider("Fade out", value: a.fadeOutMs, range: 0...200, format: "%.1f ms") { set(a, fadeOut: $0) }
             Spacer()
         }
         .font(.system(size: 12))
@@ -182,7 +192,7 @@ private struct FollowEditor: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Launch").font(.caption.bold()).foregroundStyle(Theme.dim)
             Picker("Quantize", selection: Binding(get: { slot.quantize }, set: { var s = slot; s.quantize = $0; commit(s) })) {
                 Text("None").tag(LaunchQuantize.none)
@@ -211,6 +221,7 @@ private struct FollowEditor: View {
                     Text("B").foregroundStyle(Theme.accent)
                 }
                 Text(String(format: "Chance  A %.0f %%   B %.0f %%", chanceA, 100 - chanceA)).font(.system(size: 10)).foregroundStyle(Theme.dim)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 HStack {
                     Text("After")
                     Stepper(value: Binding(get: { Int(f.time.amount) }, set: { var s = slot; s.follow?.time.amount = Int64($0); commit(s, key: "time") }), in: 1...64) {

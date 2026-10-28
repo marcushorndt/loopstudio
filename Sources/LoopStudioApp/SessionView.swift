@@ -54,6 +54,7 @@ struct SessionView: View {
                 }
             }
             .padding(.horizontal, 6)
+            .layoutPriority(2)
             // The mixer sits under the slots and lines up with the tracks above it.
             HStack(alignment: .bottom, spacing: gap) {
                 ScrollView(.horizontal) {
@@ -69,6 +70,8 @@ struct SessionView: View {
                 }
             }
             .padding(.horizontal, 6).padding(.bottom, 6)
+            .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(2)
         }
         .background(Theme.background)
         .dropDestination(for: URL.self) { urls, _ in model.dropOnNewTrack(urls) }

@@ -25,7 +25,7 @@ struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if model.detailOpen {
                     Divider().overlay(Theme.line)
-                    DetailPanel().frame(height: 210)
+                    DetailPanel().frame(height: 260)
                 }
                 StatusBar()
             }

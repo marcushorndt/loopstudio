@@ -164,3 +164,18 @@ private func audioUnitSlot(_ id: String, _ name: String) -> DeviceSlot {
     #expect(loud > 0.01)
     #expect(quiet < loud / 10, "loud \(loud), quiet \(quiet), range \(volume.min)...\(volume.max)")
 }
+
+@MainActor
+@Test func aLoadFromAnOldProjectIsDropped() async throws {
+    var project = Project(name: "Old", sampleRate: rate)
+    try Command.insertTrack(track: Track(name: "Keys", kind: .midi, devices: [audioUnitSlot(dls, "DLS")]), index: 0).apply(to: &project)
+    let host = PluginHost()
+    let load = Task { await host.sync(project: project) }
+    // Let the load start and wait for the plugin, then open "another project".
+    for _ in 0..<1_000 where !host.isLoading { await Task.yield() }
+    guard host.isLoading else { return } // the plugin loaded first; nothing to race
+    host.removeAll()
+    _ = await load.value
+    #expect(host.units.isEmpty)
+    #expect(!host.isLoading)
+}

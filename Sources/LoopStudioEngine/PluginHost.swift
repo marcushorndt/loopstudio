@@ -8,8 +8,15 @@ public final class PluginHost {
     public private(set) var units: [DeviceID: AudioUnitEffect] = [:]
     public private(set) var failures: [DeviceID: String] = [:]
     private var loading: Set<DeviceID> = []
+    /// Goes up on `removeAll()`. A load that started in an older generation belongs to another project.
+    private var generation = 0
+    /// The plugin each device wants, from the latest `sync`. A load that finishes is kept only if it still matches.
+    private var wanted: [DeviceID: String] = [:]
 
     public init() {}
+
+    /// True while a plugin is loading.
+    public var isLoading: Bool { !loading.isEmpty }
 
     /// Loads plugins the project uses and drops the ones it no longer uses.
     /// Returns true when the set of loaded plugins changed.
@@ -17,6 +24,8 @@ public final class PluginHost {
         var wanted: [DeviceSlot] = []
         for track in project.allTracks { wanted.append(contentsOf: track.devices.filter { $0.format == "audiounit" }) }
         let wantedIDs = Set(wanted.map(\.id))
+        self.wanted = Dictionary(wanted.map { ($0.id, $0.identifier) }, uniquingKeysWith: { a, _ in a })
+        let started = generation
 
         var changed = false
         for id in units.keys where !wantedIDs.contains(id) { units[id] = nil; changed = true }
@@ -24,16 +33,19 @@ public final class PluginHost {
 
         for device in wanted where units[device.id] == nil && failures[device.id] == nil && !loading.contains(device.id) {
             loading.insert(device.id)
-            defer { loading.remove(device.id) }
-            do {
-                let unit = try await AudioUnitEffect.instantiate(identifier: device.identifier, sampleRate: project.sampleRate)
+            let result = await Result { try await AudioUnitEffect.instantiate(identifier: device.identifier, sampleRate: project.sampleRate) }
+            // Another project was opened, or the device was removed or changed, while the plugin loaded.
+            guard generation == started else { return changed }
+            loading.remove(device.id)
+            guard self.wanted[device.id] == device.identifier, units[device.id] == nil else { continue }
+            switch result {
+            case .success(let unit):
                 if let state = device.state { unit.restore(state: state) }
                 units[device.id] = unit
-                changed = true
-            } catch {
+            case .failure(let error):
                 failures[device.id] = "\(error)"
-                changed = true
             }
+            changed = true
         }
         return changed
     }
@@ -45,5 +57,6 @@ public final class PluginHost {
         return result
     }
 
-    public func removeAll() { units = [:]; failures = [:] }
+    /// Drops every plugin and every load still running (for another project).
+    public func removeAll() { units = [:]; failures = [:]; loading = []; wanted = [:]; generation += 1 }
 }

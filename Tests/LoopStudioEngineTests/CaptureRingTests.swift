@@ -28,3 +28,24 @@ import Testing
     var out = [Float](repeating: 0, count: 100)
     #expect(out.withUnsafeMutableBufferPointer { ring.read(into: $0.baseAddress!, nil, max: 100) } == 60)
 }
+
+@Test func ringFillsADropWithSilence() {
+    let ring = CaptureRing(channels: 1, capacity: 100)
+    let ones = [Float](repeating: 1, count: 60), twos = [Float](repeating: 2, count: 30)
+    #expect(ring.write(ones, nil, frames: 60))
+    #expect(!ring.write(ones, nil, frames: 60), "does not fit: dropped")
+    var out: [Float] = []
+    var chunk = [Float](repeating: 9, count: 100)
+    func drain() {
+        while true {
+            let n = chunk.withUnsafeMutableBufferPointer { ring.read(into: $0.baseAddress!, nil, max: 100) }
+            if n == 0 { break }
+            out += chunk[0..<n]
+        }
+    }
+    drain()
+    #expect(ring.write(twos, nil, frames: 30))
+    drain()
+    #expect(out.count == 150, "the dropped frames come back as silence")
+    #expect(out[0..<60].allSatisfy { $0 == 1 } && out[60..<120].allSatisfy { $0 == 0 } && out[120..<150].allSatisfy { $0 == 2 })
+}

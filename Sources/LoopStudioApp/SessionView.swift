@@ -150,6 +150,7 @@ private struct SlotCell: View {
             .background(alignment: .leading) {
                 GeometryReader { geo in
                     Rectangle().fill(isPlaying(state) ? tint : tint.opacity(0.62))
+                    if case .dummy(let d) = slot.clip { MiniCurves(clip: d).padding(.leading, 26).padding(.vertical, 2) }
                     if case .playing(let p) = state {
                         Rectangle().fill(.white.opacity(0.35)).frame(width: geo.size.width * p)
                     }

@@ -61,7 +61,8 @@ struct TrackMenuItems: View {
         }
         Divider()
         if showsAutomation {
-            Button(model.automationShown.contains(track.id) ? "Hide Automation" : "Show Automation") { model.toggleAutomation(track) }
+            Button(model.shownLanes(track).isEmpty ? "Show Automation" : "Hide Automation") { model.toggleAutomation(track) }
+            AutomationLanesMenu(track: track)
         }
         Button("Clear Automation") { model.clearAutomation(track.id) }.disabled(track.automation.isEmpty)
         Button("Clear Devices") { model.clearDevices(track.id) }.disabled(track.devices.isEmpty)
@@ -234,5 +235,25 @@ struct DeviceMenu: View {
         }
         Divider()
         Button("Delete", role: .destructive) { model.apply(.removeDevice(track: track.id, device: device.id)) }
+    }
+}
+
+/// A menu of checkmarks: which automation lanes of a track are visible.
+struct AutomationLanesMenu: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+
+    var body: some View {
+        Menu("Automation Lanes") {
+            Button("Lanes With Points") { model.showAllUsedLanes(track) }
+                .disabled(track.automation.allSatisfy { $0.points.isEmpty })
+            Button("Hide All") { model.automationShown[track.id] = nil }.disabled(model.shownLanes(track).isEmpty)
+            Divider()
+            ForEach(model.project.automationTargets(of: track), id: \.address) { target in
+                Toggle(target.name, isOn: Binding(
+                    get: { model.isLaneShown(track, target.address) },
+                    set: { model.setLane(track, target.address, shown: $0) }))
+            }
+        }
     }
 }

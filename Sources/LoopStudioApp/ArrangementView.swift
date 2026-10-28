@@ -95,7 +95,7 @@ private struct ArrangementHeader: View {
                 HStack(spacing: 4) {
                     pill("S", on: track.solo, tint: Color(red: 0.4, green: 0.65, blue: 1)) { model.apply(.setSolo(id: track.id, solo: !track.solo)) }
                     pill("M", on: track.mute, tint: Theme.accent) { model.apply(.setMute(id: track.id, mute: !track.mute)) }
-                    pill("A", on: model.automationShown.contains(track.id), tint: Color(red: 0.95, green: 0.35, blue: 0.35)) { model.toggleAutomation(track) }
+                    pill("A", on: !model.shownLanes(track).isEmpty, tint: Color(red: 0.95, green: 0.35, blue: 0.35)) { model.toggleAutomation(track) }
                         .help("Show automation")
                 }
             }
@@ -104,7 +104,7 @@ private struct ArrangementHeader: View {
         .padding(6).frame(height: laneHeight, alignment: .top)
         .frame(height: model.rowHeight(track), alignment: .top)
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel)
-        .overlay(alignment: .bottom) { if model.automationShown.contains(track.id) { AutomationPicker(track: track).frame(height: AppModel.automationRow).padding(.horizontal, 6) } }
+        .overlay(alignment: .bottom) { AutomationLabels(track: track) }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .onTapGesture { model.selectedTrack = track.id }
         .contextMenu { TrackMenuItems(track: track, showsAutomation: true) }
@@ -170,15 +170,16 @@ private struct Lane: View {
             ForEach(track.clips, id: \.id) { clip in
                 ArrangementClip(clip: clip, track: track, trackIndex: index, trackCount: count)
             }
-            if model.automationShown.contains(track.id), let address = model.automationChoice[track.id],
-               let target = model.project.automationTarget(address) {
-                AutomationEditor(target: target, points: model.automationPoints(track, address),
-                                 pixelsPerTick: model.pixelsPerBar / Double(model.barTicks),
-                                 width: width, height: AppModel.automationRow, tint: Theme.track(track.colorIndex)) { pts in
-                    model.apply(.setAutomation(track: track.id, target: address, points: pts))
+            ForEach(Array(model.shownLanes(track).enumerated()), id: \.element) { i, address in
+                if let target = model.project.automationTarget(address) {
+                    AutomationEditor(target: target, points: model.automationPoints(track, address),
+                                     pixelsPerTick: model.pixelsPerBar / Double(model.barTicks),
+                                     width: width, height: AppModel.automationRow, tint: Theme.track(track.colorIndex)) { pts in
+                        model.apply(.setAutomation(track: track.id, target: address, points: pts))
+                    }
+                    .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
+                    .offset(y: laneHeight + CGFloat(i) * AppModel.automationRow)
                 }
-                .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
-                .offset(y: laneHeight)
             }
         }
         .frame(width: width, height: model.rowHeight(track), alignment: .topLeading)
@@ -220,6 +221,7 @@ private struct ArrangementClip: View {
                 WaveformView(peaks: peaks, color: .black.opacity(0.55), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
                     .padding(.top, 16).padding(.bottom, 3)
             }
+            if case .dummy(let d) = clip { MiniCurves(clip: d).padding(.top, 16).padding(.bottom, 3).padding(.horizontal, 2) }
             if case .midi(let m) = clip { MiniNotes(clip: m).padding(.top, 16).padding(.bottom, 3).padding(.horizontal, 2) }
             Text(model.clipName(clip)).font(.system(size: 10, weight: .semibold)).foregroundStyle(.black.opacity(0.85))
                 .padding(.horizontal, 5).padding(.top, 2).lineLimit(1)
@@ -341,22 +343,59 @@ private struct MiniNotes: View {
     }
 }
 
-/// Chooses which parameter the automation row of a track shows.
-private struct AutomationPicker: View {
+/// The automation curves of a dummy clip, drawn small inside the clip, one line per lane.
+struct MiniCurves: View {
+    @Environment(AppModel.self) private var model
+    let clip: DummyClip
+
+    var body: some View {
+        Canvas { ctx, size in
+            let length = Double(max(1, clip.length.rawValue))
+            for lane in clip.lanes where !lane.points.isEmpty {
+                guard let target = model.project.automationTarget(lane.target) else { continue }
+                var path = Path()
+                let steps = max(2, Int(size.width / 3))
+                for i in 0...steps {
+                    let t = Double(i) / Double(steps)
+                    let v = AutomationMath.value(lane.points, at: Tick(Int64(t * length))) ?? target.def
+                    let pt = CGPoint(x: CGFloat(t) * size.width, y: size.height * (1 - CGFloat(target.position(v))))
+                    if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+                }
+                ctx.stroke(path, with: .color(.black.opacity(0.65)), lineWidth: 1.3)
+            }
+        }
+    }
+}
+
+/// Header column of the automation lanes: one label per lane, and a menu to choose the lanes.
+private struct AutomationLabels: View {
     @Environment(AppModel.self) private var model
     let track: Track
 
     var body: some View {
-        let targets = model.project.automationTargets(of: track)
-        VStack(alignment: .leading, spacing: 4) {
-            Picker("", selection: Binding(
-                get: { model.automationChoice[track.id] ?? targets.first?.address },
-                set: { model.automationChoice[track.id] = $0 })) {
-                ForEach(targets, id: \.address) { Text($0.name).tag(Optional($0.address)) }
+        let lanes = model.shownLanes(track)
+        VStack(spacing: 0) {
+            ForEach(lanes, id: \.self) { address in
+                HStack(spacing: 4) {
+                    Text(model.project.automationTarget(address)?.name ?? "?")
+                        .font(.system(size: 10)).lineLimit(1).foregroundStyle(Theme.dim)
+                    Spacer(minLength: 0)
+                    Button { model.setLane(track, address, shown: false) } label: {
+                        Image(systemName: "xmark").font(.system(size: 8))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(Theme.dim).help("Hide this lane")
+                }
+                .padding(.horizontal, 8).padding(.top, 4)
+                .frame(height: AppModel.automationRow, alignment: .top)
+                .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
             }
-            .labelsHidden().controlSize(.mini)
-            Spacer()
         }
-        .padding(.top, 6)
+        .overlay(alignment: .bottomTrailing) {
+            if !lanes.isEmpty {
+                AutomationLanesMenu(track: track).menuStyle(.borderlessButton).menuIndicator(.hidden)
+                    .frame(width: 24).padding(.trailing, 4).padding(.bottom, 2)
+                    .help("Choose lanes")
+            }
+        }
     }
 }

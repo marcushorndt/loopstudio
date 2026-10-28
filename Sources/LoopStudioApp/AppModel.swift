@@ -95,8 +95,8 @@ final class AppModel {
     var renameRequest: TrackID?
     var selectedSceneRow: Int?
     /// Tracks whose automation row is open in the arrangement, and the parameter each one shows.
-    var automationShown: Set<TrackID> = []
-    var automationChoice: [TrackID: ParameterAddress] = [:]
+    /// The automation lanes shown under each track in the arrangement, top to bottom.
+    var automationShown: [TrackID: [ParameterAddress]] = [:]
     /// While a clip of a marked group is dragged, the others follow by this offset.
     var groupDrag: CGSize = .zero
     var selectedTrack: TrackID? {
@@ -318,9 +318,9 @@ final class AppModel {
     // MARK: Arrangement rows
 
     static let clipRow: CGFloat = 74
-    static let automationRow: CGFloat = 96
+    static let automationRow: CGFloat = 76
 
-    func rowHeight(_ track: Track) -> CGFloat { Self.clipRow + (automationShown.contains(track.id) ? Self.automationRow : 0) }
+    func rowHeight(_ track: Track) -> CGFloat { Self.clipRow + CGFloat(shownLanes(track).count) * Self.automationRow }
     func rowTop(_ index: Int) -> CGFloat { project.tracks.prefix(index).reduce(0) { $0 + rowHeight($1) } }
     var rowsHeight: CGFloat { max(Self.clipRow, project.tracks.reduce(0) { $0 + rowHeight($1) }) }
 
@@ -334,12 +334,32 @@ final class AppModel {
         return max(0, project.tracks.count - 1)
     }
 
+    /// Lanes shown for a track, without parameters that no longer exist.
+    func shownLanes(_ track: Track) -> [ParameterAddress] {
+        guard let shown = automationShown[track.id], !shown.isEmpty else { return [] }
+        let valid = Set(project.automationTargets(of: track).map(\.address))
+        return shown.filter { valid.contains($0) }
+    }
+
+    func isLaneShown(_ track: Track, _ address: ParameterAddress) -> Bool { shownLanes(track).contains(address) }
+
+    func setLane(_ track: Track, _ address: ParameterAddress, shown: Bool) {
+        var list = automationShown[track.id] ?? []
+        list.removeAll { $0 == address }
+        if shown { list.append(address) }
+        automationShown[track.id] = list.isEmpty ? nil : list
+    }
+
+    /// Shows the lanes that already hold points; with none, shows volume. A second call hides all lanes.
     func toggleAutomation(_ track: Track) {
-        if automationShown.contains(track.id) { automationShown.remove(track.id) }
-        else {
-            automationShown.insert(track.id)
-            if automationChoice[track.id] == nil { automationChoice[track.id] = project.automationTargets(of: track).first?.address }
-        }
+        if !shownLanes(track).isEmpty { automationShown[track.id] = nil; return }
+        let used = track.automation.filter { !$0.points.isEmpty }.map(\.target)
+        let first = project.automationTargets(of: track).first?.address
+        automationShown[track.id] = used.isEmpty ? first.map { [$0] } : used
+    }
+
+    func showAllUsedLanes(_ track: Track) {
+        automationShown[track.id] = track.automation.filter { !$0.points.isEmpty }.map(\.target)
     }
 
     func automationPoints(_ track: Track, _ address: ParameterAddress) -> [AutomationPoint] {

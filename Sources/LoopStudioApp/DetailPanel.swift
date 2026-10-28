@@ -241,34 +241,67 @@ private struct DummyPanel: View {
     @Environment(AppModel.self) private var model
     let clip: DummyClip
     let tint: Color
-    @State private var choice: ParameterAddress?
+    /// Lanes the user chose to show; nil means every curve of the clip, or volume if the clip has none.
+    @State private var chosen: [ParameterAddress]?
+
+    private var shown: [ParameterAddress] {
+        if let chosen { return chosen }
+        if !clip.lanes.isEmpty { return clip.lanes.map(\.target) }
+        return model.project.automationTargets().first.map { [$0.address] } ?? []
+    }
+
+    private func set(_ address: ParameterAddress, on: Bool) {
+        var list = shown
+        list.removeAll { $0 == address }
+        if on { list.append(address) }
+        chosen = list
+    }
 
     var body: some View {
         let targets = model.project.automationTargets()
-        let address = choice ?? clip.lanes.first?.target ?? targets.first?.address
+        let lanes = shown
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Picker("Parameter", selection: Binding(get: { address }, set: { choice = $0 })) {
-                    ForEach(targets, id: \.address) { Text($0.name).tag(Optional($0.address)) }
-                }
-                .controlSize(.small).frame(maxWidth: 300)
-                Text("\(clip.lanes.count) curve" + (clip.lanes.count == 1 ? "" : "s")).font(.caption).foregroundStyle(Theme.dim)
-                Spacer()
-                if let address, clip.lanes.contains(where: { $0.target == address }) {
-                    Button("Remove curve") { model.apply(.setDummyAutomation(clip: clip.id, target: address, points: [])) }.controlSize(.small)
-                }
-            }
-            if let address, let target = model.project.automationTarget(address) {
-                GeometryReader { geo in
-                    AutomationEditor(target: target, points: clip.lanes.first { $0.target == address }?.points ?? [],
-                                     pixelsPerTick: Double(geo.size.width) / Double(max(1, clip.length.rawValue)),
-                                     width: geo.size.width, height: geo.size.height, tint: tint) { pts in
-                        model.apply(.setDummyAutomation(clip: clip.id, target: address, points: pts))
+                Menu("Lanes (\(lanes.count))") {
+                    Button("Lanes With Curves") { chosen = clip.lanes.map(\.target) }.disabled(clip.lanes.isEmpty)
+                    Divider()
+                    ForEach(targets, id: \.address) { target in
+                        Toggle(target.name, isOn: Binding(get: { lanes.contains(target.address) },
+                                                          set: { set(target.address, on: $0) }))
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-            } else {
+                .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
+                Text("\(clip.lanes.count) curve" + (clip.lanes.count == 1 ? "" : "s")).font(.caption).foregroundStyle(Theme.dim)
                 Spacer()
+            }
+            GeometryReader { geo in
+                let rowH = max(70, geo.size.height / CGFloat(max(1, lanes.count)))
+                ScrollView(.vertical) {
+                    VStack(spacing: 2) {
+                        ForEach(lanes, id: \.self) { address in laneRow(address, height: rowH, width: geo.size.width) }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func laneRow(_ address: ParameterAddress, height: CGFloat, width: CGFloat) -> some View {
+        if let target = model.project.automationTarget(address) {
+            let points = clip.lanes.first { $0.target == address }?.points ?? []
+            AutomationEditor(target: target, points: points,
+                             pixelsPerTick: Double(width) / Double(max(1, clip.length.rawValue)),
+                             width: width, height: height - 2, tint: tint) { pts in
+                model.apply(.setDummyAutomation(clip: clip.id, target: address, points: pts))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .overlay(alignment: .topTrailing) {
+                if !points.isEmpty {
+                    Button { model.apply(.setDummyAutomation(clip: clip.id, target: address, points: [])) } label: {
+                        Image(systemName: "trash").font(.system(size: 9))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(Theme.dim).padding(4).help("Remove this curve")
+                }
             }
         }
     }

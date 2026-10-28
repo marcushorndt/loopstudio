@@ -233,6 +233,40 @@ private func rewriteHeader(_ dir: URL, _ edit: (inout [String: Any]) -> Void) th
     #expect(Set(loaded.project.tracks.map(\.id)).count == p.tracks.count)
 }
 
+@Test func aSaveCutOffBeforeItsCommitKeepsTheOldProject() throws {
+    let dir = Temp.directory()
+    let old = try richProject()
+    try ProjectPackage.write(old, to: dir)
+    // A half-written save: a staged track folder and header, but no commit marker.
+    let fm = FileManager.default
+    try fm.copyItem(at: dir.appendingPathComponent("tracks"), to: dir.appendingPathComponent("tracks.new"))
+    try fm.removeItem(at: dir.appendingPathComponent("tracks.new/\(old.tracks[0].id.rawValue.uuidString).json"))
+    try Data("{}".utf8).write(to: dir.appendingPathComponent("project.json.new"))
+    #expect(try ProjectPackage.read(from: dir).project == old)
+    #expect(!fm.fileExists(atPath: dir.appendingPathComponent("tracks.new").path), "the leftovers are gone")
+    #expect(!fm.fileExists(atPath: dir.appendingPathComponent("project.json.new").path))
+}
+
+@Test func aSaveCutOffAfterItsCommitIsFinished() throws {
+    let dir = Temp.directory()
+    let old = try richProject()
+    try ProjectPackage.write(old, to: dir)
+    var new = old
+    try Command.removeTrack(id: old.tracks[0].id).apply(to: &new)
+    // Write the new state elsewhere, then fake a crash in the middle of the swap.
+    let other = Temp.directory()
+    try ProjectPackage.write(new, to: other)
+    let fm = FileManager.default
+    try fm.moveItem(at: dir.appendingPathComponent("tracks"), to: dir.appendingPathComponent("tracks.old"))
+    try fm.copyItem(at: other.appendingPathComponent("tracks"), to: dir.appendingPathComponent("tracks.new"))
+    try fm.copyItem(at: other.appendingPathComponent("project.json"), to: dir.appendingPathComponent("project.json.new"))
+    try Data("commit\n".utf8).write(to: dir.appendingPathComponent("save.commit"))
+    #expect(try ProjectPackage.read(from: dir).project == new)
+    for leftover in ["tracks.new", "tracks.old", "project.json.new", "save.commit"] {
+        #expect(!fm.fileExists(atPath: dir.appendingPathComponent(leftover).path), "\(leftover) is gone")
+    }
+}
+
 // MARK: Journal
 
 @Test func journalRoundTripAndReset() throws {

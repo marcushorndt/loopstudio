@@ -18,8 +18,10 @@ public struct LoadedProject {
 ///       cache/                waveforms, warps, scan results; safe to delete
 ///       journal.jsonl         commands since the last save
 ///
-/// Saving writes every file atomically and `project.json` last, so it is the commit point.
-/// A crash between two files is repaired by replaying the journal.
+/// Saving is one atomic step. It stages a full new `tracks.new/` and `project.json.new` (unchanged track
+/// files are hard links), writes the `save.commit` marker, then swaps them in. A crash before the marker
+/// leaves the old save; a crash after it is finished on the next save or read. Edits after the last save
+/// are repaired by replaying the journal.
 public enum ProjectPackage {
     public static let schemaVersion = 1
 
@@ -43,32 +45,77 @@ public enum ProjectPackage {
 
     public static func write(_ project: Project, to url: URL) throws {
         let fm = FileManager.default
-        let tracksDir = url.appendingPathComponent("tracks", isDirectory: true)
-        try fm.createDirectory(at: tracksDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: url, withIntermediateDirectories: true)
+        try recover(url)
+        let paths = Paths(url)
+        try fm.createDirectory(at: paths.tracks, withIntermediateDirectories: true)
+        try fm.createDirectory(at: paths.staged, withIntermediateDirectories: true)
         let encoder = Coding.fileEncoder()
 
-        var wanted = Set<String>()
+        // Stage the complete new state. A track file with the same bytes is linked, not written again.
         for track in project.allTracks {
             let name = "\(track.id.rawValue.uuidString).json"
-            wanted.insert(name)
-            try writeIfChanged(try encoder.encode(track), to: tracksDir.appendingPathComponent(name))
+            let data = try encoder.encode(track)
+            let current = paths.tracks.appendingPathComponent(name), next = paths.staged.appendingPathComponent(name)
+            if let existing = try? Data(contentsOf: current), existing == data, (try? fm.linkItem(at: current, to: next)) != nil { continue }
+            try data.write(to: next, options: .atomic)
         }
-
         let header = Header(
             schemaVersion: schemaVersion, name: project.name, sampleRate: project.sampleRate,
             tempoMap: project.tempoMap, timeSignatures: project.timeSignatures, markers: project.markers,
             loop: project.loop, randomSeed: project.randomSeed, defaultFadeMs: project.defaultFadeMs,
             autoLoop: project.autoLoop, ports: project.ports, launches: project.launches, assets: project.assets,
             trackOrder: project.tracks.map(\.id), master: project.master.id)
-        try writeIfChanged(try encoder.encode(header), to: url.appendingPathComponent("project.json"))
+        let headerData = try encoder.encode(header)
+        if (try? Data(contentsOf: paths.header)) != headerData { try headerData.write(to: paths.stagedHeader, options: .atomic) }
 
-        // Remove track files of deleted tracks, after the new header no longer lists them.
-        for name in try fm.contentsOfDirectory(atPath: tracksDir.path) where name.hasSuffix(".json") && !wanted.contains(name) {
-            try fm.removeItem(at: tracksDir.appendingPathComponent(name))
+        // The commit point. From here on, the new state wins.
+        try Data("commit\n".utf8).write(to: paths.marker, options: .atomic)
+        try finishCommit(paths)
+    }
+
+    private struct Paths {
+        let tracks, staged, old, header, stagedHeader, marker: URL
+        init(_ url: URL) {
+            tracks = url.appendingPathComponent("tracks", isDirectory: true)
+            staged = url.appendingPathComponent("tracks.new", isDirectory: true)
+            old = url.appendingPathComponent("tracks.old", isDirectory: true)
+            header = url.appendingPathComponent("project.json")
+            stagedHeader = url.appendingPathComponent("project.json.new")
+            marker = url.appendingPathComponent("save.commit")
         }
     }
 
+    /// Finishes a save that reached its commit marker, or throws away one that did not.
+    static func recover(_ url: URL) throws {
+        let paths = Paths(url), fm = FileManager.default
+        if fm.fileExists(atPath: paths.marker.path) { try finishCommit(paths); return }
+        for leftover in [paths.staged, paths.stagedHeader] where fm.fileExists(atPath: leftover.path) { try fm.removeItem(at: leftover) }
+        if fm.fileExists(atPath: paths.old.path) && fm.fileExists(atPath: paths.tracks.path) { try fm.removeItem(at: paths.old) }
+    }
+
+    /// Swaps the staged state in. Every step can run again after a crash.
+    private static func finishCommit(_ paths: Paths) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: paths.staged.path) {
+            if fm.fileExists(atPath: paths.tracks.path) {
+                if fm.fileExists(atPath: paths.old.path) { try fm.removeItem(at: paths.old) }
+                try fm.moveItem(at: paths.tracks, to: paths.old)
+            }
+            try fm.moveItem(at: paths.staged, to: paths.tracks)
+        }
+        if fm.fileExists(atPath: paths.stagedHeader.path) {
+            // rename(2) replaces the old header in one step.
+            guard rename(paths.stagedHeader.path, paths.header.path) == 0 else {
+                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: paths.header.path])
+            }
+        }
+        try fm.removeItem(at: paths.marker)
+        if fm.fileExists(atPath: paths.old.path) { try fm.removeItem(at: paths.old) }
+    }
+
     public static func read(from url: URL, migrator: Migrator = .standard) throws -> LoadedProject {
+        try? recover(url)
         let headerURL = url.appendingPathComponent("project.json")
         guard let headerData = try? Data(contentsOf: headerURL) else {
             throw PackageError.notAProject("no project.json in \(url.lastPathComponent)")
@@ -155,9 +202,4 @@ public enum ProjectPackage {
         return LoadedProject(project: project, issues: project.validate(), migratedFrom: migrated ? version : nil)
     }
 
-    /// Skips the write when the file already has these exact bytes (keeps timestamps and sync tools quiet).
-    private static func writeIfChanged(_ data: Data, to url: URL) throws {
-        if let existing = try? Data(contentsOf: url), existing == data { return }
-        try data.write(to: url, options: .atomic)
-    }
 }

@@ -101,6 +101,17 @@ extension AppModel {
         return selectedSceneRow
     }
 
+    /// A click on a session slot, empty or not. The arrow keys go on from it.
+    func selectSlot(track: TrackID, row: Int, clip: ClipID? = nil) {
+        selectedClip = clip
+        selectedTrack = track
+        selectedSceneRow = row
+        trackFocused = false
+    }
+
+    /// The rows the Session view shows: at least 8, and one empty row below the last slot.
+    var sessionRows: Int { max(8, (project.tracks.map(\.slots.count).max() ?? 0) + 1) }
+
     /// Arrow keys. Session view moves through slots; arrangement view moves between tracks.
     func moveSelection(rows: Int, tracks: Int) {
         let columns = orderedTracks
@@ -109,7 +120,9 @@ extension AppModel {
         let column = min(max(current + tracks + (viewMode == .arrangement ? rows : 0), 0), columns.count - 1)
         selectedTrack = columns[column].id
         guard viewMode == .session else { return }
-        let rowCount = max(1, columns.map(\.slots.count).max() ?? 1)
+        // A slot is selected now, not the track, so Delete cannot remove the track.
+        trackFocused = false
+        let rowCount = sessionRows
         let row = min(max((selectedRow ?? (rows > 0 ? -1 : rowCount)) + rows, 0), rowCount - 1)
         selectedSceneRow = row
         let track = columns[column]

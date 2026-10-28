@@ -7,15 +7,33 @@ private let gap: CGFloat = 2
 
 struct SessionView: View {
     @Environment(AppModel.self) private var model
-    /// The slot grid and the mixer scroll sideways together.
-    @State private var scrollX = ScrollPosition()
+    /// The slot grid, the stop buttons and the mixer scroll sideways together: each has its own position,
+    /// and a scroll in one moves the other two.
+    @State private var slotsX = ScrollPosition()
+    @State private var stopsX = ScrollPosition()
+    @State private var mixerX = ScrollPosition()
+    @State private var offsetX: CGFloat = 0
+    @State private var visibleWidth: CGFloat = 0
+
+    private func follow(_ x: CGFloat) {
+        guard abs(x - offsetX) > 0.5 else { return }
+        offsetX = x
+        slotsX.scrollTo(x: x); stopsX.scrollTo(x: x); mixerX.scrollTo(x: x)
+    }
+
+    /// Scrolls just enough to show the selected track, for the arrow keys.
+    private func reveal(_ id: TrackID?, in tracks: [Track]) {
+        guard let id, let i = tracks.firstIndex(where: { $0.id == id }), visibleWidth > 0 else { return }
+        let left = CGFloat(i) * (columnWidth + gap), right = left + columnWidth
+        if left < offsetX { follow(left) } else if right > offsetX + visibleWidth { follow(right - visibleWidth) }
+    }
 
     var body: some View {
         let all = model.project.tracks
         // Tracks pile up from the left and scroll. Busses (returns) and the master stay at the right edge.
         let tracks = all.filter { $0.kind != .returnTrack }
         let busses = all.filter { $0.kind == .returnTrack }
-        let rows = max(8, (all.map(\.slots.count).max() ?? 0) + 1)
+        let rows = model.sessionRows
 
         VStack(spacing: 6) {
             ScrollView(.vertical) {
@@ -26,8 +44,10 @@ struct SessionView: View {
                             NewTrackColumn(rows: rows)
                         }
                     }
-                    .scrollPosition($scrollX)
+                    .scrollPosition($slotsX)
                     .scrollIndicators(.hidden)
+                    .onScrollGeometryChange(for: CGFloat.self, of: \.contentOffset.x) { _, x in follow(x) }
+                    .onScrollGeometryChange(for: CGFloat.self, of: \.containerSize.width) { _, w in visibleWidth = w }
                     HStack(alignment: .top, spacing: gap) {
                         ForEach(busses, id: \.id) { TrackColumn(track: $0, rows: rows) }
                         SceneColumn(rows: rows)
@@ -43,7 +63,7 @@ struct SessionView: View {
                         Color.clear.frame(width: columnWidth * 0.6)
                     }
                 }
-                .scrollPosition($scrollX)
+                .scrollPosition($stopsX)
                 .scrollIndicators(.hidden)
                 .scrollDisabled(true)
                 .frame(height: slotHeight)
@@ -62,7 +82,8 @@ struct SessionView: View {
                         Color.clear.frame(width: columnWidth * 0.6)
                     }
                 }
-                .scrollPosition($scrollX)
+                .scrollPosition($mixerX)
+                .onScrollGeometryChange(for: CGFloat.self, of: \.contentOffset.x) { _, x in follow(x) }
                 HStack(alignment: .bottom, spacing: gap) {
                     ForEach(busses, id: \.id) { MixerStrip(track: $0, isMaster: false, width: columnWidth) }
                     MixerStrip(track: model.project.master, isMaster: true, width: columnWidth)
@@ -74,6 +95,7 @@ struct SessionView: View {
         }
         .background(Theme.background)
         .dropDestination(for: URL.self) { urls, _ in model.dropOnNewTrack(urls) }
+        .onChange(of: model.selectedTrack) { _, id in reveal(id, in: tracks) }
     }
 }
 
@@ -170,7 +192,7 @@ private struct SlotCell: View {
                 }
                 .padding(.horizontal, 5).frame(maxWidth: .infinity, minHeight: slotHeight)
                 .contentShape(Rectangle())
-                .onTapGesture { model.selectedClip = slot.clip.id; model.selectedTrack = track.id }
+                .onTapGesture { model.selectSlot(track: track.id, row: row, clip: slot.clip.id) }
             }
             .foregroundStyle(Theme.onTint)
             .background(alignment: .leading) {
@@ -188,24 +210,32 @@ private struct SlotCell: View {
             .frame(height: slotHeight)
             .contextMenu { SlotMenu(track: track, row: row) }
         } else {
-            Button {
-                switch track.kind {
-                case .midi: model.createMIDIClip(track: track.id, row: row)
-                default: model.stopClips(of: track)
-                }
-            } label: {
-                HStack(spacing: 0) {
+            // An empty slot reached with the arrow keys shows a frame.
+            let selected = model.selectedClip == nil && model.selectedTrack == track.id && model.selectedSceneRow == row
+            HStack(spacing: 0) {
+                Button {
+                    switch track.kind {
+                    case .midi: model.createMIDIClip(track: track.id, row: row)
+                    default: model.stopClips(of: track)
+                    }
+                } label: {
                     Image(systemName: track.kind == .midi ? "plus" : "stop.fill").font(.system(size: 11)).foregroundStyle(Theme.dim.opacity(0.5))
-                        .frame(width: 26)
-                    Spacer(minLength: 0)
+                        .frame(width: 26, height: slotHeight)
                 }
-                .frame(maxWidth: .infinity, minHeight: slotHeight)
-                    .background(Theme.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
+                .buttonStyle(.plain)
+                // The rest of the slot selects it; the arrow keys go on from there.
+                Color.clear
+                    .frame(maxWidth: .infinity, minHeight: slotHeight)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { if track.kind == .midi { model.createMIDIClip(track: track.id, row: row) } }
+                    .onTapGesture { model.selectSlot(track: track.id, row: row) }
             }
-.buttonStyle(.plain)
+            .background(Theme.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : Color.clear, lineWidth: 1.5))
             .contextMenu { SlotMenu(track: track, row: row) }
-            .help(track.kind == .midi ? "Create an empty MIDI clip"
-                  : (track.kind == .audio ? "Empty slot. Drop an audio file here." : "Empty slot. Right-click for a dummy clip: silent, it carries automation."))
+            .help(track.kind == .midi ? "Empty slot. Click selects it; the + or a double-click creates a MIDI clip."
+                  : (track.kind == .audio ? "Empty slot. Click selects it; the square stops the track. Drop an audio file here."
+                     : "Empty slot. Click selects it. Right-click for a dummy clip: silent, it carries automation."))
         }
     }
 

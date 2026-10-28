@@ -831,6 +831,7 @@ final class AppModel {
         selectedTrack = id
         selectedClip = nil
         selectedClips = []
+        selectedSceneRow = nil
         trackFocused = true
     }
 

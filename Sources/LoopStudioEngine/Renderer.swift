@@ -27,6 +27,9 @@ public final class Renderer {
         /// The knob value of each automated key without automation. It comes back when no curve covers the frame.
         let base: [Double?]
         var live: [String: Double]
+        /// The effect still runs in the old renderer: the audio thread applies `live` on the first block.
+        /// A flag, not an optional dictionary, so the audio thread frees nothing.
+        var needsConfigure = false
         /// Automated Audio Unit parameters, keyed by their address.
         let unitAuto: [(address: AUParameterAddress, lane: AutoLane)]
         init(effect: DSPEffect?, unit: AudioUnitEffect?, bypassed: Bool, auto: [String: AutoLane], params: [String: Double]) {
@@ -69,14 +72,19 @@ public final class Renderer {
             for e in node.effects {
                 if let unit = e.unit { chain.append(Slot(effect: nil, unit: unit, bypassed: e.bypassed, auto: e.auto, params: [:])); continue }
                 let effect: DSPEffect
+                var running = false
                 if let kept = old?.instances[e.device], kept.spec.id == e.kind, kept.sampleRate == plan.sampleRate {
                     effect = kept
+                    running = true
                 } else if let new = DSPEffect.make(e.kind, sampleRate: plan.sampleRate) {
                     effect = new
                 } else { continue }
-                effect.configure(e.params)
+                // The audio thread may still run a kept effect, so only that thread may change it.
+                if !running { effect.configure(e.params) }
                 made[e.device] = effect
-                chain.append(Slot(effect: effect, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params))
+                let slot = Slot(effect: effect, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params)
+                slot.needsConfigure = running
+                chain.append(slot)
             }
             built.append(chain)
             instruments.append(node.instrument.map { Slot(effect: nil, unit: $0, bypassed: false, auto: node.instrumentAuto, params: [:]) })
@@ -399,6 +407,7 @@ public final class Renderer {
             return
         }
         guard let effect = slot.effect else { return }
+        if slot.needsConfigure { effect.configure(slot.live); slot.needsConfigure = false }
         guard !slot.auto.isEmpty else { effect.process(l, r, frames: frames); return }
         eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
             var changed = false

@@ -140,3 +140,30 @@ private func peak(_ x: ArraySlice<Float>) -> Float { x.reduce(0) { max($0, abs($
     let fourth = Renderer(plan: RenderPlan.compile(changed, bank: bank), reusing: third)
     #expect(fourth.instancesForTesting.isEmpty)
 }
+
+@Test func aKeptEffectChangesOnlyOnTheAudioThread() {
+    var project = Project(name: "K", sampleRate: rate)
+    var track = Track(name: "A", kind: .audio)
+    var utility = BuiltInEffects.makeSlot("utility")!
+    utility.params = ["gain": 0, "width": 1]
+    track.devices = [utility]
+    try! Command.insertTrack(track: track, index: 0).apply(to: &project)
+    let first = Renderer(plan: RenderPlan.compile(project, bank: AudioBank()))
+    let fx = first.instancesForTesting[utility.id]!
+
+    func level() -> Float {
+        var l = [Float](repeating: 0.5, count: 64), r = l
+        l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in fx.process(lp.baseAddress!, rp.baseAddress!, frames: 64) } }
+        return l[0]
+    }
+    var changed = project
+    try! Command.setDeviceParam(track: track.id, device: utility.id, key: "gain", value: -100).apply(to: &changed)
+    let second = Renderer(plan: RenderPlan.compile(changed, bank: AudioBank()), reusing: first)
+    #expect(level() == 0.5, "building the new renderer leaves the running effect alone")
+
+    var l = [Float](repeating: 0, count: 64), r = l
+    l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in
+        second.process(startFrame: 0, frames: 64, outLeft: lp.baseAddress!, outRight: rp.baseAddress!)
+    } }
+    #expect(level() == 0, "the first block of the new renderer applies the knob")
+}

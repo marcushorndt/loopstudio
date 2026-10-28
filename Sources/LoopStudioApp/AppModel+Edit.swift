@@ -72,6 +72,19 @@ extension AppModel {
         }
     }
 
+    // MARK: Sound card
+
+    /// Sends the master to the chosen device and channel pair. Falls back to the default and says so.
+    func applyAudioSettings() {
+        do {
+            try engine.setOutput(uid: outputUID, left: outputLeft, right: outputLeft + 1, bufferFrames: bufferFrames > 0 ? bufferFrames : nil)
+        } catch {
+            status = "Could not use that output (\(error)). Using the default."
+            outputUID = nil; outputLeft = 0
+            try? engine.setOutput(uid: nil)
+        }
+    }
+
     // MARK: Clipboard
 
     func copySelection() {

@@ -32,6 +32,10 @@ public enum Command: Codable, Sendable {
     case setSolo(id: TrackID, solo: Bool)
     case setOutput(id: TrackID, target: TrackID?)
     case setSends(id: TrackID, sends: [Send])
+    /// Audio From another track. `nil` is no input.
+    case setInputTrack(id: TrackID, source: TrackID?)
+    case setMonitor(id: TrackID, mode: MonitorMode)
+    case setSendsOnly(id: TrackID, sendsOnly: Bool)
 
     case insertClip(track: TrackID, clip: Clip)
     case removeClip(clip: ClipID)
@@ -176,6 +180,30 @@ extension Project {
             let old = try withTrack(id) { t -> TrackID? in defer { t.output = normalized }; return t.output }
             try checkRouting()
             return .setOutput(id: id, target: old)
+
+        case .setInputTrack(let id, let source):
+            guard id != master.id else { throw CommandError.cannotChangeMaster }
+            if let source {
+                guard source != id else { throw CommandError.wouldCreateCycle }
+                guard let s = track(source) else { throw CommandError.trackNotFound(source) }
+                guard s.kind != .master else { throw CommandError.invalidRoute("resampling the master is not supported yet") }
+            }
+            let old = try withTrack(id) { t -> TrackID? in
+                guard source == nil || t.kind == .audio else { throw CommandError.invalidValue("only audio tracks take an input track") }
+                defer { t.inputTrack = source }
+                return t.inputTrack
+            }
+            try checkRouting()
+            return .setInputTrack(id: id, source: old)
+
+        case .setMonitor(let id, let mode):
+            let old = try withTrack(id) { t -> MonitorMode in defer { t.monitor = mode }; return t.monitorMode }
+            return .setMonitor(id: id, mode: old)
+
+        case .setSendsOnly(let id, let sendsOnly):
+            guard id != master.id else { throw CommandError.cannotChangeMaster }
+            let old = try withTrack(id) { t -> Bool in defer { t.sendsOnly = sendsOnly ? true : nil }; return t.isSendsOnly }
+            return .setSendsOnly(id: id, sendsOnly: old)
 
         case .setSends(let id, let sends):
             guard id != master.id else { throw CommandError.cannotChangeMaster }

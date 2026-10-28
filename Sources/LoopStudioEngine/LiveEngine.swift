@@ -1,4 +1,6 @@
 import AVFoundation
+import CoreAudio
+import AudioToolbox
 import Foundation
 import LoopStudioCore
 import os
@@ -58,6 +60,45 @@ public final class LiveEngine: @unchecked Sendable {
     }
 
     public func shutdown() { engine.stop() }
+
+    public enum OutputError: Error { case deviceNotFound, noAudioUnit, status(OSStatus) }
+
+    /// Plays through another device, and sends the stereo master to two of its channels.
+    /// `uid` nil means the system default. Channels count from 0. The engine restarts if it was running.
+    public func setOutput(uid: String?, left: Int = 0, right: Int = 1, bufferFrames: Int? = nil) throws {
+        let wasRunning = engine.isRunning
+        engine.stop()
+        defer { if wasRunning { try? engine.start() } }
+
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var deviceID: AudioObjectID?
+        if let uid {
+            deviceID = HAL.array(system, kAudioHardwarePropertyDevices, as: AudioObjectID.self, zero: 0)
+                .first { HAL.string($0, kAudioDevicePropertyDeviceUID) == uid }
+        } else {
+            deviceID = HAL.value(system, kAudioHardwarePropertyDefaultOutputDevice, as: AudioObjectID.self, zero: 0)
+        }
+        guard var device = deviceID, device != 0 else { throw OutputError.deviceNotFound }
+        guard let unit = engine.outputNode.audioUnit else { throw OutputError.noAudioUnit }
+
+        var status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                          &device, UInt32(MemoryLayout<AudioObjectID>.size))
+        guard status == noErr else { throw OutputError.status(status) }
+
+        let channels = HAL.channelCount(device, scope: kAudioObjectPropertyScopeOutput)
+        if channels > 2 || left != 0 || right != 1 {
+            var map = [Int32](repeating: -1, count: max(channels, 2))
+            if left < map.count { map[left] = 0 }
+            if right < map.count { map[right] = 1 }
+            status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_ChannelMap, kAudioUnitScope_Output, 0,
+                                          map, UInt32(map.count * MemoryLayout<Int32>.size))
+            guard status == noErr else { throw OutputError.status(status) }
+        }
+        if var frames = bufferFrames.map({ UInt32($0) }) {
+            var address = HAL.address(kAudioDevicePropertyBufferFrameSize)
+            AudioObjectSetPropertyData(device, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
+        }
+    }
 
     // MARK: Control thread
 

@@ -89,6 +89,8 @@ struct NodePlan {
     /// A hosted instrument and the notes it plays, sorted by frame (note-off before note-on on the same frame).
     var instrument: AudioUnitEffect? = nil
     var midi: [MIDIEvent] = []
+    /// Nodes that take this node's sound as input, after the fader.
+    var taps: [Int] = []
 }
 
 /// Everything the renderer needs, compiled from a project. Immutable; built off the audio thread.
@@ -130,21 +132,21 @@ public struct RenderPlan {
             var stack = soloed
             while let id = stack.popLast() {
                 guard reach.insert(id).inserted, let t = project.track(id) else { continue }
-                stack.append(contentsOf: Routing.edges(of: t))
+                stack.append(contentsOf: Routing.feeds(of: t, in: project))
             }
             audible = reach
         }
 
         // Order: sources before targets (Kahn). Ties keep project order, so the plan is deterministic.
         var incoming = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, 0) })
-        for t in tracks { for target in Routing.edges(of: t) where incoming[target] != nil { incoming[target]! += 1 } }
+        for t in tracks { for target in Routing.feeds(of: t, in: project) where incoming[target] != nil { incoming[target]! += 1 } }
         var ready = tracks.filter { incoming[$0.id] == 0 }.map(\.id)
         var order: [TrackID] = []
         while !ready.isEmpty {
             let id = ready.removeFirst()
             order.append(id)
             guard let t = project.track(id) else { continue }
-            for target in Routing.edges(of: t) where incoming[target] != nil {
+            for target in Routing.feeds(of: t, in: project) where incoming[target] != nil {
                 incoming[target]! -= 1
                 if incoming[target] == 0 { ready.append(target) }
             }
@@ -254,7 +256,7 @@ public struct RenderPlan {
             let (pl, pr) = balance(t.pan)
             nodes.append(NodePlan(
                 isMaster: false, clips: clips, gain: silent ? 0 : dB(t.volumeDb), panLeft: pl, panRight: pr,
-                output: t.output.flatMap { index[$0] } ?? masterIndex,
+                output: t.isSendsOnly ? nil : (t.output.flatMap { index[$0] } ?? masterIndex),
                 sends: t.sends.compactMap { s in index[s.target].map {
                     SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader,
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
@@ -268,6 +270,11 @@ public struct RenderPlan {
                               panLeft: ml, panRight: mr, output: nil, sends: [],
                               effects: masterEffects, silenced: project.master.mute,
                               volumeAuto: lane(project.master.id.rawValue, "volume"), panAuto: lane(project.master.id.rawValue, "pan")))
+        // Input taps: a track that takes another track as input gets that track's sound, unless its monitor is off.
+        for t in tracks {
+            guard let source = t.inputTrack, t.monitorMode != .off, let from = index[source], let to = index[t.id], from < to else { continue }
+            nodes[from].taps.append(to)
+        }
         return RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings,
                           trackOrder: order.map { Optional($0) } + [nil])
     }

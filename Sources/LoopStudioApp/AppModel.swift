@@ -13,7 +13,13 @@ struct RangeSelection: Equatable {
 }
 
 /// The render node that live MIDI goes to. Written on the main thread, read on a CoreMIDI thread.
-final class LiveTarget: @unchecked Sendable { var node = -1 }
+final class LiveTarget: @unchecked Sendable {
+    var node = -1
+    /// The MIDI input of the selected track. `enabled` false means "No Input".
+    var enabled = true
+    var source: Int32?
+    var channel: UInt8?
+}
 
 enum ViewMode: String { case session, arrangement }
 enum DetailTab { case clip, devices }
@@ -60,6 +66,16 @@ final class AppModel {
         didSet { UserDefaults.standard.set(countInBars, forKey: "countInBars") }
     }
     var recordStartTick: Tick = 0
+    /// Sound card choice. It belongs to this Mac, not to a project. `nil` means the system default.
+    var outputUID: String? = UserDefaults.standard.string(forKey: "outputUID") {
+        didSet { UserDefaults.standard.set(outputUID, forKey: "outputUID") }
+    }
+    var outputLeft: Int = UserDefaults.standard.object(forKey: "outputLeft") as? Int ?? 0 {
+        didSet { UserDefaults.standard.set(outputLeft, forKey: "outputLeft") }
+    }
+    var bufferFrames: Int = UserDefaults.standard.object(forKey: "bufferFrames") as? Int ?? 0 {
+        didSet { UserDefaults.standard.set(bufferFrames, forKey: "bufferFrames") }
+    }
     @ObservationIgnored let recorder = MIDIRecorder()
     var shortcutsOpen = false
     /// Set to ask the session view to start renaming this track.
@@ -109,6 +125,7 @@ final class AppModel {
         packageURL = url
         engine = LiveEngine(sampleRate: initial.sampleRate)
         do { try engine.start() } catch { status = "No audio output: \(error.localizedDescription)" }
+        applyAudioSettings()
         startMIDI()
         audioFolders = (UserDefaults.standard.stringArray(forKey: "audioFolders") ?? []).map { URL(fileURLWithPath: $0) }
 
@@ -490,7 +507,7 @@ final class AppModel {
     func addTrack(kind: TrackKind = .audio) {
         let n = project.tracks.count
         let names: [TrackKind: String] = [.audio: "Audio", .midi: "MIDI", .group: "Group", .returnTrack: "Return"]
-        let t = Track(name: "\(n + 1) \(names[kind] ?? "Track")", kind: kind, colorIndex: n)
+        let t = Track(name: "\(n + 1) \(names[kind] ?? "Track")", kind: kind, colorIndex: n, midiInput: kind == .midi ? MIDIInputSelection() : nil)
         if kind == .midi {
             // A new MIDI track starts with Apple's built-in synth, so it makes sound at once.
             let synth = DeviceSlot(format: "audiounit", identifier: "aumu/dls /appl", name: "Apple DLS Synth")
@@ -561,7 +578,7 @@ final class AppModel {
                 selectedTrack = target.id
             } else {
                 // An instrument needs a MIDI track. Make one.
-                let t = Track(name: name, kind: .midi, colorIndex: project.tracks.count)
+                let t = Track(name: name, kind: .midi, colorIndex: project.tracks.count, midiInput: MIDIInputSelection())
                 apply(.batch(commands: [.insertTrack(track: t, index: project.tracks.count),
                                         .insertDevice(track: t.id, device: slot, index: 0)]))
                 selectedTrack = t.id
@@ -594,8 +611,10 @@ final class AppModel {
     private func startMIDI() {
         let monitor = MIDIInputMonitor()
         let target = liveTarget, engine = engine, recorder = recorder
-        monitor.handler = { status, a, b in
+        monitor.handler = { status, a, b, src in
             let node = target.node
+            guard target.enabled, target.source == nil || target.source == src,
+                  target.channel == nil || target.channel == status & 0x0F else { return }
             if node >= 0 {
                 engine.sendLiveMIDI(node: node, status, a, b)
                 if engine.isPlaying { recorder.capture(frame: engine.positionFrame, status, a, b) }
@@ -607,9 +626,12 @@ final class AppModel {
 
     /// Points live notes (keyboard, MIDI devices, piano roll clicks) at the selected MIDI track.
     private func updateLiveTarget() {
-        guard let plan, let id = selectedTrack, project.track(id)?.kind == .midi,
+        guard let plan, let id = selectedTrack, let track = project.track(id), track.kind == .midi,
               let index = plan.trackOrder.firstIndex(where: { $0 == id }) else { liveTarget.node = -1; return }
         liveTarget.node = index
+        liveTarget.enabled = track.midiInput != nil
+        liveTarget.source = track.midiInput?.sourceUID
+        liveTarget.channel = track.midiInput?.channel
     }
 
     func noteOn(_ pitch: UInt8, velocity: UInt8 = 100) {
@@ -1004,7 +1026,7 @@ final class AppModel {
             let notes = (0..<8).map { i in MIDINote(tick: Tick(Int64(i) * 480), length: Tick(440), pitch: pitches[i % 4] + (i >= 4 ? 12 : 0), velocity: i % 2 == 0 ? 100 : 80) }
             return .midi(MIDIClip(start: 0, length: Tick(barTicks), loop: true, notes: notes))
         }
-        var keys = Track(name: "Keys", kind: .midi, colorIndex: 7, volumeDb: 3)
+        var keys = Track(name: "Keys", kind: .midi, colorIndex: 7, volumeDb: 3, midiInput: MIDIInputSelection())
         keys.devices = [DeviceSlot(format: "audiounit", identifier: "aumu/dls /appl", name: "Apple DLS Synth")]
         keys.slots = [SessionSlot(clip: arpeggio([57, 60, 64, 67])), SessionSlot(clip: arpeggio([53, 57, 60, 65]))]
         try? Command.insertTrack(track: keys, index: project.tracks.count).apply(to: &project)

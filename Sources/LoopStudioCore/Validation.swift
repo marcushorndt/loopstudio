@@ -8,6 +8,11 @@ public enum Routing {
         return result
     }
 
+    /// Tracks that `track` feeds: its output and sends, and every track that takes it as input.
+    public static func feeds(of track: Track, in project: Project) -> [TrackID] {
+        edges(of: track) + project.tracks.filter { $0.inputTrack == track.id }.map(\.id)
+    }
+
     /// True if the routing graph has a cycle (a track feeding itself, directly or through others).
     public static func hasCycle(_ project: Project) -> Bool {
         enum Mark { case visiting, done }
@@ -22,7 +27,7 @@ public enum Routing {
             }
             marks[id] = .visiting
             if let track = byID[id] {
-                for next in edges(of: track) where visit(next) { return true }
+                for next in feeds(of: track, in: project) where visit(next) { return true }
             }
             marks[id] = .done
             return false
@@ -49,6 +54,7 @@ public enum ProjectIssue: Hashable, Sendable, CustomStringConvertible {
     case inputWrongTrackKind(TrackID)
     case duplicatePortID(PortID)
     case launchTrackMissing(TrackID)
+    case inputTrackMissing(track: TrackID, source: TrackID)
 
     public var description: String {
         switch self {
@@ -69,6 +75,7 @@ public enum ProjectIssue: Hashable, Sendable, CustomStringConvertible {
         case .inputWrongTrackKind(let id): "track \(id) has an input that does not fit its kind"
         case .duplicatePortID(let id): "duplicate port ID \(id)"
         case .launchTrackMissing(let id): "a launch points at missing track \(id)"
+        case .inputTrackMissing(let track, let source): "track \(track) takes input from missing track \(source)"
         }
     }
 }
@@ -113,6 +120,7 @@ extension Project {
         }
         if Routing.hasCycle(self) { issues.append(.routeCycle) }
 
+        for t in allTracks { if let s = t.inputTrack, track(s) == nil { issues.append(.inputTrackMissing(track: t.id, source: s)) } }
         for launch in launches where track(launch.track) == nil { issues.append(.launchTrackMissing(launch.track)) }
 
         var portIDs = Set<PortID>()

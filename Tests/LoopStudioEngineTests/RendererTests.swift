@@ -284,3 +284,38 @@ private func writeSine(rate: Double, seconds: Double, channels: Int = 2) throws 
     let none = AudioBank.load(project: project) { _ in nil }
     #expect(none.failed[asset.id] == "file not found")
 }
+
+// MARK: Input from a track and sends-only output
+
+@Test func trackTakesAnotherTrackAsInput() {
+    var rig = Rig()
+    let a = rig.asset(seconds: 2) { _ in 0.25 }
+    let source = rig.track("Source", volume: -6)
+    rig.clip(a, on: source)
+    let listener = rig.track("Listener")
+    try! Command.setInputTrack(id: listener, source: source).apply(to: &rig.project)
+    let out = rig.render()
+    // Source reaches the master twice: through its own output and through the listener. -6 dB is x0.501.
+    #expect(abs(out.left[1_000] - 0.25 * 0.501_187 * 2) < 1e-4)
+    // Monitor off cuts the listener's copy.
+    try! Command.setMonitor(id: listener, mode: .off).apply(to: &rig.project)
+    #expect(abs(rig.render().left[1_000] - 0.25 * 0.501_187) < 1e-4)
+}
+
+@Test func sendsOnlyTrackHasNoDirectOutput() {
+    var rig = Rig()
+    let a = rig.asset(seconds: 2) { _ in 0.25 }
+    let t = rig.track("T")
+    rig.clip(a, on: t)
+    try! Command.setSendsOnly(id: t, sendsOnly: true).apply(to: &rig.project)
+    let out = rig.render(frames: 4_000)
+    #expect(out.left[1_000] == 0)
+}
+
+@Test func inputRoutingCannotCreateACycle() {
+    var rig = Rig()
+    let a = rig.track("A"), b = rig.track("B")
+    try! Command.setInputTrack(id: b, source: a).apply(to: &rig.project)
+    #expect(throws: (any Error).self) { try Command.setInputTrack(id: a, source: b).apply(to: &rig.project) }
+    #expect(throws: (any Error).self) { try Command.setInputTrack(id: a, source: a).apply(to: &rig.project) }
+}

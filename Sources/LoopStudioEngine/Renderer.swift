@@ -170,6 +170,7 @@ public final class Renderer {
 
             for send in node.sends where !send.preFader { addSend(send, l, r, startFrame: startFrame, frames: frames) }
             if let target = node.output { add(l, r, gain: 1, to: target, frames: frames) }
+            for tap in node.taps { add(l, r, gain: 1, to: tap, frames: frames) }
         }
     }
 

@@ -286,6 +286,11 @@ public struct Send: Hashable, Codable, Sendable {
     }
 }
 
+/// What a track lets through from its input (Live: Monitor In / Auto / Off).
+/// `auto` listens to the input while the track is not armed to record. Audio recording is not built yet,
+/// so for now `auto` and `input` both pass the input and `off` mutes it.
+public enum MonitorMode: String, Codable, Sendable, CaseIterable { case input, auto, off }
+
 public struct Track: Hashable, Codable, Sendable, Identifiable {
     public static let dbRange: ClosedRange<Double> = -96...12
 
@@ -314,6 +319,14 @@ public struct Track: Hashable, Codable, Sendable, Identifiable {
     /// Sends the output straight to this hardware port, instead of to `output` or the master.
     /// On the master track this is the main speaker output.
     public var hardwareOutput: PortID?
+    /// Audio tracks: take the sound of another track (after its fader) as input. Live: "Audio From" a track.
+    /// Optional, so older project files still load.
+    public var inputTrack: TrackID?
+    public var monitor: MonitorMode?
+    /// No direct output; the track is heard only through its sends. Live: "Audio To: Sends Only".
+    public var sendsOnly: Bool?
+    public var monitorMode: MonitorMode { monitor ?? .auto }
+    public var isSendsOnly: Bool { sendsOnly ?? false }
 
     public init(id: TrackID = TrackID(), name: String, kind: TrackKind, colorIndex: Int = 0,
                 volumeDb: Double = 0, pan: Double = 0, mute: Bool = false, solo: Bool = false,

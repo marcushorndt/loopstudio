@@ -73,5 +73,9 @@ struct LoopStudioApp: App {
                 AppAction.showShortcuts.button(model)
             }
         }
+
+        Settings {
+            AudioSettingsView().environment(model).preferredColorScheme(.dark)
+        }
     }
 }

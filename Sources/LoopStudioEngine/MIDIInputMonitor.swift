@@ -7,10 +7,10 @@ public final class MIDIInputMonitor: @unchecked Sendable {
     private var client = MIDIClientRef()
     private var port = MIDIPortRef()
     private let lock = NSLock()
-    private var _handler: (@Sendable (UInt8, UInt8, UInt8) -> Void)?
+    private var _handler: (@Sendable (UInt8, UInt8, UInt8, Int32) -> Void)?
 
-    /// Called on a CoreMIDI thread with status, data1, data2.
-    public var handler: (@Sendable (UInt8, UInt8, UInt8) -> Void)? {
+    /// Called on a CoreMIDI thread with status, data1, data2 and the unique ID of the source.
+    public var handler: (@Sendable (UInt8, UInt8, UInt8, Int32) -> Void)? {
         get { lock.lock(); defer { lock.unlock() }; return _handler }
         set { lock.lock(); _handler = newValue; lock.unlock() }
     }
@@ -22,8 +22,8 @@ public final class MIDIInputMonitor: @unchecked Sendable {
             let id = notification.pointee.messageID
             if id == .msgObjectAdded || id == .msgObjectRemoved || id == .msgSetupChanged { self?.connectAll() }
         }
-        MIDIInputPortCreateWithBlock(client, "Input" as CFString, &port) { [weak self] list, _ in
-            self?.receive(list)
+        MIDIInputPortCreateWithBlock(client, "Input" as CFString, &port) { [weak self] list, source in
+            self?.receive(list, source: Int32(truncatingIfNeeded: Int(bitPattern: source)))
         }
         connectAll()
     }
@@ -36,10 +36,15 @@ public final class MIDIInputMonitor: @unchecked Sendable {
     private func connectAll() {
         let n = MIDIGetNumberOfSources()
         sourceCount = n
-        for i in 0..<n { MIDIPortConnectSource(port, MIDIGetSource(i), nil) }
+        for i in 0..<n {
+            let source = MIDIGetSource(i)
+            var uid: Int32 = 0
+            MIDIObjectGetIntegerProperty(source, kMIDIPropertyUniqueID, &uid)
+            MIDIPortConnectSource(port, source, UnsafeMutableRawPointer(bitPattern: Int(uid)))
+        }
     }
 
-    private func receive(_ list: UnsafePointer<MIDIPacketList>) {
+    private func receive(_ list: UnsafePointer<MIDIPacketList>, source: Int32) {
         guard let handler else { return }
         var packet = UnsafeRawPointer(list).advanced(by: MemoryLayout<UInt32>.size).assumingMemoryBound(to: MIDIPacket.self)
         for _ in 0..<list.pointee.numPackets {
@@ -52,7 +57,7 @@ public final class MIDIInputMonitor: @unchecked Sendable {
                     if status >= 0xF0 { i += 1; continue }              // system messages are ignored
                     let size = (status & 0xF0 == 0xC0 || status & 0xF0 == 0xD0) ? 2 : 3
                     guard i + size <= length else { break }
-                    handler(status, raw[i + 1], size == 3 ? raw[i + 2] : 0)
+                    handler(status, raw[i + 1], size == 3 ? raw[i + 2] : 0, source)
                     i += size
                 }
             }

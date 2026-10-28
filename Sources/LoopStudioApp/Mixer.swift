@@ -1,4 +1,5 @@
 import LoopStudioCore
+import LoopStudioEngine
 import SwiftUI
 
 /// dB to meter position: -60 dB at the bottom, +6 dB at the top.
@@ -82,7 +83,7 @@ struct MixerStrip: View {
                 }
             }
 
-            if !isMaster { outputMenu }
+            if !isMaster { TrackIOSection(track: track) }
 
             HStack(spacing: 6) {
                 Fader(db: track.volumeDb) { model.apply(.setVolume(id: track.id, db: $0), key: "vol\(track.id)") }
@@ -119,19 +120,6 @@ struct MixerStrip: View {
         .dropDestination(for: String.self) { items, _ in drop(items) }
     }
 
-    /// Where the track sends its sound: the master, or a group or return track (a bus).
-    private var outputMenu: some View {
-        let options = model.project.tracks.filter { ($0.kind == .group || $0.kind == .returnTrack) && $0.id != track.id }
-        return Picker("", selection: Binding(
-            get: { track.output },
-            set: { model.apply(.setOutput(id: track.id, target: $0)) })) {
-            Text("Master").tag(TrackID?.none)
-            ForEach(options, id: \.id) { Text($0.name).tag(Optional($0.id)) }
-        }
-        .labelsHidden().controlSize(.mini)
-        .help("Output routing")
-    }
-
     private func drop(_ items: [String]) -> Bool {
         return model.dropDevices(items, on: track.id)
     }
@@ -144,5 +132,98 @@ struct MixerStrip: View {
                 .background(on ? tint : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 3))
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Inputs and outputs of a track, like the I/O section in Live.
+struct TrackIOSection: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+
+    private enum Out: Hashable { case master, sendsOnly, track(TrackID) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if track.kind == .audio { audioFrom }
+            if track.kind == .midi { midiFrom }
+            label("Audio To")
+            outputPicker
+        }
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text).font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
+    }
+
+    @ViewBuilder private var audioFrom: some View {
+        label("Audio From")
+        Picker("", selection: Binding(get: { track.inputTrack }, set: { model.apply(.setInputTrack(id: track.id, source: $0)) })) {
+            Text("No Input").tag(TrackID?.none)
+            Divider()
+            ForEach(model.project.tracks.filter { $0.id != track.id && $0.kind != .returnTrack }, id: \.id) { Text($0.name).tag(Optional($0.id)) }
+        }
+        .labelsHidden().controlSize(.mini).help("Take the sound of another track as input")
+        if track.inputTrack != nil {
+            HStack(spacing: 2) {
+                ForEach([(MonitorMode.input, "In"), (.auto, "Auto"), (.off, "Off")], id: \.1) { mode, name in
+                    Button { model.apply(.setMonitor(id: track.id, mode: mode)) } label: {
+                        Text(name).font(.system(size: 9, weight: .bold)).frame(maxWidth: .infinity, minHeight: 16)
+                            .foregroundStyle(track.monitorMode == mode ? .black : Theme.dim)
+                            .background(track.monitorMode == mode ? Theme.accent : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 3))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .help("Monitor. In and Auto pass the input. Off mutes it.")
+        }
+    }
+
+    @ViewBuilder private var midiFrom: some View {
+        label("MIDI From")
+        let sources = MIDIEndpointCatalog.sources()
+        Picker("", selection: Binding(
+            get: { track.midiInput?.sourceUID.map { Optional($0) } ?? (track.midiInput == nil ? Int32?.none : Int32?.some(Int32.min)) },
+            set: { choice in
+                if let choice, choice != Int32.min {
+                    let name = sources.first { $0.uniqueID == choice }?.name
+                    model.apply(.setMIDIInput(id: track.id, selection: MIDIInputSelection(sourceUID: choice, sourceName: name, channel: track.midiInput?.channel)))
+                } else if choice == Int32.min {
+                    model.apply(.setMIDIInput(id: track.id, selection: MIDIInputSelection(channel: track.midiInput?.channel)))
+                } else {
+                    model.apply(.setMIDIInput(id: track.id, selection: nil))
+                }
+            })) {
+            Text("All Ins").tag(Optional(Int32.min))
+            ForEach(sources, id: \.uniqueID) { Text($0.name).tag(Optional($0.uniqueID)) }
+            Divider()
+            Text("No Input").tag(Int32?.none)
+        }
+        .labelsHidden().controlSize(.mini)
+        if let input = track.midiInput {
+            Picker("", selection: Binding(get: { input.channel.map { Int($0) } ?? -1 },
+                                          set: { model.apply(.setMIDIInput(id: track.id, selection: MIDIInputSelection(sourceUID: input.sourceUID, sourceName: input.sourceName, channel: $0 < 0 ? nil : UInt8($0)))) })) {
+                Text("All Channels").tag(-1)
+                ForEach(0..<16, id: \.self) { Text("Ch \($0 + 1)").tag($0) }
+            }
+            .labelsHidden().controlSize(.mini)
+        }
+    }
+
+    private var outputPicker: some View {
+        let options = model.project.tracks.filter { ($0.kind == .group || $0.kind == .returnTrack) && $0.id != track.id }
+        let current: Out = track.isSendsOnly ? .sendsOnly : (track.output.map { .track($0) } ?? .master)
+        return Picker("", selection: Binding(get: { current }, set: { choice in
+            switch choice {
+            case .master: model.apply(.batch(commands: [.setSendsOnly(id: track.id, sendsOnly: false), .setOutput(id: track.id, target: nil)]))
+            case .sendsOnly: model.apply(.setSendsOnly(id: track.id, sendsOnly: true))
+            case .track(let id): model.apply(.batch(commands: [.setSendsOnly(id: track.id, sendsOnly: false), .setOutput(id: track.id, target: id)]))
+            }
+        })) {
+            Text("Master").tag(Out.master)
+            ForEach(options, id: \.id) { Text($0.name).tag(Out.track($0.id)) }
+            Divider()
+            Text("Sends Only").tag(Out.sendsOnly)
+        }
+        .labelsHidden().controlSize(.mini).help("Output routing")
     }
 }

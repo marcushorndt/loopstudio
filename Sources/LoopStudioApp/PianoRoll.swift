@@ -1,7 +1,8 @@
 import LoopStudioCore
 import SwiftUI
 
-private let lowPitch = 24, highPitch = 96
+/// The full MIDI range. The roll scrolls, and opens centred on the notes of the clip.
+private let lowPitch = 0, highPitch = 127
 private let rowHeight: CGFloat = 13
 private let keysWidth: CGFloat = 46
 private let grid = Int64(Tick.perQuarter / 4) // a sixteenth note

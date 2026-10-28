@@ -1,6 +1,6 @@
 # loopstudio architecture
 
-Status: 2026-10-28. Milestone 0 (single-loop player) and milestone 1 (core model, commands, undo, package format, journal, follow-action resolver) are done: 74 tests pass.
+Status: 2026-10-28. Milestones 0 and 1 are done, and the app covers most of milestones 3 to 10 (see section 16a). 233 tests pass.
 Decisions made: name `loopstudio`, minimum macOS 26, distribution left open (nothing in the design blocks a later release).
 This document sets the rules for everything after it.
 Edge cases, their rules, and creative ideas are in [edge-cases-and-ideas.md](edge-cases-and-ideas.md). Its section J lists the changes it made to this plan:
@@ -254,13 +254,17 @@ Tools to add as features land: `asset_import` (hash and copy a file into the pro
 - A project is a **package folder**: `project.json`, `audio/` (files named by SHA-256, so copies never duplicate), `cache/` (waveforms, warps, scan results; git-ignored; safe to delete).
 - JSON is written with sorted keys and stable formatting, so git diffs are small and reviewable.
 - `schemaVersion` in the file, with one migration function per version step and a test for each. Old files always open.
-- Saves are atomic: write to a temp file, then rename. Autosave keeps a rolling set of backups.
+- Saves are atomic as a whole. A save stages `tracks.new/` and `project.json.new` (unchanged track files are hard links), writes the `save.commit` marker, then swaps them in. A crash before the marker keeps the old save; a crash after it is finished on the next read or write (`ProjectPackage.recover`).
+- `journal.jsonl` holds every command since the last save, from the app and from the control tools. A save clears it in one step with the write (`ProjectStore.checkpoint`), so an edit during a save is either in the file or still in the journal. Opening a project replays what is left and marks it unsaved.
 
 ## 14. Concurrency
 
 - Swift 6 language mode, strict concurrency on, in every target.
 - Main actor: UI. `ProjectStore` actor: model, undo, jobs. Realtime thread: plain code, no actors, no async.
-- Data crosses to the realtime thread only as immutable plans (pointer swap) or small fixed-size messages (SPSC ring buffer). Data comes back through a second ring buffer (meters, playhead, underrun flags). The UI polls this at display rate.
+- Data crosses to the realtime thread only as immutable plans (pointer swap) or small fixed-size messages. Every other thread holds the engine lock for a few plain writes only; the callback takes it and waits (os_unfair_lock lends its priority), so it never drops a block or stops a clock.
+- A renderer swap keeps running effects, delay lines and held notes. Only the audio thread changes a running effect (`needsConfigure`), and on the first block it takes over the held notes of the old renderer; a note whose note-off is gone gets one at once.
+- Live MIDI names a track, not a node index. Audio capture goes through a preallocated SPSC ring (`CaptureRing`) to a writer queue (`CaptureWriter`); lost frames and write errors come back in the take.
+- Slow work stays off the main thread: warps are made by a worker while the clip keeps its last warped audio (`AudioBank.live()`), and opening a project decodes all samples in parallel.
 
 ## 15. Testing strategy
 
@@ -310,7 +314,8 @@ Tools to add as features land: `asset_import` (hash and copy a file into the pro
 | Delay compensation | Each node knows the latency of its plugins. A plan pass (`DelayCompensation.swift`) adds delay lines on the connections that skip a latent plugin, so all paths into a node line up. Sample accurate, same output for every block size. |
 | Done since | Audio recording with latency compensation, clip colours, clip names, several automation lanes per track in the arrangement, dummy-clip curves in clips, a multi-lane clip editor, keyboard navigation (arrows, Return), key 0, computer keyboard as MIDI keys (M), session slot copy and paste. |
 | Done since (2) | Warp marker editor, clip gain envelopes, plugin parameter automation, session clock, zinc themes (dark and light), resizable inspector, equal mixer strips. |
-| Open | Resampling (master as input), MIDI To, per-track hardware outputs, VST3 bridge, pinned return tracks in the arrangement, more MCP convenience tools. |
+| Done since (3) | Clip automation with slopes, unlinked and irregular loop lengths (bars:beats:sixteenths) and a move to track automation; playheads in the clip editors; atomic package save; the Codex audit (48 items): solo feeders, session take-over timing, instrument automation, fair follow-action budget, warped loops that follow tempo changes pass by pass, a beat grid click from the tempo and meter maps, Save As, Export Audio with hosted plugins and Session launches (offline plugin instances, latency removed), recording from Audio From (resampling), record into a Session slot, Capture Session into Arrangement, MIDI time stamps, crash recovery from the journal. |
+| Open | MIDI To, per-track hardware outputs, VST3 bridge, pinned return tracks in the arrangement, more MCP convenience tools, export of a range or of stems. |
 
 ## 17. Risks and the spikes that answer them
 

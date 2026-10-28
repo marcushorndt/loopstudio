@@ -18,6 +18,8 @@ public final class LiveEngine: @unchecked Sendable {
     private var renderer: Renderer?
     private var playing = false
     private var position: Int64 = 0
+    /// The session clock: like `position`, but it does not jump back at the loop end.
+    private var sessionPosition: Int64 = 0
     private var loop: Range<Int64>?
     private var resetPending = false
     private var silencePending = false
@@ -115,8 +117,15 @@ public final class LiveEngine: @unchecked Sendable {
     public var isPlaying: Bool { locked { playing } }
     /// The next frame to play.
     public var positionFrame: Int64 { locked { position } }
+    /// The session clock. Session launches count on it.
+    public var sessionFrame: Int64 { locked { sessionPosition } }
 
-    public func play() { locked { playing = true; countInRemaining = 0; stampPending = true } }
+    public func play() {
+        locked {
+            if !playing { sessionPosition = position }
+            playing = true; countInRemaining = 0; stampPending = true
+        }
+    }
 
     /// Host time at which the transport last began to play. For lining up a recording with the timeline.
     public var playStartHostTime: UInt64 { locked { startHost } }
@@ -129,6 +138,7 @@ public final class LiveEngine: @unchecked Sendable {
     /// Plays only the click for `beats` beats, then starts the transport. Instruments keep running meanwhile.
     public func playAfterCountIn(beats: Int) {
         locked {
+            if !playing { sessionPosition = position }
             guard beats > 0 else { playing = true; return }
             countInRemaining = Int64(beats) * beatFrames
             countInDone = 0
@@ -137,7 +147,14 @@ public final class LiveEngine: @unchecked Sendable {
 
     public var isCountingIn: Bool { locked { countInRemaining > 0 } }
     public func pause() { locked { playing = false; countInRemaining = 0; silencePending = true } }
-    public func seek(to frame: Int64) { locked { position = max(0, frame); resetPending = true } }
+    /// A jump moves the timeline. While playing, the session clock runs on, so session clips keep their place.
+    public func seek(to frame: Int64) {
+        locked {
+            position = max(0, frame)
+            if !playing { sessionPosition = position }
+            resetPending = true
+        }
+    }
 
     /// Queues a MIDI message for the instrument of a render node. Safe from any thread (a MIDI callback, the UI).
     public func sendLiveMIDI(node: Int, _ status: UInt8, _ data1: UInt8, _ data2: UInt8) {
@@ -207,9 +224,10 @@ public final class LiveEngine: @unchecked Sendable {
             if let loop, position < loop.upperBound {
                 n = min(n, Int(loop.upperBound - position))
             }
-            renderer.process(startFrame: position, frames: n, outLeft: left + done, outRight: right + done)
+            renderer.process(startFrame: position, sessionFrame: sessionPosition, frames: n, outLeft: left + done, outRight: right + done)
             if metronome { addClick(left + done, right + done, n, clock: position) }
             position += Int64(n)
+            sessionPosition += Int64(n)
             done += n
             if let loop, position >= loop.upperBound { position = loop.lowerBound; renderer.silenceNotes() }
         }

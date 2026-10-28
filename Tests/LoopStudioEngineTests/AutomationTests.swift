@@ -159,3 +159,36 @@ private func volumeLane(_ rig: Rig, _ points: [AutomationPoint]) -> Command {
     _ = try inverse.apply(to: &rig.project)
     #expect(rig.project == before)
 }
+
+/// The arrangement loop jumps the timeline back, but session clips run on the session clock.
+@Test func sessionClipsFollowTheSessionClockNotTheLoop() throws {
+    var rig = Rig()
+    guard case .audio(var c) = rig.track.clips[0] else { Issue.record("no clip"); return }
+    c.id = ClipID(); c.loop = true
+    let session = Track(name: "S", kind: .audio, slots: [SessionSlot(clip: .audio(c))])
+    try Command.insertTrack(track: session, index: 1).apply(to: &rig.project)
+    try Command.removeTrack(id: rig.track.id).apply(to: &rig.project)
+    rig.project.launches = [Launch(track: session.id, slot: 0, tick: 0)]
+    let sim = SessionSimulator.run(rig.project, horizon: 38_400)
+    let plan = RenderPlan.compile(rig.project, bank: rig.bank, session: sim)
+
+    func render(timeline: Int64, session: Int64) -> [Float] {
+        let renderer = Renderer(plan: plan, maxBlock: 512)
+        var l = [Float](repeating: 0, count: 512), r = l
+        l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in
+            renderer.process(startFrame: timeline, sessionFrame: session, frames: 512, outLeft: lp.baseAddress!, outRight: rp.baseAddress!)
+        } }
+        return l
+    }
+    // Same session clock, different timeline position (a loop jumped back): the same sound.
+    #expect(render(timeline: 96_000, session: 24_000) == render(timeline: 0, session: 24_000))
+    // A stop at a later session time stays a stop after the loop jumps back.
+    rig.project.launches.append(Launch(track: session.id, slot: nil, tick: 1_920))
+    let stopped = RenderPlan.compile(rig.project, bank: rig.bank, session: SessionSimulator.run(rig.project, horizon: 38_400))
+    let renderer = Renderer(plan: stopped, maxBlock: 512)
+    var l = [Float](repeating: 0, count: 512), r = l
+    l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in
+        renderer.process(startFrame: 0, sessionFrame: 72_000, frames: 512, outLeft: lp.baseAddress!, outRight: rp.baseAddress!)
+    } }
+    #expect(l.allSatisfy { $0 == 0 }, "timeline at 0, but the session clock is past the stop")
+}

@@ -10,8 +10,10 @@ struct ClipPlan {
     var gain: Float
     var fadeIn: Int64         // frames
     var fadeOut: Int64
-    /// Clip gain envelope in dB, in project frames.
+    /// Clip gain envelope in dB, in the same frames as `start`.
     var envelope: AutoSegment? = nil
+    /// A session clip: its frames count on the session clock, which never jumps back at the loop end.
+    var session = false
 }
 
 /// One envelope, in frames. Active inside [start, end).
@@ -21,6 +23,8 @@ struct AutoSegment {
     var frames: [Int64]
     var values: [Float]
     var curves: [Curve]
+    /// From a session dummy clip: its frames count on the session clock.
+    var session = false
 
     func value(at f: Int64) -> Float {
         guard let first = frames.first, let last = frames.last else { return 0 }
@@ -42,8 +46,12 @@ struct AutoSegment {
 struct AutoLane {
     var segments: [AutoSegment]
 
-    func value(at f: Int64) -> Float? {
-        for s in segments.reversed() where f >= s.start && f < s.end { return s.value(at: f) }
+    /// `f` is a timeline frame; `sessionOffset` turns it into a session frame for the session segments.
+    func value(at f: Int64, sessionOffset: Int64 = 0) -> Float? {
+        for s in segments.reversed() {
+            let g = s.session ? f + sessionOffset : f
+            if g >= s.start && g < s.end { return s.value(at: g) }
+        }
         return nil
     }
 }
@@ -93,6 +101,8 @@ struct NodePlan {
     /// A hosted instrument and the notes it plays, sorted by frame (note-off before note-on on the same frame).
     var instrument: AudioUnitEffect? = nil
     var midi: [MIDIEvent] = []
+    /// Notes of the session clips, in session frames.
+    var sessionMidi: [MIDIEvent] = []
     /// Nodes that take this node's sound as input, after the fader.
     var taps: [Int] = []
     /// Latency of the plugins on this node, in frames.
@@ -189,7 +199,10 @@ public struct RenderPlan {
                 guard case .dummy(let d)? = project.findClip(e.clip)?.clip else { continue }
                 let a = map.frame(at: e.startTick, sampleRate: rate).rawValue, b = map.frame(at: e.endTick, sampleRate: rate).rawValue
                 for lane in d.lanes {
-                    if let seg = segment(lane.points, origin: e.startTick, start: a, end: b) { segments[lane.target, default: []].append(seg) }
+                    if var seg = segment(lane.points, origin: e.startTick, start: a, end: b) {
+                        seg.session = true
+                        segments[lane.target, default: []].append(seg)
+                    }
                 }
             }
         }
@@ -265,16 +278,18 @@ public struct RenderPlan {
                     }
                     clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: 0, loop: c.loop,
                                           gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut),
-                                          envelope: envelope(c, from: e.startTick, start: start, end: end)))
+                                          envelope: envelope(c, from: e.startTick, start: start, end: end), session: true))
                 }
             }
             if t.kind == .midi || t.kind == .group || t.kind == .returnTrack { /* summing nodes or not rendered yet */ }
 
             var (chain, instrument) = effects(of: t, units: units, warnings: &warnings)
             chain = chain.map { var e = $0; e.auto = autoParams(e.device, of: t); return e }
-            var midi: [MIDIEvent] = []
+            var midi: [MIDIEvent] = [], sessionMidi: [MIDIEvent] = []
             if t.kind == .midi && !silent && instrument != nil {
-                midi = midiEvents(of: t, session: session, map: map, rate: rate, endFrame: &endFrame)
+                midi = midiEvents(of: t, session: nil, map: map, rate: rate, endFrame: &endFrame)
+                var ignored: Int64 = 0
+                sessionMidi = midiEvents(of: t, session: session, map: map, rate: rate, endFrame: &ignored, arrangement: false)
             } else if t.kind == .midi && !t.clips.isEmpty && instrument == nil {
                 warnings.append("MIDI track \"\(t.name)\" has no instrument")
             }
@@ -286,7 +301,7 @@ public struct RenderPlan {
                 sends: t.sends.compactMap { s in index[s.target].map {
                     SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader,
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
-                effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, midi: midi))
+                effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, midi: midi, sessionMidi: sessionMidi))
         }
 
         var masterEffects = effects(of: project.master, units: units, warnings: &warnings).0
@@ -354,7 +369,7 @@ public struct RenderPlan {
 
     /// Note on and off events for a MIDI track: arrangement clips plus the session clips that play.
     private static func midiEvents(of t: Track, session: SessionSimulation?, map: TempoMap, rate: Double,
-                                   endFrame: inout Int64) -> [MIDIEvent] {
+                                   endFrame: inout Int64, arrangement: Bool = true) -> [MIDIEvent] {
         var events: [MIDIEvent] = []
 
         func add(_ c: MIDIClip, origin: Tick, limit: Tick, repeating: Bool) {
@@ -378,7 +393,7 @@ public struct RenderPlan {
             } while repeating && origin.rawValue + length * pass < limit.rawValue
         }
 
-        for case .midi(let c) in t.clips { add(c, origin: c.start, limit: c.start + c.length, repeating: false) }
+        if arrangement { for case .midi(let c) in t.clips { add(c, origin: c.start, limit: c.start + c.length, repeating: false) } }
         if let session {
             for e in session.events where e.track == t.id {
                 for case let slot? in t.slots where slot.clip.id == e.clip {

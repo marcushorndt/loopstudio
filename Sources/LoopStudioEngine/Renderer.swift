@@ -14,6 +14,8 @@ public final class Renderer {
     private let nodeCount: Int
     private let buffers: UnsafeMutablePointer<Float> // per node: left block, right block
     private let peaks: UnsafeMutablePointer<Float>   // per node: largest sample since the last `takePeak`
+    /// Session clock minus timeline clock for the block being rendered.
+    private var sessionOffset: Int64 = 0
 
     private final class Slot {
         let effect: DSPEffect?
@@ -127,8 +129,8 @@ public final class Renderer {
         r.update(from: scratchOut + maxBlock, count: frames)
     }
 
-    private func play(_ unit: AudioUnitEffect, _ events: [MIDIEvent], into l: UnsafeMutablePointer<Float>,
-                      _ r: UnsafeMutablePointer<Float>, startFrame: Int64, frames: Int) {
+    /// Queues the notes of one block. `startFrame` is in the frames of `events`.
+    private func send(_ unit: AudioUnitEffect, _ events: [MIDIEvent], startFrame: Int64, frames: Int) {
         // First event at or after the block start (events are sorted by frame).
         var lo = 0, hi = events.count
         while lo < hi {
@@ -141,6 +143,9 @@ public final class Renderer {
             unit.sendMIDI(e.status, e.data1, e.data2, sampleOffset: Int(e.frame - startFrame))
             lo += 1
         }
+    }
+
+    private func play(_ unit: AudioUnitEffect, into l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
         scratchIn.update(repeating: 0, count: 2 * maxBlock)
         guard unit.process(frames: frames, input: inPointers, output: outPointers) == noErr else { return }
         for k in 0..<frames { l[k] += scratchOut[k]; r[k] += scratchOut[maxBlock + k] }
@@ -160,17 +165,28 @@ public final class Renderer {
     /// Renders `frames` frames that start at project frame `startFrame` into `outLeft` and `outRight`.
     /// With `transport` false the arrangement and session clips and the MIDI clips stay silent, but hosted
     /// instruments and effects keep running. That is how a stopped project still plays live notes and rings out.
-    public func process(startFrame: Int64, frames: Int, transport: Bool = true,
+    /// `sessionFrame` is the session clock at the block start. It runs on when the arrangement loop jumps back,
+    /// so session clips and their automation do not restart at the loop end. Offline it equals `startFrame`.
+    public func process(startFrame: Int64, sessionFrame: Int64? = nil, frames: Int, transport: Bool = true,
                         outLeft: UnsafeMutablePointer<Float>, outRight: UnsafeMutablePointer<Float>) {
         precondition(frames <= maxBlock)
+        sessionOffset = (sessionFrame ?? startFrame) - startFrame
         buffers.update(repeating: 0, count: nodeCount * 2 * maxBlock)
 
         for i in 0..<nodeCount {
             let node = nodes[i]
             let l = left(i), r = right(i)
 
-            if transport { for clip in node.clips { mix(clip, into: l, r, blockStart: startFrame, frames: frames) } }
-            if let instrument = node.instrument { play(instrument, transport ? node.midi : [], into: l, r, startFrame: startFrame, frames: frames) }
+            if transport {
+                for clip in node.clips { mix(clip, into: l, r, blockStart: clip.session ? startFrame + sessionOffset : startFrame, frames: frames) }
+            }
+            if let instrument = node.instrument {
+                if transport {
+                    send(instrument, node.midi, startFrame: startFrame, frames: frames)
+                    send(instrument, node.sessionMidi, startFrame: startFrame + sessionOffset, frames: frames)
+                }
+                play(instrument, into: l, r, frames: frames)
+            }
             for slot in chains[i] where !slot.bypassed { runSlot(slot, l, r, startFrame: startFrame, frames: frames) }
 
             for (k, send) in node.sends.enumerated() where send.preFader { sendOut(send, sendLines[i][k], l, r, startFrame: startFrame, frames: frames) }
@@ -208,9 +224,9 @@ public final class Renderer {
 
     private func gains(_ node: NodePlan, at frame: Int64) -> (Float, Float) {
         var volume = node.gain
-        if let lane = node.volumeAuto, let v = lane.value(at: frame) { volume = node.silenced ? 0 : RenderPlan.dB(Double(v)) }
+        if let lane = node.volumeAuto, let v = lane.value(at: frame, sessionOffset: sessionOffset) { volume = node.silenced ? 0 : RenderPlan.dB(Double(v)) }
         var pl = node.panLeft, pr = node.panRight
-        if let lane = node.panAuto, let v = lane.value(at: frame) { (pl, pr) = RenderPlan.balance(Double(v)) }
+        if let lane = node.panAuto, let v = lane.value(at: frame, sessionOffset: sessionOffset) { (pl, pr) = RenderPlan.balance(Double(v)) }
         return (volume * pl, volume * pr)
     }
 
@@ -245,7 +261,7 @@ public final class Renderer {
         guard let lane = send.auto else { add(l, r, gain: send.gain, to: send.target, frames: frames); return }
         let tl = left(send.target), tr = right(send.target)
         func gain(_ f: Int64) -> Float {
-            guard let v = lane.value(at: f) else { return send.gain }
+            guard let v = lane.value(at: f, sessionOffset: sessionOffset) else { return send.gain }
             return v <= -59.9 ? 0 : RenderPlan.dB(Double(v))
         }
         eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, t0 in
@@ -265,7 +281,7 @@ public final class Renderer {
             if !slot.unitAuto.isEmpty {
                 eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
                     for (address, lane) in slot.unitAuto {
-                        if let v = lane.value(at: grid + 32) { unit.scheduleParameter(address, v, sampleOffset: offset, ramp: count) }
+                        if let v = lane.value(at: grid + 32, sessionOffset: sessionOffset) { unit.scheduleParameter(address, v, sampleOffset: offset, ramp: count) }
                     }
                 }
             }
@@ -277,7 +293,7 @@ public final class Renderer {
         eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
             var changed = false
             for (key, lane) in slot.auto {
-                if let v = lane.value(at: grid), slot.live[key] != Double(v) { slot.live[key] = Double(v); changed = true }
+                if let v = lane.value(at: grid, sessionOffset: sessionOffset), slot.live[key] != Double(v) { slot.live[key] = Double(v); changed = true }
             }
             if changed { effect.configure(slot.live) }
             effect.process(l + offset, r + offset, frames: count)

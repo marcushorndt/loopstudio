@@ -163,6 +163,7 @@ final class AppModel {
         do { try engine.start() } catch { status = "No audio output: \(error.localizedDescription)" }
         applyAudioSettings()
         startMIDI()
+        watchHorizon()
         audioFolders = (UserDefaults.standard.stringArray(forKey: "audioFolders") ?? []).map { URL(fileURLWithPath: $0) }
 
         if let path = UserDefaults.standard.string(forKey: "lastProject"), FileManager.default.fileExists(atPath: path) {
@@ -185,7 +186,7 @@ final class AppModel {
                 let peak = meterLevel(track: nil)
                 maxPeak = max(maxPeak, peak)
                 let playing = project.tracks.filter {
-                    if case .playing = slotState(track: $0, row: 0, at: currentTick) { true } else { false }
+                    if case .playing = slotState(track: $0, row: 0, at: sessionTick) { true } else { false }
                 }.map(\.name)
                 let perTrack = project.tracks.map { "\($0.name)=\(String(format: "%.2f", meterLevel(track: $0.id)))" }.joined(separator: " ")
                 FileHandle.standardError.write(Data("selftest tracks \(perTrack)\n".utf8))
@@ -202,6 +203,8 @@ final class AppModel {
     var bpm: Double { project.tempoMap.bpm(at: 0) }
     var currentFrame: Int64 { engine.positionFrame }
     var currentTick: Tick { project.tempoMap.tick(atFrame: Frame(currentFrame), sampleRate: sampleRate) }
+    /// The session clock as a tick. Launches and slot states use it; it does not jump back at the loop end.
+    var sessionTick: Tick { project.tempoMap.tick(atFrame: Frame(engine.sessionFrame), sampleRate: sampleRate) }
     var ticksPerBar: Int64 { project.timeSignatures.first?.signature.ticksPerBar.rawValue ?? 3840 }
     var barTicks: Int64 { ticksPerBar }
 
@@ -491,7 +494,7 @@ final class AppModel {
     func launch(track: TrackID, row: Int) {
         guard let t = project.track(track), row < t.slots.count, t.slots[row] != nil else { return }
         startIfStopped()
-        performance.append(Launch(track: track, slot: row, tick: currentTick))
+        performance.append(Launch(track: track, slot: row, tick: sessionTick))
         rebuild()
     }
 
@@ -499,14 +502,14 @@ final class AppModel {
         let ids = project.tracks.filter { row < $0.slots.count && $0.slots[row] != nil }.map(\.id)
         guard !ids.isEmpty else { return }
         startIfStopped()
-        let now = currentTick
+        let now = sessionTick
         for id in ids { performance.append(Launch(track: id, slot: row, tick: now)) }
         rebuild()
     }
 
     func stopTrack(_ track: TrackID) {
         guard transportPlaying else { return }
-        performance.append(Launch(track: track, slot: nil, tick: project.barBoundary(atOrAfter: currentTick)))
+        performance.append(Launch(track: track, slot: nil, tick: project.barBoundary(atOrAfter: sessionTick)))
         rebuild()
     }
 
@@ -516,7 +519,7 @@ final class AppModel {
         case .master: stopAllClips()
         case .returnTrack, .group:
             guard transportPlaying else { return }
-            let at = project.barBoundary(atOrAfter: currentTick)
+            let at = project.barBoundary(atOrAfter: sessionTick)
             for t in project.tracks where (t.output == track.id || t.id == track.id) && !t.slots.isEmpty { performance.append(Launch(track: t.id, slot: nil, tick: at)) }
             rebuild()
         default: stopTrack(track.id)
@@ -525,7 +528,7 @@ final class AppModel {
 
     func stopAllClips() {
         guard transportPlaying else { return }
-        let at = project.barBoundary(atOrAfter: currentTick)
+        let at = project.barBoundary(atOrAfter: sessionTick)
         for t in project.tracks where !t.slots.isEmpty { performance.append(Launch(track: t.id, slot: nil, tick: at)) }
         rebuild()
     }
@@ -955,6 +958,19 @@ final class AppModel {
 
     // MARK: Engine plan
 
+    /// How far the current session plan reaches.
+    @ObservationIgnored private var planHorizon = Tick(0)
+
+    /// Rebuilds the plan before the session clock reaches its end. Checked every few seconds.
+    private func watchHorizon() {
+        Task { @MainActor [weak self] in
+            while let self {
+                try? await Task.sleep(for: .seconds(3))
+                if transportPlaying, !performance.isEmpty, sessionTick.rawValue > planHorizon.rawValue - barTicks * 100 { rebuild() }
+            }
+        }
+    }
+
     private func rebuild() {
         var p = project
         p.launches = performance
@@ -962,7 +978,9 @@ final class AppModel {
         let launched = Set(performance.map(\.track))
         for i in p.tracks.indices where launched.contains(p.tracks[i].id) { p.tracks[i].clips = [] }
 
-        let horizon = Tick(barTicks * 300)
+        // The session clock runs on past the loop end, so the plan reaches 300 bars past it, and is extended in time.
+        let horizon = Tick(max(0, sessionTick.rawValue) + barTicks * 300)
+        planHorizon = horizon
         simulation = SessionSimulator.run(p, horizon: horizon)
         let compiled = RenderPlan.compile(p, bank: bank, session: simulation, units: host.units)
         plan = compiled

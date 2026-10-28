@@ -15,7 +15,18 @@ public final class Renderer {
     private let buffers: UnsafeMutablePointer<Float> // per node: left block, right block
     private let peaks: UnsafeMutablePointer<Float>   // per node: largest sample since the last `takePeak`
 
-    private struct Slot { var effect: DSPEffect?; var unit: AudioUnitEffect?; var bypassed: Bool }
+    private final class Slot {
+        let effect: DSPEffect?
+        let unit: AudioUnitEffect?
+        let bypassed: Bool
+        let auto: [(key: String, lane: AutoLane)]
+        var live: [String: Double]
+        init(effect: DSPEffect?, unit: AudioUnitEffect?, bypassed: Bool, auto: [String: AutoLane], params: [String: Double]) {
+            self.effect = effect; self.unit = unit; self.bypassed = bypassed
+            self.auto = auto.map { ($0.key, $0.value) }.sorted { $0.0 < $1.0 }
+            self.live = params
+        }
+    }
     private let scratchIn: UnsafeMutablePointer<Float>
     private let scratchOut: UnsafeMutablePointer<Float>
     private let inPointers: UnsafeMutablePointer<UnsafePointer<Float>>
@@ -31,7 +42,7 @@ public final class Renderer {
         for node in plan.nodes {
             var chain: [Slot] = []
             for e in node.effects {
-                if let unit = e.unit { chain.append(Slot(effect: nil, unit: unit, bypassed: e.bypassed)); continue }
+                if let unit = e.unit { chain.append(Slot(effect: nil, unit: unit, bypassed: e.bypassed, auto: [:], params: [:])); continue }
                 let effect: DSPEffect
                 if let kept = old?.instances[e.device], kept.spec.id == e.kind, kept.sampleRate == plan.sampleRate {
                     effect = kept
@@ -40,7 +51,7 @@ public final class Renderer {
                 } else { continue }
                 effect.configure(e.params)
                 made[e.device] = effect
-                chain.append(Slot(effect: effect, unit: nil, bypassed: e.bypassed))
+                chain.append(Slot(effect: effect, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params))
             }
             built.append(chain)
         }
@@ -144,33 +155,104 @@ public final class Renderer {
 
             if transport { for clip in node.clips { mix(clip, into: l, r, blockStart: startFrame, frames: frames) } }
             if let instrument = node.instrument { play(instrument, transport ? node.midi : [], into: l, r, startFrame: startFrame, frames: frames) }
-            for slot in chains[i] where !slot.bypassed {
-                if let effect = slot.effect { effect.process(l, r, frames: frames) }
-                else if let unit = slot.unit { run(unit, l, r, frames: frames) }
-            }
+            for slot in chains[i] where !slot.bypassed { runSlot(slot, l, r, startFrame: startFrame, frames: frames) }
 
-            for send in node.sends where send.preFader { add(l, r, gain: send.gain, to: send.target, frames: frames) }
+            for send in node.sends where send.preFader { addSend(send, l, r, startFrame: startFrame, frames: frames) }
 
+            let peak: Float
             if node.isMaster {
-                let gl = node.gain * node.panLeft, gr = node.gain * node.panRight
-                var peak: Float = 0
-                for k in 0..<frames {
-                    outLeft[k] = l[k] * gl; outRight[k] = r[k] * gr
-                    peak = max(peak, abs(outLeft[k]), abs(outRight[k]))
-                }
-                peaks[i] = max(peaks[i], peak)
-                continue
-            }
-
-            let gl = node.gain * node.panLeft, gr = node.gain * node.panRight
-            var peak: Float = 0
-            for k in 0..<frames {
-                l[k] *= gl; r[k] *= gr
-                peak = max(peak, abs(l[k]), abs(r[k]))
+                peak = fader(node, l, r, outLeft, outRight, startFrame: startFrame, frames: frames)
+            } else {
+                peak = fader(node, l, r, l, r, startFrame: startFrame, frames: frames)
             }
             peaks[i] = max(peaks[i], peak)
-            for send in node.sends where !send.preFader { add(l, r, gain: send.gain, to: send.target, frames: frames) }
+            if node.isMaster { continue }
+
+            for send in node.sends where !send.preFader { addSend(send, l, r, startFrame: startFrame, frames: frames) }
             if let target = node.output { add(l, r, gain: 1, to: target, frames: frames) }
+        }
+    }
+
+    // MARK: Automation
+
+    /// Walks a block in pieces that end on multiples of 32 absolute frames.
+    /// Automation is evaluated on that grid, so the result does not depend on how the host cuts blocks.
+    @inline(__always)
+    private func eachGridChunk(startFrame: Int64, frames: Int, _ body: (_ offset: Int, _ count: Int, _ gridStart: Int64, _ position: Float) -> Void) {
+        var k = 0
+        while k < frames {
+            let f = startFrame + Int64(k)
+            let gridStart = (f >> 5) << 5
+            let count = min(frames - k, Int(gridStart + 32 - f))
+            body(k, count, gridStart, Float(f - gridStart) / 32)
+            k += count
+        }
+    }
+
+    private func gains(_ node: NodePlan, at frame: Int64) -> (Float, Float) {
+        var volume = node.gain
+        if let lane = node.volumeAuto, let v = lane.value(at: frame) { volume = node.silenced ? 0 : RenderPlan.dB(Double(v)) }
+        var pl = node.panLeft, pr = node.panRight
+        if let lane = node.panAuto, let v = lane.value(at: frame) { (pl, pr) = RenderPlan.balance(Double(v)) }
+        return (volume * pl, volume * pr)
+    }
+
+    /// Applies volume and pan from `l`, `r` into `outL`, `outR` (the same memory for a normal track). Returns the peak.
+    private func fader(_ node: NodePlan, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
+                       _ outL: UnsafeMutablePointer<Float>, _ outR: UnsafeMutablePointer<Float>,
+                       startFrame: Int64, frames: Int) -> Float {
+        var peak: Float = 0
+        if node.volumeAuto == nil && node.panAuto == nil {
+            let gl = node.gain * node.panLeft, gr = node.gain * node.panRight
+            for k in 0..<frames {
+                let a = l[k] * gl, b = r[k] * gr
+                outL[k] = a; outR[k] = b
+                peak = max(peak, abs(a), abs(b))
+            }
+            return peak
+        }
+        eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, t0 in
+            let (al, ar) = gains(node, at: grid), (bl, br) = gains(node, at: grid + 32)
+            for j in 0..<count {
+                let t = t0 + Float(j) / 32
+                let a = l[offset + j] * (al + (bl - al) * t), b = r[offset + j] * (ar + (br - ar) * t)
+                outL[offset + j] = a; outR[offset + j] = b
+                peak = max(peak, abs(a), abs(b))
+            }
+        }
+        return peak
+    }
+
+    private func addSend(_ send: SendPlan, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
+                         startFrame: Int64, frames: Int) {
+        guard let lane = send.auto else { add(l, r, gain: send.gain, to: send.target, frames: frames); return }
+        let tl = left(send.target), tr = right(send.target)
+        func gain(_ f: Int64) -> Float {
+            guard let v = lane.value(at: f) else { return send.gain }
+            return v <= -59.9 ? 0 : RenderPlan.dB(Double(v))
+        }
+        eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, t0 in
+            let a = gain(grid), b = gain(grid + 32)
+            for j in 0..<count {
+                let g = a + (b - a) * (t0 + Float(j) / 32)
+                tl[offset + j] += l[offset + j] * g; tr[offset + j] += r[offset + j] * g
+            }
+        }
+    }
+
+    /// Runs one effect. A built-in effect with automated knobs gets its values set at every grid step.
+    private func runSlot(_ slot: Slot, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
+                         startFrame: Int64, frames: Int) {
+        if let unit = slot.unit { run(unit, l, r, frames: frames); return }
+        guard let effect = slot.effect else { return }
+        guard !slot.auto.isEmpty else { effect.process(l, r, frames: frames); return }
+        eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
+            var changed = false
+            for (key, lane) in slot.auto {
+                if let v = lane.value(at: grid), slot.live[key] != Double(v) { slot.live[key] = Double(v); changed = true }
+            }
+            if changed { effect.configure(slot.live) }
+            effect.process(l + offset, r + offset, frames: count)
         }
     }
 

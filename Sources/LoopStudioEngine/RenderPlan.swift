@@ -12,11 +12,47 @@ struct ClipPlan {
     var fadeOut: Int64
 }
 
+/// One envelope, in frames. Active inside [start, end).
+struct AutoSegment {
+    var start: Int64
+    var end: Int64
+    var frames: [Int64]
+    var values: [Float]
+    var curves: [Curve]
+
+    func value(at f: Int64) -> Float {
+        guard let first = frames.first, let last = frames.last else { return 0 }
+        if f <= first { return values[0] }
+        if f >= last { return values[values.count - 1] }
+        var lo = 0, hi = frames.count - 1
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2
+            if frames[mid] <= f { lo = mid } else { hi = mid }
+        }
+        let t = Double(f - frames[lo]) / Double(max(1, frames[hi] - frames[lo]))
+        let shaped = Float(AutomationMath.shape(curves[lo], t))
+        return values[lo] + (values[hi] - values[lo]) * shaped
+    }
+}
+
+/// All envelopes that move one parameter. The arrangement lane comes first; dummy clips that play
+/// override it while they play (the one that started last wins).
+struct AutoLane {
+    var segments: [AutoSegment]
+
+    func value(at f: Int64) -> Float? {
+        for s in segments.reversed() where f >= s.start && f < s.end { return s.value(at: f) }
+        return nil
+    }
+}
+
 struct EffectPlan {
     var device: DeviceID
     var kind: String
     var params: [String: Double]
     var bypassed: Bool
+    /// Automated parameters by key.
+    var auto: [String: AutoLane] = [:]
     /// A hosted Audio Unit effect. `nil` for a built-in one.
     var unit: AudioUnitEffect? = nil
 }
@@ -32,6 +68,7 @@ struct SendPlan {
     var target: Int
     var gain: Float
     var preFader: Bool
+    var auto: AutoLane? = nil
 }
 
 struct NodePlan {
@@ -45,6 +82,10 @@ struct NodePlan {
     var output: Int?
     var sends: [SendPlan]
     var effects: [EffectPlan] = []
+    /// Muted, or silenced by solo. The fader automation does not bring it back.
+    var silenced = false
+    var volumeAuto: AutoLane? = nil
+    var panAuto: AutoLane? = nil
     /// A hosted instrument and the notes it plays, sorted by frame (note-off before note-on on the same frame).
     var instrument: AudioUnitEffect? = nil
     var midi: [MIDIEvent] = []
@@ -117,6 +158,38 @@ public struct RenderPlan {
         var nodes: [NodePlan] = []
         var endFrame: Int64 = 0
 
+        // Envelopes by parameter: the track lanes, then the dummy clips that play.
+        var segments: [ParameterAddress: [AutoSegment]] = [:]
+        func segment(_ points: [AutomationPoint], origin: Tick, start: Int64, end: Int64) -> AutoSegment? {
+            guard !points.isEmpty else { return nil }
+            return AutoSegment(start: start, end: end,
+                               frames: points.map { map.frame(at: origin + $0.tick, sampleRate: rate).rawValue },
+                               values: points.map { Float($0.value) }, curves: points.map(\.curve))
+        }
+        for t in project.allTracks {
+            for lane in t.automation {
+                if let seg = segment(lane.points, origin: 0, start: Int64.min, end: Int64.max) { segments[lane.target, default: []].append(seg) }
+            }
+        }
+        if let session {
+            for e in session.events.sorted(by: { $0.startTick < $1.startTick }) {
+                guard case .dummy(let d)? = project.findClip(e.clip)?.clip else { continue }
+                let a = map.frame(at: e.startTick, sampleRate: rate).rawValue, b = map.frame(at: e.endTick, sampleRate: rate).rawValue
+                for lane in d.lanes {
+                    if let seg = segment(lane.points, origin: e.startTick, start: a, end: b) { segments[lane.target, default: []].append(seg) }
+                }
+            }
+        }
+        func lane(_ node: UUID, _ key: String) -> AutoLane? {
+            segments[ParameterAddress(node: node, parameter: key)].map { AutoLane(segments: $0) }
+        }
+        func autoParams(_ device: DeviceID, of track: Track) -> [String: AutoLane] {
+            var result: [String: AutoLane] = [:]
+            guard let d = track.devices.first(where: { $0.id == device }), let spec = BuiltInEffects.spec(d.identifier) else { return result }
+            for p in spec.params { if let l = lane(device.rawValue, p.key) { result[p.key] = l } }
+            return result
+        }
+
         for id in order {
             let t = project.track(id)!
             if t.hardwareOutput != nil { warnings.append("track \"\(t.name)\" goes straight to a hardware port and is not in the master mix") }
@@ -169,7 +242,8 @@ public struct RenderPlan {
             }
             if t.kind == .midi || t.kind == .group || t.kind == .returnTrack { /* summing nodes or not rendered yet */ }
 
-            let (chain, instrument) = effects(of: t, units: units, warnings: &warnings)
+            var (chain, instrument) = effects(of: t, units: units, warnings: &warnings)
+            chain = chain.map { var e = $0; e.auto = autoParams(e.device, of: t); return e }
             var midi: [MIDIEvent] = []
             if t.kind == .midi && !silent && instrument != nil {
                 midi = midiEvents(of: t, session: session, map: map, rate: rate, endFrame: &endFrame)
@@ -181,14 +255,19 @@ public struct RenderPlan {
             nodes.append(NodePlan(
                 isMaster: false, clips: clips, gain: silent ? 0 : dB(t.volumeDb), panLeft: pl, panRight: pr,
                 output: t.output.flatMap { index[$0] } ?? masterIndex,
-                sends: t.sends.compactMap { s in index[s.target].map { SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader) } },
-                effects: chain, instrument: instrument, midi: midi))
+                sends: t.sends.compactMap { s in index[s.target].map {
+                    SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader,
+                             auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
+                effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, midi: midi))
         }
 
+        var masterEffects = effects(of: project.master, units: units, warnings: &warnings).0
+        masterEffects = masterEffects.map { var e = $0; e.auto = autoParams(e.device, of: project.master); return e }
         let (ml, mr) = balance(project.master.pan)
         nodes.append(NodePlan(isMaster: true, clips: [], gain: project.master.mute ? 0 : dB(project.master.volumeDb),
                               panLeft: ml, panRight: mr, output: nil, sends: [],
-                              effects: effects(of: project.master, units: units, warnings: &warnings).0))
+                              effects: masterEffects, silenced: project.master.mute,
+                              volumeAuto: lane(project.master.id.rawValue, "volume"), panAuto: lane(project.master.id.rawValue, "pan")))
         return RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings,
                           trackOrder: order.map { Optional($0) } + [nil])
     }

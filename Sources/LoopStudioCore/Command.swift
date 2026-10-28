@@ -37,6 +37,10 @@ public enum Command: Codable, Sendable {
     case moveClip(clip: ClipID, toTrack: TrackID, start: Tick)
     case setClipRange(clip: ClipID, start: Tick, length: Tick)
     case setClipLoop(clip: ClipID, loop: Bool)
+    /// Sets the envelope of one parameter on a track. Empty points remove the lane.
+    case setAutomation(track: TrackID, target: ParameterAddress, points: [AutomationPoint])
+    /// Sets the envelope of one parameter inside a dummy clip (ticks relative to the clip start).
+    case setDummyAutomation(clip: ClipID, target: ParameterAddress, points: [AutomationPoint])
     /// Replaces the notes of a MIDI clip. Notes are kept sorted by time, then pitch.
     case setMIDINotes(clip: ClipID, notes: [MIDINote])
     /// Gain, fades and mute of an audio clip.
@@ -93,6 +97,14 @@ extension Command {
 private let maxSlotIndex = 9_999
 
 extension Project {
+    /// Sorted by time, one point per tick (the later one wins), finite numbers only.
+    static func cleanPoints(_ points: [AutomationPoint]) throws -> [AutomationPoint] {
+        guard points.allSatisfy({ $0.value.isFinite }) else { throw CommandError.invalidValue("automation value is not a number") }
+        var byTick: [Tick: AutomationPoint] = [:]
+        for p in points where p.tick.rawValue >= 0 { byTick[p.tick] = p }
+        return byTick.values.sorted { $0.tick < $1.tick }
+    }
+
     mutating func perform(_ command: Command) throws -> Command {
         switch command {
         case .batch(let commands):
@@ -219,6 +231,25 @@ extension Project {
             }
             try withTrack(trackID) { t in try t.replaceClip(changed) }
             return .setClipLoop(clip: id, loop: old)
+
+        case .setAutomation(let trackID, let target, let points):
+            let clean = try Self.cleanPoints(points)
+            return try withTrack(trackID) { t in
+                let old = t.automation.first { $0.target == target }?.points ?? []
+                t.automation.removeAll { $0.target == target }
+                if !clean.isEmpty { t.automation.append(AutomationLane(target: target, points: clean)) }
+                return .setAutomation(track: trackID, target: target, points: old)
+            }
+
+        case .setDummyAutomation(let id, let target, let points):
+            let clean = try Self.cleanPoints(points)
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            guard case .dummy(var d) = clip else { throw CommandError.invalidValue("only dummy clips carry automation") }
+            let old = d.lanes.first { $0.target == target }?.points ?? []
+            d.lanes.removeAll { $0.target == target }
+            if !clean.isEmpty { d.lanes.append(AutomationLane(target: target, points: clean)) }
+            try withTrack(trackID) { t in try t.replaceClip(.dummy(d)) }
+            return .setDummyAutomation(clip: id, target: target, points: old)
 
         case .setMIDINotes(let id, let notes):
             guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }

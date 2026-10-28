@@ -82,17 +82,17 @@ struct DeviceChainView: View {
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .leading, spacing: 8) {
-                        SectionHeader(title: kindLabel(track.kind)) {
-                            PillMenu(label: "Automate") { AutomationLaneToggles(track: track) }
-                        }
                         HStack(spacing: 6) {
                             RoundedRectangle(cornerRadius: 2).fill(Theme.track(track.colorIndex)).frame(width: 8, height: 8)
                             Text(track.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                            Spacer(minLength: 4)
+                            PillMenu(label: "Automate") { AutomationLaneToggles(track: track) }
                         }
-                        Text(track.devices.isEmpty ? "No devices" : "\(track.devices.count) device\(track.devices.count == 1 ? "" : "s")")
-                            .font(.caption).foregroundStyle(Theme.dim)
+                        .frame(height: 22)
+                        Text(kindLabel(track.kind) + " · " + (track.devices.isEmpty ? "no devices" : "\(track.devices.count) device\(track.devices.count == 1 ? "" : "s")"))
+                            .font(.system(size: 10)).foregroundStyle(Theme.dim)
                     }
-                    .frame(width: 180, alignment: .leading)
+                    .frame(width: 230, alignment: .leading)
                     ForEach(track.devices, id: \.id) { DeviceCard(track: track, device: $0) }
                     emptySlot(track)
                     Spacer(minLength: 0)

@@ -112,6 +112,8 @@ final class AppModel {
     @ObservationIgnored let audioRecorder = AudioInputRecorder()
     var recordingAudio = false
     var recordTrackID: TrackID?
+    /// Timeline frame minus session frame when a MIDI take began. Turns its session-clock stamps into timeline frames.
+    @ObservationIgnored var recordFrameOffset: Int64 = 0
     /// Sound card choice. It belongs to this Mac, not to a project. `nil` means the system default.
     var outputUID: String? = UserDefaults.standard.string(forKey: "outputUID") {
         didSet { UserDefaults.standard.set(outputUID, forKey: "outputUID") }
@@ -290,6 +292,10 @@ final class AppModel {
             return
         }
         recordStartTick = currentTick
+        // The take belongs to this track, even if the selection changes while it records.
+        recordTrackID = selectedTrack
+        // Notes are stamped on the session clock, which does not jump back at the loop end.
+        recordFrameOffset = engine.positionFrame - engine.sessionFrame
         recorder.begin()
         recording = true
         updateMetronome()
@@ -305,14 +311,16 @@ final class AppModel {
         recordArmed = false
         if recordingAudio { finishAudioRecording(); return }
         let events = recorder.end()
-        guard let id = selectedTrack else { return }
-        let endFrame = engine.positionFrame
+        guard let id = recordTrackID, project.track(id)?.kind == .midi else { recordTrackID = nil; status = "Nothing recorded"; return }
+        recordTrackID = nil
+        let offset = recordFrameOffset
+        let endFrame = engine.sessionFrame
         let sr = sampleRate, map = project.tempoMap, start = recordStartTick.rawValue
         let notes = MIDIRecorder.notes(from: events, endFrame: endFrame) { frame in
-            max(0, map.tick(atFrame: Frame(frame), sampleRate: sr).rawValue - start)
+            max(0, map.tick(atFrame: Frame(frame + offset), sampleRate: sr).rawValue - start)
         }
         guard !notes.isEmpty else { status = "Nothing recorded"; return }
-        let elapsed = max(1, project.tempoMap.tick(atFrame: Frame(endFrame), sampleRate: sr).rawValue - start)
+        let elapsed = max(1, project.tempoMap.tick(atFrame: Frame(endFrame + offset), sampleRate: sr).rawValue - start)
         let bars = max(1, (elapsed + barTicks - 1) / barTicks)
         let clip = MIDIClip(start: recordStartTick, length: Tick(bars * barTicks), loop: false, notes: notes)
         apply(.insertClip(track: id, clip: .midi(clip)))
@@ -872,7 +880,7 @@ final class AppModel {
             let kind = status & 0xF0, key = UInt16(status & 0x0F) << 8 | UInt16(a)
             if kind == 0x80 || (kind == 0x90 && b == 0), let noted = held.nodes.removeValue(forKey: key) {
                 engine.sendLiveMIDI(node: noted, status, a, b)
-                if engine.isPlaying { recorder.capture(frame: engine.positionFrame, status, a, b) }
+                if engine.isPlaying { recorder.capture(frame: engine.sessionFrame, status, a, b) }
                 return
             }
             guard target.enabled, target.source == nil || target.source == src,
@@ -880,7 +888,7 @@ final class AppModel {
             if kind == 0x90 && b > 0 && node >= 0 { held.nodes[key] = node }
             if node >= 0 {
                 engine.sendLiveMIDI(node: node, status, a, b)
-                if engine.isPlaying { recorder.capture(frame: engine.positionFrame, status, a, b) }
+                if engine.isPlaying { recorder.capture(frame: engine.sessionFrame, status, a, b) }
             }
         }
         midiMonitor = monitor
@@ -901,7 +909,7 @@ final class AppModel {
         if liveTarget.node >= 0 {
             heldKeys[pitch] = liveTarget.node
             engine.sendLiveMIDI(node: liveTarget.node, 0x90, pitch, velocity)
-            if engine.isPlaying { recorder.capture(frame: engine.positionFrame, 0x90, pitch, velocity) }
+            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame, 0x90, pitch, velocity) }
         }
     }
 
@@ -910,7 +918,7 @@ final class AppModel {
         let node = heldKeys.removeValue(forKey: pitch) ?? liveTarget.node
         if node >= 0 {
             engine.sendLiveMIDI(node: node, 0x80, pitch, 0)
-            if engine.isPlaying { recorder.capture(frame: engine.positionFrame, 0x80, pitch, 0) }
+            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame, 0x80, pitch, 0) }
         }
     }
 

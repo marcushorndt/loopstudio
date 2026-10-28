@@ -10,6 +10,7 @@ let package = Package(
         .library(name: "LoopStudioEngine", targets: ["LoopStudioEngine"]),
         .library(name: "LoopStudioControl", targets: ["LoopStudioControl"]),
         .executable(name: "loopstudio", targets: ["loopstudio"]),
+        .executable(name: "LoopStudioApp", targets: ["LoopStudioApp"]),
     ],
     targets: [
         // Time, project model, commands, undo. No audio frameworks.
@@ -20,6 +21,8 @@ let package = Package(
         // Tool registry and MCP server: the one way for scripts and agents to drive the app.
         .target(name: "LoopStudioControl", dependencies: ["LoopStudioCore", "LoopStudioProject", "LoopStudioEngine"]),
         .executableTarget(name: "loopstudio", dependencies: ["LoopStudioEngine", "LoopStudioProject", "LoopStudioCore", "LoopStudioControl"]),
+        // The window app. Run it with scripts/run-app.sh.
+        .executableTarget(name: "LoopStudioApp", dependencies: ["LoopStudioCore"]),
         .testTarget(name: "LoopStudioCoreTests", dependencies: ["LoopStudioCore"]),
         .testTarget(name: "LoopStudioProjectTests", dependencies: ["LoopStudioProject", "LoopStudioCore"]),
         .testTarget(name: "LoopStudioEngineTests", dependencies: ["LoopStudioEngine", "LoopStudioCore"]),

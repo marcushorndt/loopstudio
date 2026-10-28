@@ -35,6 +35,7 @@ public enum ProjectPackage {
         var defaultFadeMs: Double
         var autoLoop: AutoLoopRule
         var ports: [IOPort]
+        var launches: [Launch]
         var assets: [Asset]
         var trackOrder: [TrackID]
         var master: TrackID
@@ -57,7 +58,7 @@ public enum ProjectPackage {
             schemaVersion: schemaVersion, name: project.name, sampleRate: project.sampleRate,
             tempoMap: project.tempoMap, timeSignatures: project.timeSignatures, markers: project.markers,
             loop: project.loop, randomSeed: project.randomSeed, defaultFadeMs: project.defaultFadeMs,
-            autoLoop: project.autoLoop, ports: project.ports, assets: project.assets,
+            autoLoop: project.autoLoop, ports: project.ports, launches: project.launches, assets: project.assets,
             trackOrder: project.tracks.map(\.id), master: project.master.id)
         try writeIfChanged(try encoder.encode(header), to: url.appendingPathComponent("project.json"))
 
@@ -145,6 +146,7 @@ public enum ProjectPackage {
         project.defaultFadeMs = decodedHeader.defaultFadeMs
         project.autoLoop = decodedHeader.autoLoop
         project.ports = decodedHeader.ports
+        project.launches = decodedHeader.launches
         project.assets = decodedHeader.assets
         project.tracks = try decodedHeader.trackOrder.map(track)
         project.master = try track(decodedHeader.master)

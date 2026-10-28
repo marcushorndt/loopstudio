@@ -398,6 +398,8 @@ public struct Project: Hashable, Codable, Sendable {
     public var autoLoop: AutoLoopRule
     /// Logical hardware ports. The project names them; each machine maps them to real channels.
     public var ports: [IOPort]
+    /// Session launches over time (see `Launch`), sorted by tick.
+    public var launches: [Launch]
     public var assets: [Asset]
     public var tracks: [Track]
     public var master: Track
@@ -420,6 +422,7 @@ public struct Project: Hashable, Codable, Sendable {
                       IOPort(name: "Cue", direction: .output, channels: 2),
                       IOPort(name: "Input 1-2", direction: .input, channels: 2)]
         self.master.hardwareOutput = main.id
+        self.launches = []
     }
 
     /// Ports that some track uses. The resolver reports only these as unmapped.

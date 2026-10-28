@@ -48,6 +48,7 @@ public enum ProjectIssue: Hashable, Sendable, CustomStringConvertible {
     case outputConflict(TrackID)
     case inputWrongTrackKind(TrackID)
     case duplicatePortID(PortID)
+    case launchTrackMissing(TrackID)
 
     public var description: String {
         switch self {
@@ -67,6 +68,7 @@ public enum ProjectIssue: Hashable, Sendable, CustomStringConvertible {
         case .outputConflict(let id): "track \(id) has both an output track and a hardware output"
         case .inputWrongTrackKind(let id): "track \(id) has an input that does not fit its kind"
         case .duplicatePortID(let id): "duplicate port ID \(id)"
+        case .launchTrackMissing(let id): "a launch points at missing track \(id)"
         }
     }
 }
@@ -110,6 +112,8 @@ extension Project {
             }
         }
         if Routing.hasCycle(self) { issues.append(.routeCycle) }
+
+        for launch in launches where track(launch.track) == nil { issues.append(.launchTrackMissing(launch.track)) }
 
         var portIDs = Set<PortID>()
         for port in ports where !portIDs.insert(port.id).inserted { issues.append(.duplicatePortID(port.id)) }

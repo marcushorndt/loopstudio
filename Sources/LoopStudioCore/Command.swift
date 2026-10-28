@@ -53,6 +53,9 @@ public enum Command: Codable, Sendable {
     case setHardwareOutput(id: TrackID, port: PortID?)
     case setAudioInput(id: TrackID, port: PortID?)
     case setMIDIInput(id: TrackID, selection: MIDIInputSelection?)
+
+    /// Replaces the whole launch list. The list is sorted by tick and track.
+    case setLaunches(launches: [Launch])
 }
 
 extension Command {
@@ -298,6 +301,17 @@ extension Project {
                 return t.audioInput
             }
             return .setAudioInput(id: id, port: old)
+
+        case .setLaunches(let list):
+            for launch in list {
+                guard let t = track(launch.track), t.kind != .master else { throw CommandError.trackNotFound(launch.track) }
+                if let slot = launch.slot, !(0...maxSlotIndex).contains(slot) { throw CommandError.invalidValue("launch slot \(slot)") }
+            }
+            let old = launches
+            launches = list.enumerated().sorted {
+                ($0.element.tick, $0.element.track.description, $0.offset) < ($1.element.tick, $1.element.track.description, $1.offset)
+            }.map(\.element)
+            return .setLaunches(launches: old)
 
         case .setMIDIInput(let id, let selection):
             let old = try withTrack(id) { t -> MIDIInputSelection? in

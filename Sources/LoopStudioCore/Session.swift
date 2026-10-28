@@ -98,3 +98,18 @@ public struct SessionSlot: Hashable, Codable, Sendable {
         self.follow = follow
     }
 }
+
+/// A launch recorded on the project timeline: start a session slot (or stop the track) at a position.
+/// The list of launches is the "performance". Together with follow actions it decides what plays when.
+public struct Launch: Hashable, Codable, Sendable {
+    public var track: TrackID
+    /// The slot to start. `nil` stops the track.
+    public var slot: Int?
+    public var tick: Tick
+
+    public init(track: TrackID, slot: Int?, tick: Tick) {
+        self.track = track
+        self.slot = slot
+        self.tick = tick
+    }
+}

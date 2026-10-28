@@ -171,3 +171,23 @@ private struct ClientHelper {
     #expect(bounce.data["peakDb"]?.doubleValue ?? -200 > -7, "the audio file came back from the package")
     #expect(bounce.data["warnings"]?.arrayValue?.isEmpty == true)
 }
+
+@Test func bounceIncludesSavedSessionLaunches() async throws {
+    var studio = try await Studio.make()
+    let imported = try await studio.client.call("asset_import", ["path": .string(try tone(seconds: 1))])
+    let asset = try #require(imported.data["asset"]?.stringValue)
+    let track = TrackID(UUID(uuidString: studio.track)!)
+    // A one-shot session clip of one bar (2 s at 120 BPM), launched at bar 2, and no arrangement clip.
+    let clip = AudioClip(asset: AssetID(UUID(uuidString: asset)!), start: 0, length: 3840, loop: false, fadeInMs: 2, fadeOutMs: 2)
+    for command in [Command.setSlot(track: track, index: 0, slot: SessionSlot(clip: .audio(clip))),
+                    Command.setLaunches(launches: [Launch(track: track, slot: 0, tick: 3840)])] {
+        let applied = try await studio.client.call("command_apply", ["command": try JSONValue(encoding: command)])
+        #expect(!applied.isError, Comment(rawValue: applied.text))
+    }
+    let bounce = try await studio.client.call("render_bounce", ["path": .string(wavPath())])
+    #expect(!bounce.isError, Comment(rawValue: bounce.text))
+    #expect(bounce.data["seconds"]?.doubleValue == 4, "the launch at 2 s plays its full bar")
+    let values = try #require(bounce.data["rmsDbPerSecond"]?.arrayValue)
+    let curve = values.compactMap { $0.doubleValue }
+    #expect(curve[0] < -100 && curve[2] > -20, "silent before the launch, the tone after it: \(curve)")
+}

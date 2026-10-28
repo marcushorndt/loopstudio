@@ -216,12 +216,17 @@ public enum StandardTools {
             guard let package = await session.packageURL else { throw ToolFailure("no project is open") }
             let project = try await session.project()
             let loaded = AudioBank.load(project: project) { AssetStore.fileURL(for: $0, in: package) }
-            let plan = RenderPlan.compile(project, bank: loaded.bank)
+            // Hosted plugins in their own instances, and the saved Session launches.
+            let prepared = await OfflineRender.prepare(project, bank: loaded.bank)
+            let plan = prepared.plan
 
             let map = project.tempoMap
             let start = args.optionalInt("startTick").map { map.frame(at: Tick(Int64($0)), sampleRate: project.sampleRate).rawValue } ?? 0
             let end = args.optionalInt("endTick").map { map.frame(at: Tick(Int64($0)), sampleRate: project.sampleRate).rawValue }
-            let audio = Bounce.render(plan, startFrame: start, endFrame: end, tailSeconds: args.optionalDouble("tailSeconds") ?? 0)
+            let tail = Int64(((args.optionalDouble("tailSeconds") ?? 0) * project.sampleRate).rounded())
+            let audio = withExtendedLifetime(prepared.host) {
+                Bounce.render(plan, startFrame: start, endFrame: end ?? prepared.endFrame + tail)
+            }
             guard audio.frames > 0 else { throw ToolFailure("nothing to render: the range is empty (no clips on audible tracks?)") }
 
             try FileManager.default.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -239,7 +244,7 @@ public enum StandardTools {
                 curve.append(.number(dBFS(Float((sum / Double(n * 2)).squareRoot()))))
                 i += n
             }
-            var warnings = plan.warnings
+            var warnings = plan.warnings + prepared.warnings
             for (id, reason) in loaded.failed.sorted(by: { $0.key.description < $1.key.description }) {
                 warnings.append("asset \(id): \(reason)")
             }

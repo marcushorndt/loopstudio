@@ -1268,34 +1268,42 @@ final class AppModel {
         }
     }
 
-    /// Renders the arrangement to a 24-bit WAV file, off the main thread.
+    /// Renders the arrangement and the saved Session launches, with hosted plugins, to a 24-bit WAV file.
+    /// The render runs off the main thread.
     func exportAudio() {
         guard !exporting else { status = "An export is running"; return }
-        let plan = RenderPlan.compile(project, bank: bank)
-        guard plan.endFrame > 0 else { status = "Nothing to export: the arrangement is empty"; return }
         let panel = NSSavePanel()
         panel.title = "Export Audio"
         panel.nameFieldStringValue = "\(project.name).wav"
         panel.allowedContentTypes = [.wav]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        // Hosted plugins live on the audio thread, so the offline render cannot use them yet.
-        let note = host.units.isEmpty ? "" : " (without hosted plugins)"
+        captureStates()
         exporting = true
         status = "Exporting \(url.lastPathComponent)…"
-        nonisolated(unsafe) let job = plan
-        Task.detached(priority: .userInitiated) { [weak self] in
-            let result: Result<Double, Error> = Result {
-                let audio = Bounce.render(job, tailSeconds: 2)
-                try Bounce.writeWAV(audio, to: url)
-                return Double(audio.frames) / audio.sampleRate
+        let snapshot = project, bank = bank
+        Task { [weak self] in
+            // Own plugin instances: the live ones belong to the audio thread.
+            let prepared = await OfflineRender.prepare(snapshot, bank: bank)
+            guard prepared.endFrame > 0 else {
+                self?.exporting = false
+                self?.status = "Nothing to export: the arrangement and the Session launches are empty"
+                return
             }
-            await MainActor.run {
-                guard let self else { return }
-                self.exporting = false
-                switch result {
-                case .success(let seconds): self.status = "Exported \(url.lastPathComponent), \(Int(seconds.rounded())) s\(note)"
-                case .failure(let error): self.status = "Export failed: \(error.localizedDescription)"
+            let note = prepared.warnings.isEmpty ? "" : " (\(prepared.warnings.count) warning\(prepared.warnings.count == 1 ? "" : "s"): \(prepared.warnings[0]))"
+            nonisolated(unsafe) let job = prepared
+            let end = prepared.endFrame + Int64(2 * snapshot.sampleRate)
+            let result: Result<Double, Error> = await Task.detached(priority: .userInitiated) {
+                Result {
+                    let audio = withExtendedLifetime(job.host) { Bounce.render(job.plan, endFrame: end) }
+                    try Bounce.writeWAV(audio, to: url)
+                    return Double(audio.frames) / audio.sampleRate
                 }
+            }.value
+            guard let self else { return }
+            self.exporting = false
+            switch result {
+            case .success(let seconds): self.status = "Exported \(url.lastPathComponent), \(Int(seconds.rounded())) s\(note)"
+            case .failure(let error): self.status = "Export failed: \(error.localizedDescription)"
             }
         }
     }

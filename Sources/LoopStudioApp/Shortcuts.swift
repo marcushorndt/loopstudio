@@ -128,6 +128,11 @@ enum AppAction: String, CaseIterable, Identifiable {
     }
 }
 
+extension AppAction {
+    /// True for the arrow keys: holding one moves on at the key repeat rate.
+    var repeats: Bool { self == .moveUp || self == .moveDown || self == .moveLeft || self == .moveRight }
+}
+
 struct KeyBinding {
     let character: Character
     let modifiers: EventModifiers
@@ -238,8 +243,9 @@ final class KeyMonitor {
                     return nil
                 }
             }
-            guard event.type == .keyDown, !event.isARepeat else { return event }
-            for action in AppAction.allCases {
+            guard event.type == .keyDown else { return event }
+            // A held arrow key repeats, so it moves fast through the grid. Other shortcuts act once per press.
+            for action in AppAction.allCases where !event.isARepeat || action.repeats {
                 if let b = action.binding, b.isPlain, b.matches(event), model.isEnabled(action) {
                     model.perform(action)
                     return nil

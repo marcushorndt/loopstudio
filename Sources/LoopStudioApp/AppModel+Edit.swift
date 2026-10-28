@@ -113,8 +113,10 @@ extension AppModel {
     var sessionRows: Int { max(8, (project.tracks.map(\.slots.count).max() ?? 0) + 1) }
 
     /// Arrow keys. Session view moves through slots; arrangement view moves between tracks.
+    /// In the Session view the master is the last column (the scene buttons), and the row under the last
+    /// slot row holds the stop buttons.
     func moveSelection(rows: Int, tracks: Int) {
-        let columns = orderedTracks
+        let columns = viewMode == .session ? orderedTracks + [project.master] : orderedTracks
         guard !columns.isEmpty else { return }
         let current = selectedTrack.flatMap { id in columns.firstIndex { $0.id == id } } ?? 0
         let column = min(max(current + tracks + (viewMode == .arrangement ? rows : 0), 0), columns.count - 1)
@@ -122,17 +124,26 @@ extension AppModel {
         guard viewMode == .session else { return }
         // A slot is selected now, not the track, so Delete cannot remove the track.
         trackFocused = false
-        let rowCount = sessionRows
-        let row = min(max((selectedRow ?? (rows > 0 ? -1 : rowCount)) + rows, 0), rowCount - 1)
+        let last = sessionRows // the stop row
+        let row = min(max((selectedRow ?? (rows > 0 ? -1 : last)) + rows, 0), last)
         selectedSceneRow = row
         let track = columns[column]
-        selectedClip = row < track.slots.count ? track.slots[row]?.clip.id : nil
+        selectedClip = row < track.slots.count && track.kind != .master ? track.slots[row]?.clip.id : nil
     }
 
-    /// Return: launches the selected session clip, or the selected scene when the slot is empty.
+    /// The selection sits on the row of stop buttons.
+    var stopRowSelected: Bool { viewMode == .session && selectedClip == nil && selectedSceneRow == sessionRows }
+
+    /// Return: launches the selected session clip, or the selected scene when the slot is empty or on the
+    /// scene column. On the stop row it stops the track, or every clip from the scene column.
     func launchSelection() {
         guard viewMode == .session, let row = selectedRow else { return }
-        if let track = selectedTrack, let t = project.track(track), row < t.slots.count, t.slots[row] != nil {
+        let master = selectedTrack == project.master.id
+        if row >= sessionRows {
+            if master { stopAllClips() } else if let id = selectedTrack, let t = project.track(id) { stopClips(of: t) }
+            return
+        }
+        if !master, let track = selectedTrack, let t = project.track(track), row < t.slots.count, t.slots[row] != nil {
             launch(track: track, row: row)
         } else {
             launchScene(row)

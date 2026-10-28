@@ -127,8 +127,9 @@ private struct TrackColumn: View {
         }
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text.opacity(0.7) : Theme.line, lineWidth: 1))
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
+        // The single click acts at once; a double-click also opens the inspector.
         .onTapGesture { model.focusTrack(track.id) }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { model.openTrackInspector(track.id) })
         .dropDestination(for: String.self) { items, _ in
             return model.dropDevices(items, on: track.id)
         }
@@ -150,7 +151,9 @@ private struct StopButton: View {
             }
             .frame(maxWidth: .infinity, minHeight: slotHeight)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius))
-                .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius)
+                .stroke(model.stopRowSelected && model.selectedTrack == track.id ? Theme.text : Theme.line,
+                        lineWidth: model.stopRowSelected && model.selectedTrack == track.id ? 1.5 : 1))
         }
         .buttonStyle(.plain)
         .frame(width: width)
@@ -227,8 +230,8 @@ private struct SlotCell: View {
                 Color.clear
                     .frame(maxWidth: .infinity, minHeight: slotHeight)
                     .contentShape(Rectangle())
-                    .onTapGesture(count: 2) { if track.kind == .midi { model.createMIDIClip(track: track.id, row: row) } }
                     .onTapGesture { model.selectSlot(track: track.id, row: row) }
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { if track.kind == .midi { model.createMIDIClip(track: track.id, row: row) } })
             }
             .background(Theme.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
             .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : Color.clear, lineWidth: 1.5))
@@ -274,6 +277,11 @@ private struct SceneColumn: View {
     @Environment(AppModel.self) private var model
     let rows: Int
 
+    /// The arrow keys reach the scene column as the master's column.
+    private func sceneSelected(_ row: Int) -> Bool {
+        model.selectedTrack == model.project.master.id && model.selectedSceneRow == row && model.selectedClip == nil
+    }
+
     var body: some View {
         VStack(spacing: gap) {
             Text("Scenes").font(.system(size: 10)).foregroundStyle(Theme.dim).frame(height: 30)
@@ -288,6 +296,7 @@ private struct SceneColumn: View {
                     .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 3))
                 }
                 .buttonStyle(.plain)
+                .overlay(RoundedRectangle(cornerRadius: 3).stroke(sceneSelected(row) ? Theme.text : Color.clear, lineWidth: 1.5))
                 .contextMenu { SceneMenu(row: row) }
             }
         }

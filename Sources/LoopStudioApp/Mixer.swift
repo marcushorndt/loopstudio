@@ -125,8 +125,8 @@ struct MixerStrip: View {
         .frame(width: width)
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius))
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(model.selectedTrack == track.id ? Theme.text.opacity(0.35) : Theme.line, lineWidth: 1))
-        .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
         .onTapGesture { model.focusTrack(track.id) }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { model.openTrackInspector(track.id) })
         .contextMenu {
             Button("Reset Volume to 0 dB") { model.apply(.setVolume(id: track.id, db: 0)) }
             Button("Center Pan") { model.apply(.setPan(id: track.id, pan: 0)) }

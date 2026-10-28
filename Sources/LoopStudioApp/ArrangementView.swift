@@ -119,8 +119,10 @@ private struct ArrangementHeader: View {
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel)
         .overlay(alignment: .bottom) { AutomationLabels(track: track) }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
-        .onTapGesture(count: 2) { model.openTrackInspector(track.id) }
+        // The single click acts at once; a double-click also opens the inspector. A double-click handler that
+        // runs first would hold every single click back until the double-click time has passed.
         .onTapGesture { model.focusTrack(track.id) }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { model.openTrackInspector(track.id) })
         .contextMenu {
             if track.kind == .master { AutomationLanesMenu(track: track) } else { TrackMenuItems(track: track, showsAutomation: true) }
         }

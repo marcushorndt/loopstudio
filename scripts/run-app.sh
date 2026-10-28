@@ -21,4 +21,6 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 codesign --force --sign - "$app" >/dev/null 2>&1 || true
+# A running copy would only be brought to the front, with the old code. Quit it first.
+pkill -x LoopStudioApp 2>/dev/null && sleep 1
 open "$app"

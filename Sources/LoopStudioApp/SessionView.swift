@@ -8,29 +8,49 @@ private let gap: CGFloat = 3
 
 struct SessionView: View {
     @Environment(AppModel.self) private var model
+    /// The slot grid and the mixer scroll sideways together.
+    @State private var scrollX = ScrollPosition()
 
     var body: some View {
-        let tracks = model.project.tracks
-        let rows = max(8, (tracks.map(\.slots.count).max() ?? 0) + 1)
+        let all = model.project.tracks
+        // Tracks pile up from the left and scroll. Busses (returns) and the master stay at the right edge.
+        let tracks = all.filter { $0.kind != .returnTrack }
+        let busses = all.filter { $0.kind == .returnTrack }
+        let rows = max(8, (all.map(\.slots.count).max() ?? 0) + 1)
 
-        ScrollView(.horizontal) {
-            VStack(spacing: 6) {
-                ScrollView(.vertical) {
+        VStack(spacing: 6) {
+            ScrollView(.vertical) {
+                HStack(alignment: .top, spacing: gap) {
+                    ScrollView(.horizontal) {
+                        HStack(alignment: .top, spacing: gap) {
+                            ForEach(tracks, id: \.id) { TrackColumn(track: $0, rows: rows) }
+                            NewTrackColumn(rows: rows)
+                        }
+                    }
+                    .scrollPosition($scrollX)
+                    .scrollIndicators(.hidden)
                     HStack(alignment: .top, spacing: gap) {
-                        ForEach(tracks, id: \.id) { track in TrackColumn(track: track, rows: rows) }
-                        NewTrackColumn(rows: rows)
+                        ForEach(busses, id: \.id) { TrackColumn(track: $0, rows: rows) }
                         SceneColumn(rows: rows)
                     }
-                    .padding(.horizontal, 6).padding(.top, 6)
                 }
-                // The mixer sits under the slots and lines up with the tracks above it.
+                .padding(.horizontal, 6).padding(.top, 6)
+            }
+            // The mixer sits under the slots and lines up with the tracks above it.
+            HStack(alignment: .bottom, spacing: gap) {
+                ScrollView(.horizontal) {
+                    HStack(alignment: .bottom, spacing: gap) {
+                        ForEach(tracks, id: \.id) { MixerStrip(track: $0, isMaster: false, width: columnWidth) }
+                        Color.clear.frame(width: columnWidth * 0.6)
+                    }
+                }
+                .scrollPosition($scrollX)
                 HStack(alignment: .bottom, spacing: gap) {
-                    ForEach(tracks, id: \.id) { MixerStrip(track: $0, isMaster: false, width: columnWidth) }
-                    Color.clear.frame(width: columnWidth * 0.6)
+                    ForEach(busses, id: \.id) { MixerStrip(track: $0, isMaster: false, width: columnWidth) }
                     MixerStrip(track: model.project.master, isMaster: true, width: sceneWidth + 36)
                 }
-                .padding(.horizontal, 6).padding(.bottom, 6)
             }
+            .padding(.horizontal, 6).padding(.bottom, 6)
         }
         .background(Theme.background)
         .dropDestination(for: URL.self) { urls, _ in model.dropOnNewTrack(urls) }

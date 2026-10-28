@@ -381,3 +381,18 @@ private func writeSine(rate: Double, seconds: Double, channels: Int = 2) throws 
     let plan = rig.plan
     #expect(plan.nodes.allSatisfy { $0.outputDelay == 0 && $0.tapDelays.allSatisfy { $0 == 0 } })
 }
+
+@Test func sessionTakeOverCutsTheArrangementOnlyFromItsStart() throws {
+    var rig = Rig()
+    let loud = rig.asset(seconds: 4) { _ in 0.5 }, soft = rig.asset(seconds: 4) { _ in 0.1 }
+    let t = rig.track("T")
+    rig.clip(loud, on: t, lengthTick: 7_680)
+    let slotClip = rig.project.makeAudioClip(asset: soft, start: 0, length: 3_840)
+    try Command.setSlot(track: t, index: 0, slot: SessionSlot(clip: .audio(slotClip), quantize: .none)).apply(to: &rig.project)
+    try Command.setLaunches(launches: [Launch(track: t, slot: 0, tick: 1_920)]).apply(to: &rig.project)
+    let sim = SessionSimulator.run(rig.project, horizon: 7_680)
+    let plan = RenderPlan.compile(rig.project, bank: rig.bank, session: sim, arrangementEnds: [t: 48_000])
+    let out = Bounce.render(plan, startFrame: 0, endFrame: 96_000, block: 512)
+    #expect(out.left[24_000] == 0.5, "before the launch: the arrangement plays alone")
+    #expect(abs(out.left[72_000] - 0.1) < 0.0001, "after the launch: only the session clip")
+}

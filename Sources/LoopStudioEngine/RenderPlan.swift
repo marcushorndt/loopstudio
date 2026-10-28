@@ -104,6 +104,9 @@ struct NodePlan {
     var midi: [MIDIEvent] = []
     /// Notes of the session clips, in session frames.
     var sessionMidi: [MIDIEvent] = []
+    /// Session frame from which this track's arrangement clips and notes are silent, because a session clip
+    /// took the track over (or a session stop). `nil`: the arrangement plays.
+    var arrangementEnd: Int64? = nil
     /// Nodes that take this node's sound as input, after the fader.
     var taps: [Int] = []
     /// Latency of the plugins on this node, in frames.
@@ -139,8 +142,9 @@ public struct RenderPlan {
         return (Float(left), Float(right))
     }
 
+    /// `arrangementEnds`: per track, the session frame from which its arrangement stays silent (see `NodePlan`).
     public static func compile(_ project: Project, bank: AudioBank, session: SessionSimulation? = nil,
-                               units: [DeviceID: AudioUnitEffect] = [:]) -> RenderPlan {
+                               units: [DeviceID: AudioUnitEffect] = [:], arrangementEnds: [TrackID: Int64] = [:]) -> RenderPlan {
         var warnings: [String] = []
         let tracks = project.tracks
         let rate = project.sampleRate
@@ -335,7 +339,8 @@ public struct RenderPlan {
                 sends: t.sends.filter { keeps(t.id, $0.target) }.compactMap { s in index[s.target].map {
                     SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader,
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
-                effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, midi: midi, sessionMidi: sessionMidi))
+                effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, midi: midi, sessionMidi: sessionMidi,
+                arrangementEnd: arrangementEnds[t.id]))
         }
 
         var masterEffects = effects(of: project.master, units: units, warnings: &warnings).0

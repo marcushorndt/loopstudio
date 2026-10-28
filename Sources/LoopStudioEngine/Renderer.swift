@@ -137,13 +137,16 @@ public final class Renderer {
     /// Releases only the arrangement notes that are still on. Called when the loop wraps,
     /// so session clips keep their held notes.
     public func releaseArrangementNotes() {
-        for i in 0..<nodeCount {
-            let base = held + i * 2048
-            guard let unit = nodes[i].instrument else { continue }
-            for k in 0..<2048 where base[k] > 0 {
-                unit.sendMIDI(0x80 | UInt8(k >> 7), UInt8(k & 127), 0)
-                base[k] = 0
-            }
+        for i in 0..<nodeCount { releaseNotes(of: i) }
+    }
+
+    /// Ends the arrangement notes that node `i` still holds.
+    private func releaseNotes(of i: Int) {
+        let base = held + i * 2048
+        guard let unit = nodes[i].instrument else { return }
+        for k in 0..<2048 where base[k] > 0 {
+            unit.sendMIDI(0x80 | UInt8(k >> 7), UInt8(k & 127), 0)
+            base[k] = 0
         }
     }
 
@@ -209,12 +212,19 @@ public final class Renderer {
             let node = nodes[i]
             let l = left(i), r = right(i)
 
+            // How much of this block the arrangement still plays: a session take-over cuts it on the session clock.
+            var arrangement = frames
+            if let end = node.arrangementEnd { arrangement = Int(max(0, min(Int64(frames), end - (startFrame + sessionOffset)))) }
             if transport {
-                for clip in node.clips { mix(clip, into: l, r, blockStart: clip.session ? startFrame + sessionOffset : startFrame, frames: frames) }
+                for clip in node.clips {
+                    if clip.session { mix(clip, into: l, r, blockStart: startFrame + sessionOffset, frames: frames) }
+                    else if arrangement > 0 { mix(clip, into: l, r, blockStart: startFrame, frames: arrangement) }
+                }
             }
             if let instrument = node.instrument {
                 if transport {
-                    send(instrument, node.midi, startFrame: startFrame, frames: frames, held: held + i * 2048)
+                    if arrangement > 0 { send(instrument, node.midi, startFrame: startFrame, frames: arrangement, held: held + i * 2048) }
+                    if arrangement < frames { releaseNotes(of: i) }
                     send(instrument, node.sessionMidi, startFrame: startFrame + sessionOffset, frames: frames)
                 }
                 play(instrument, into: l, r, frames: frames)

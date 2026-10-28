@@ -1137,15 +1137,20 @@ final class AppModel {
     private func rebuild() {
         var p = project
         p.launches = performance
-        // A track that was launched from the session stops playing its arrangement (like Live).
-        let launched = Set(performance.map(\.track))
-        for i in p.tracks.indices where launched.contains(p.tracks[i].id) { p.tracks[i].clips = [] }
 
         // The session clock runs on past the loop end, so the plan reaches 300 bars past it, and is extended in time.
         let horizon = Tick(max(0, sessionTick.rawValue) + barTicks * 300)
         planHorizon = horizon
         simulation = SessionSimulator.run(p, horizon: horizon)
-        let compiled = RenderPlan.compile(p, bank: bank, session: simulation, units: host.units)
+        // A track launched from the session stops its arrangement (like Live), but only when the session
+        // really takes over: at the quantized clip start, or at a session stop.
+        var ends: [TrackID: Int64] = [:]
+        for track in Set(performance.map(\.track)) {
+            let starts = simulation.events.filter { $0.track == track }.map(\.startTick)
+            let stops = performance.filter { $0.track == track && $0.slot == nil }.map(\.tick)
+            if let first = (starts + stops).min() { ends[track] = frame(first) }
+        }
+        let compiled = RenderPlan.compile(p, bank: bank, session: simulation, units: host.units, arrangementEnds: ends)
         plan = compiled
         warnings = compiled.warnings
         updateLiveTarget()

@@ -35,7 +35,8 @@ public final class LiveEngine: @unchecked Sendable {
     private var countInDone: Int64 = 0
     private var stampPending = false
     private var startHost: UInt64 = 0
-    public let sampleRate: Double
+    /// The rate the plans render at. It follows the open project; the output converts to the device rate.
+    public private(set) var sampleRate: Double
 
     public init(sampleRate: Double) {
         self.sampleRate = sampleRate
@@ -64,6 +65,19 @@ public final class LiveEngine: @unchecked Sendable {
     }
 
     public func shutdown() { engine.stop() }
+
+    /// Renders at another rate from now on (a project with another sample rate was opened). The old plan is
+    /// dropped, because its frames count at the old rate; the caller installs a new one.
+    public func setSampleRate(_ rate: Double) throws {
+        guard rate > 0, rate != sampleRate else { return }
+        let wasRunning = engine.isRunning
+        engine.stop()
+        setRenderer(nil)
+        if let node = sourceNode { engine.detach(node); sourceNode = nil }
+        locked { position = 0; sessionPosition = 0; playing = false; countInRemaining = 0 }
+        sampleRate = rate
+        if wasRunning { try start() }
+    }
 
     public enum OutputError: Error { case deviceNotFound, noAudioUnit, status(OSStatus) }
 

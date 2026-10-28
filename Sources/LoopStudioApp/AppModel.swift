@@ -1182,6 +1182,11 @@ final class AppModel {
     private func reset(to new: Project, at url: URL) {
         saveTask?.cancel()
         pause()
+        if new.sampleRate != engine.sampleRate {
+            // A project at another rate: the engine renders at its rate, so it plays at the right speed.
+            do { try engine.setSampleRate(new.sampleRate) } catch { status = "Audio restart failed: \(error.localizedDescription)" }
+            applyAudioSettings()
+        }
         engine.seek(to: 0)
         project = new
         packageURL = url

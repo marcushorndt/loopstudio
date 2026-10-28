@@ -177,3 +177,22 @@ private func frequency(_ x: UnsafePointer<Float>, from: Int, count: Int) -> Doub
     #expect(second.nodes[0].clips[0].pcm !== src)
     #expect(bank.takePendingWarps().isEmpty)
 }
+
+@Test func aNewTempoMakesANewWarp() {
+    var project = Project(name: "T", sampleRate: rate)
+    let bank = AudioBank()
+    let src = sine(440, seconds: 1.2)
+    let asset = Asset(sha256: "nt", name: "t", frames: Int64(src.frames), sampleRate: rate, channels: 2, sourceTempo: 100)
+    try! Command.addAsset(asset: asset).apply(to: &project)
+    bank.insert(src, for: asset.id)
+    let t = Track(name: "T", kind: .audio)
+    try! Command.insertTrack(track: t, index: 0).apply(to: &project)
+    var clip = project.makeAudioClip(asset: asset.id, start: 0, length: Tick(1_920))
+    clip.warpMode = .tones
+    try! Command.insertClip(track: t.id, clip: .audio(clip)).apply(to: &project)
+
+    let at120 = RenderPlan.compile(project, bank: bank).nodes[0].clips[0].pcm.frames
+    project.tempoMap = TempoMap(bpm: 60)
+    let at60 = RenderPlan.compile(project, bank: bank).nodes[0].clips[0].pcm.frames
+    #expect(abs(Double(at60) - 2 * Double(at120)) < rate * 0.01, "half the tempo, twice the length")
+}

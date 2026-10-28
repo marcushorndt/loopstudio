@@ -282,7 +282,6 @@ public struct RenderPlan {
                         warnings.append("clip on \"\(t.name)\" has no audio (missing or unreadable file)")
                         continue
                     }
-                    let pcm = warpedAudio(c, raw: raw, startTick: c.start, project: project, bank: bank, trackName: t.name, warnings: &warnings)
                     let start = map.frame(at: c.start, sampleRate: rate).rawValue
                     let end = map.frame(at: c.start + c.length, sampleRate: rate).rawValue
                     guard end > start else { continue }
@@ -305,6 +304,7 @@ public struct RenderPlan {
                         endFrame = max(endFrame, end)
                         continue
                     }
+                    let pcm = warpedAudio(c, raw: raw, startTick: c.start, project: project, bank: bank, trackName: t.name, warnings: &warnings)
                     clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: offsetFrames, loop: c.loop,
                                           gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut),
                                           envelope: envelope(c, from: c.start, start: start, end: end)))
@@ -315,7 +315,6 @@ public struct RenderPlan {
                 for e in session.events where e.track == id {
                     guard case .audio(let c)? = project.findClip(e.clip)?.clip, !c.muted,
                           let raw = bank.buffer(for: c.asset), raw.frames > 0 else { continue }
-                    let pcm = warpedAudio(c, raw: raw, startTick: e.startTick, project: project, bank: bank, trackName: t.name, warnings: &warnings)
                     let start = map.frame(at: e.startTick, sampleRate: rate).rawValue
                     let end = map.frame(at: e.endTick, sampleRate: rate).rawValue
                     guard end > start else { continue }
@@ -333,6 +332,7 @@ public struct RenderPlan {
                         continue
                     }
                     // A session clip plays from its start offset and loops its own length, like the clip shows.
+                    let pcm = warpedAudio(c, raw: raw, startTick: e.startTick, project: project, bank: bank, trackName: t.name, warnings: &warnings)
                     let offsetFrames = max(0, map.frame(at: e.startTick + c.offset, sampleRate: rate).rawValue - start)
                     let passFrames = max(0, map.frame(at: e.startTick + c.length, sampleRate: rate).rawValue - start)
                     clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: offsetFrames, loop: c.loop,
@@ -451,10 +451,9 @@ public struct RenderPlan {
             warnings.append("clip on \"\(trackName)\" is warped but has no source tempo or markers; it plays unwarped")
             return raw
         }
-        let constant = project.tempoMap.points.count <= 1
         // A pass that lies in one tempo sounds the same wherever it starts, so such passes share one buffer.
         let timing: String
-        if constant { timing = "0" }
+        if project.tempoMap.points.count <= 1 { timing = "bpm \(project.tempoMap.points.first?.bpm ?? 0)" }
         else if let span, let bpm = constantTempo(project.tempoMap, from: startTick, to: startTick + span) { timing = "bpm \(bpm) span \(span.rawValue)" }
         else { timing = "\(project.tempoMap.points)|\(startTick.rawValue)" }
         let key = "\(c.asset)|\(c.warpMode)|\(asset?.sourceTempo ?? 0)|\(c.warpMarkers)|\(timing)|\(rate)"

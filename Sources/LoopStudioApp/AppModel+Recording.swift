@@ -47,14 +47,31 @@ extension AppModel {
         recordTrackID = nil
 
         // The sound that belongs at the start of the timeline reached the file this many frames after it began.
-        let lead = HostClock.frames(from: take.firstHostTime, to: engine.playStartHostTime, rate: take.sampleRate)
+        // No start stamp, or an offset of more than 10 s: the clocks do not match, so do not shift the take.
+        let start = engine.playStartHostTime
+        var lead = start == 0 ? 0 : HostClock.frames(from: take.firstHostTime, to: start, rate: take.sampleRate)
+        if abs(lead) > Int64(take.sampleRate * 10) { lead = 0 }
         let outputLatency = AudioDeviceCatalog.devices()
             .first { $0.uid == (outputUID ?? AudioDeviceCatalog.defaultOutputUID()) }?.outputLatencyFrames ?? 0
         let skip = lead + Int64(take.inputLatencyFrames + outputLatency)
 
-        guard let trimmed = trim(take.url, skipping: skip, name: nextTakeName()) else { status = "Could not read the recording"; return }
-        defer { try? FileManager.default.removeItem(at: take.url); try? FileManager.default.removeItem(at: trimmed.url) }
-        guard trimmed.frames > 0, let asset = importAudio(trimmed.url) else { status = "Nothing recorded"; return }
+        // The original take stays on disk until the trimmed copy is part of the project.
+        guard let trimmed = trim(take.url, skipping: skip, name: nextTakeName()) else {
+            status = "Could not process the recording. The take is kept at \(take.url.path)"
+            return
+        }
+        guard trimmed.frames > 0 else {
+            try? FileManager.default.removeItem(at: take.url); try? FileManager.default.removeItem(at: trimmed.url)
+            status = "Nothing recorded"
+            return
+        }
+        guard let asset = importAudio(trimmed.url) else {
+            try? FileManager.default.removeItem(at: trimmed.url)
+            status = "Could not import the recording. The take is kept at \(take.url.path)"
+            return
+        }
+        try? FileManager.default.removeItem(at: take.url)
+        try? FileManager.default.removeItem(at: trimmed.url)
 
         let sr = sampleRate
         let startFrame = project.tempoMap.frame(at: recordStartTick, sampleRate: sr).rawValue
@@ -74,7 +91,12 @@ extension AppModel {
     }
 
     /// Copies a recording without its first `skip` frames. A negative `skip` puts silence in front.
+    /// `nil` when reading or writing fails: the copy is then incomplete and must not replace the take.
     private func trim(_ url: URL, skipping skip: Int64, name: String) -> (url: URL, frames: Int64)? {
+        do { return try trimOrThrow(url, skipping: skip, name: name) } catch { return nil }
+    }
+
+    private func trimOrThrow(_ url: URL, skipping skip: Int64, name: String) throws -> (url: URL, frames: Int64)? {
         guard let input = try? AVAudioFile(forReading: url) else { return nil }
         let format = input.processingFormat
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("LoopStudio-trim-\(UUID().uuidString)", isDirectory: true)
@@ -88,7 +110,7 @@ extension AppModel {
             var left = -skip
             while left > 0 {
                 silence.frameLength = AVAudioFrameCount(min(4096, left))
-                try? output.write(from: silence)
+                try output.write(from: silence)
                 left -= Int64(silence.frameLength); written += Int64(silence.frameLength)
             }
         } else if skip > 0 {
@@ -97,9 +119,9 @@ extension AppModel {
         }
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192) else { return nil }
         while input.framePosition < input.length {
-            do { try input.read(into: buffer, frameCount: 8192) } catch { break }
+            try input.read(into: buffer, frameCount: 8192)
             if buffer.frameLength == 0 { break }
-            try? output.write(from: buffer)
+            try output.write(from: buffer)
             written += Int64(buffer.frameLength)
         }
         return (out, written)

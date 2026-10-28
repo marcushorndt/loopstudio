@@ -136,7 +136,7 @@ public final class LiveEngine: @unchecked Sendable {
     /// Plays only the click for `beats` beats, then starts the transport. Instruments keep running meanwhile.
     public func playAfterCountIn(beats: Int) {
         locked {
-            guard beats > 0 else { playing = true; return }
+            guard beats > 0 else { playing = true; stampPending = true; return }
             countInRemaining = Int64(beats) * beatFrames
             countInDone = 0
         }

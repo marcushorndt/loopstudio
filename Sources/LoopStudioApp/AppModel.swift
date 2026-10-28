@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import Foundation
 import LoopStudioCore
@@ -170,12 +171,19 @@ final class AppModel {
         watchHorizon()
         audioFolders = (UserDefaults.standard.stringArray(forKey: "audioFolders") ?? []).map { URL(fileURLWithPath: $0) }
 
+        // Never overwrite a project at startup: open the last one, else the existing demo, else make a new demo.
         if let path = UserDefaults.standard.string(forKey: "lastProject"), FileManager.default.fileExists(atPath: path) {
             open(URL(fileURLWithPath: path))
+        } else if FileManager.default.fileExists(atPath: url.path) {
+            open(url)
         } else {
             createDemo()
         }
         if ProcessInfo.processInfo.environment["LOOPSTUDIO_SELFTEST"] != nil { runSelfTest() }
+        // Quitting within the autosave delay must not lose the last edit.
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { if self?.dirty == true { self?.save() } }
+        }
     }
 
     /// Launches scene 1, then prints what the engine plays. Used to check the live path without ears.
@@ -1152,6 +1160,9 @@ final class AppModel {
     }
 
     func open(_ url: URL) {
+        // Unsaved edits of the current project go to disk first; the pending autosave belongs to it.
+        if dirty && url != packageURL { save() }
+        saveTask?.cancel()
         do {
             let loaded = try ProjectPackage.read(from: url)
             reset(to: loaded.project, at: url)
@@ -1166,6 +1177,7 @@ final class AppModel {
     }
 
     private func reset(to new: Project, at url: URL) {
+        saveTask?.cancel()
         pause()
         engine.seek(to: 0)
         project = new
@@ -1215,16 +1227,16 @@ final class AppModel {
 
     func newDemoProject() {
         save()
-        createDemo(unique: true)
+        createDemo()
     }
 
-    private func createDemo(unique: Bool = false) {
+    private func createDemo() {
         DemoSamples.ensure()
         var name = "Demo Set"
         var n = 2
         let folder = Self.projectsFolder
-        if unique { while FileManager.default.fileExists(atPath: folder.appendingPathComponent("\(name).loopstudio").path) { name = "Demo Set \(n)"; n += 1 } }
-        else { try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(name).loopstudio")) }
+        // An existing package is never replaced: a set with the same name gets a number.
+        while FileManager.default.fileExists(atPath: folder.appendingPathComponent("\(name).loopstudio").path) { name = "Demo Set \(n)"; n += 1 }
         reset(to: Project(name: name), at: folder.appendingPathComponent("\(name).loopstudio"))
 
         let layout: [(String, Int, [String?])] = [

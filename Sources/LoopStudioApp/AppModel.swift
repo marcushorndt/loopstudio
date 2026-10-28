@@ -1271,9 +1271,13 @@ final class AppModel {
         do {
             try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
             try ProjectPackage.write(project, to: packageURL)
-            try? journal?.reset()
             dirty = false
             UserDefaults.standard.set(packageURL.path, forKey: "lastProject")
+            // The edits are in the package now. A journal that keeps them would apply them twice after a crash.
+            do { try journal?.reset() } catch {
+                journal = nil
+                status = "Saved, but the edit journal is off: \(error.localizedDescription)"
+            }
         } catch {
             status = "Cannot save: \(error.localizedDescription)"
         }
@@ -1349,6 +1353,8 @@ final class AppModel {
             copy.name = url.deletingPathExtension().lastPathComponent
             try ProjectPackage.write(copy, to: url)
             saveTask?.cancel()
+            // The old package stays at its last save, as Save As promises. Its journal must not bring the edits back.
+            try? journal?.reset()
             project = copy
             packageURL = url
             journal = try? Journal(url: url.appendingPathComponent("journal.jsonl"), durable: false)

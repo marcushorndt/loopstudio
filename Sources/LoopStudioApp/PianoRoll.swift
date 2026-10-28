@@ -289,7 +289,8 @@ private struct NoteView: View {
     private func resize(start points: CGFloat) {
         startEdge = 0
         let end = note.tick.rawValue + note.length.rawValue
-        let start = min(max(0, (note.tick.rawValue + ticks(points) + grid / 2) / grid * grid), end - grid)
+        let start = max(0, min((note.tick.rawValue + ticks(points) + grid / 2) / grid * grid, end - grid))
+        guard end - start >= 1 else { return }
         rememberLength(end - start)
         replace { $0.tick = Tick(start); $0.length = Tick(end - start) }
     }

@@ -5,6 +5,8 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var columns = NavigationSplitViewVisibility.all
     @State private var keys = KeyMonitor()
+    /// The height of the column right of the sidebar. The panel never asks for more than fits in it.
+    @State private var columnHeight: CGFloat = 0
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
@@ -31,13 +33,16 @@ struct RootView: View {
                 if model.detailOpen {
                     DetailResizeHandle()
                     DetailPanel()
-                        .frame(minWidth: 0, maxWidth: .infinity, minHeight: model.detailHeight, maxHeight: .infinity)
+                        .frame(minWidth: 0, maxWidth: .infinity,
+                               minHeight: columnHeight > 0 ? min(model.detailHeight, max(120, columnHeight - 220)) : model.detailHeight,
+                               maxHeight: .infinity)
                         .clipped()
                         .onGeometryChange(for: CGFloat.self, of: \.size.height) { model.detailShownHeight = $0 }
                 }
                 StatusBar().frame(minWidth: 0, maxWidth: .infinity).clipped()
             }
             .background(Theme.background)
+            .onGeometryChange(for: CGFloat.self, of: \.size.height) { columnHeight = $0 }
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Text("\(model.project.name)\(model.dirty ? " •" : "")").font(.headline)

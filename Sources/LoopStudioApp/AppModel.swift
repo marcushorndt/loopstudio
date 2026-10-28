@@ -238,7 +238,7 @@ final class AppModel {
         if ProcessInfo.processInfo.environment["LOOPSTUDIO_SELFTEST"] != nil { runSelfTest() }
         // Quitting within the autosave delay must not lose the last edit.
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { if self?.dirty == true { self?.save() } }
+            MainActor.assumeIsolated { self?.saveOnQuit() }
         }
     }
 
@@ -591,6 +591,7 @@ final class AppModel {
     // MARK: Selection
 
     func select(clip id: ClipID, extend: Bool) {
+        trackFocused = false
         rangeSelection = nil
         if extend {
             if selectedClips.contains(id) {
@@ -607,6 +608,7 @@ final class AppModel {
     }
 
     func clearSelection() {
+        trackFocused = false
         selectedClips = []
         selectedClip = nil
         rangeSelection = nil
@@ -616,6 +618,8 @@ final class AppModel {
     func selectRange(from a: Tick, to b: Tick, tracks: Set<TrackID>) {
         let start = min(a, b), end = max(a, b)
         guard end > start, !tracks.isEmpty else { return }
+        // A time range is now the selection: Delete must not remove the track clicked before.
+        trackFocused = false
         rangeSelection = RangeSelection(start: start, end: end, tracks: tracks)
         var ids = Set<ClipID>()
         for t in project.tracks where tracks.contains(t.id) {
@@ -785,6 +789,7 @@ final class AppModel {
         guard let inverse = undoStack.popLast() else { return }
         if let redo = try? inverse.apply(to: &project) { redoStack.append(redo); try? journal?.append(inverse) }
         lastKey = nil
+        selectedNotes = [] // marked notes may not exist any more
         changed()
     }
 
@@ -792,6 +797,7 @@ final class AppModel {
         guard let command = redoStack.popLast() else { return }
         if let inverse = try? command.apply(to: &project) { undoStack.append(inverse); try? journal?.append(command) }
         lastKey = nil
+        selectedNotes = []
         changed()
     }
 
@@ -901,6 +907,14 @@ final class AppModel {
     }
 
     /// Writes each plugin's current state into the project, so a save keeps knob positions and presets.
+    /// A knob turned in a plugin window does not mark the project as changed. So on quit the plugin states
+    /// are read, and the project is saved when they differ from the saved ones.
+    private func saveOnQuit() {
+        let before = project
+        captureStates()
+        if dirty || project != before { save() }
+    }
+
     private func captureStates() {
         let states = host.states()
         guard !states.isEmpty else { return }
@@ -1039,7 +1053,8 @@ final class AppModel {
     }
 
     func setNotes(_ clip: ClipID, _ notes: [MIDINote]) {
-        apply(.setMIDINotes(clip: clip, notes: notes), key: "notes\(clip)")
+        // Every note edit is its own undo step: a drag commits once, at its end.
+        apply(.setMIDINotes(clip: clip, notes: notes))
     }
 
     // MARK: Devices
@@ -1438,7 +1453,14 @@ final class AppModel {
         captureStates()
         exporting = true
         status = "Exporting \(url.lastPathComponent)…"
-        let snapshot = project, bank = bank
+        // Like Live, an export renders the arrangement. An empty arrangement renders what was played in the
+        // Session instead, so a jam does not export as silence. Capture puts a jam into the arrangement.
+        var snapshot = project
+        let arrangementEmpty = !project.tracks.contains { !$0.clips.isEmpty }
+        let jam = arrangementEmpty && !performance.isEmpty
+        if jam { snapshot.launches = performance }
+        let skipped = !arrangementEmpty && !performance.isEmpty
+        let bank = bank
         Task { [weak self] in
             // Own plugin instances: the live ones belong to the audio thread.
             let prepared = await OfflineRender.prepare(snapshot, bank: bank)
@@ -1460,7 +1482,10 @@ final class AppModel {
             guard let self else { return }
             self.exporting = false
             switch result {
-            case .success(let seconds): self.status = "Exported \(url.lastPathComponent), \(Int(seconds.rounded())) s\(note)"
+            case .success(let seconds):
+                self.status = "Exported \(url.lastPathComponent), \(Int(seconds.rounded())) s\(note)"
+                if jam { self.status += ". It holds the Session performance, because the arrangement is empty" }
+                if skipped { self.status += ". The Session performance is not in it: Capture (⇧⌘C) puts it into the arrangement" }
             case .failure(let error): self.status = "Export failed: \(error.localizedDescription)"
             }
         }

@@ -8,15 +8,15 @@ public class DSPEffect: @unchecked Sendable {
     public let sampleRate: Double
     let spec: EffectSpec
 
-    /// True when a knob can follow the song tempo. The renderer then calls `clock` at every grid step.
-    let followsTempo: Bool
+    /// True while a knob follows the song tempo or an LFO runs. The renderer then calls `clock` at every
+    /// grid step. Set in `configure`, so an effect without sync runs in whole blocks.
+    var followsTempo = false
     /// Seconds per quarter note at the current grid step. Set by `clock`.
     private(set) var quarterSeconds = 0.5
 
     init(spec: EffectSpec, sampleRate: Double) {
         self.spec = spec
         self.sampleRate = sampleRate
-        followsTempo = spec.params.contains(where: \.syncable)
     }
 
     func value(_ p: [String: Double], _ key: String) -> Float {
@@ -144,12 +144,15 @@ final class FilterDSP: DSPEffect, @unchecked Sendable {
     private var type = 0, cutoff = 1_000.0, q = 0.707
     private var lfoAmount = 0.0, lfoHz = 1.0
     private var lfoQuarters: Double?
+    /// The free LFO's phase, carried from grid step to grid step, so a rate change does not jump.
+    private var lfoPhase = 0.0, lfoFrame = Int64.min
 
     override func configure(_ p: [String: Double]) {
         type = Int(value(p, "type"))
         cutoff = Double(value(p, "cutoff")); q = Double(value(p, "resonance"))
         lfoAmount = Double(value(p, "lfoAmount")); lfoHz = Double(value(p, "lfoRate"))
         lfoQuarters = syncedQuarters(p, "lfoRate")
+        followsTempo = lfoAmount > 0
         design(cutoff)
     }
 
@@ -157,7 +160,16 @@ final class FilterDSP: DSPEffect, @unchecked Sendable {
     /// the beat, and an export sounds exactly like the playback.
     override func step(frame: Int64, beat: Double) {
         guard lfoAmount > 0 else { return }
-        let phase = lfoQuarters.map { beat / $0 } ?? Double(frame) / sampleRate * lfoHz
+        let phase: Double
+        if let q = lfoQuarters {
+            phase = beat / q
+        } else {
+            // One grid step on: add this step's share. After a jump, start from the absolute frame.
+            lfoPhase = frame == lfoFrame + 32 ? lfoPhase + 32 / sampleRate * lfoHz : Double(frame) / sampleRate * lfoHz
+            lfoPhase -= lfoPhase.rounded(.down)
+            phase = lfoPhase
+        }
+        lfoFrame = frame
         let lfo = sin(2 * .pi * (phase - phase.rounded(.down)))
         design(min(20_000, max(20, cutoff * pow(2, 4 * lfoAmount * lfo))))
     }
@@ -223,8 +235,8 @@ final class DelayDSP: DSPEffect, @unchecked Sendable {
     private var syncQuarters: Double?
 
     override init(spec: EffectSpec, sampleRate: Double) {
-        // Room for a synced 1/1 at 40 BPM.
-        size = Int(sampleRate * 6.1) + 8
+        // Room for a synced 1/1 (the longest note value offered) at 30 BPM.
+        size = Int(sampleRate * 8.1) + 8
         bufL = .allocate(capacity: size); bufL.initialize(repeating: 0, count: size)
         bufR = .allocate(capacity: size); bufR.initialize(repeating: 0, count: size)
         super.init(spec: spec, sampleRate: sampleRate)
@@ -235,6 +247,7 @@ final class DelayDSP: DSPEffect, @unchecked Sendable {
     override func configure(_ p: [String: Double]) {
         freeMs = value(p, "timeMs")
         syncQuarters = syncedQuarters(p, "timeMs")
+        followsTempo = syncQuarters != nil
         updateTarget()
         feedback = value(p, "feedback")
         mix = value(p, "mix")
@@ -346,6 +359,7 @@ final class ReverbDSP: DSPEffect, @unchecked Sendable {
         mix = value(p, "mix")
         preFreeMs = value(p, "preDelayMs")
         preQuarters = syncedQuarters(p, "preDelayMs")
+        followsTempo = preQuarters != nil
         updatePreDelay()
     }
 
@@ -366,14 +380,15 @@ final class ReverbDSP: DSPEffect, @unchecked Sendable {
         let fb = feedback, d = damp, m = mix, pre = preFrames
         for i in 0..<frames {
             var input = (l[i] + r[i]) * 0.015
+            // The line always runs, so turning the pre-delay on later does not replay old sound.
+            preBuf[preWrite] = input
             if pre > 0 {
-                preBuf[preWrite] = input
                 var read = preWrite - pre
                 if read < 0 { read += preSize }
                 input = preBuf[read]
-                preWrite += 1
-                if preWrite >= preSize { preWrite = 0 }
             }
+            preWrite += 1
+            if preWrite >= preSize { preWrite = 0 }
             var outL: Float = 0, outR: Float = 0
             for k in 0..<8 {
                 outL += step(&combs[k], input, fb, d)

@@ -21,21 +21,24 @@ public struct EffectParam: Sendable, Hashable {
                 unit: String = "", choices: [String] = [], log: Bool = false) {
         self.key = key; self.name = name; self.min = min; self.max = max; self.def = def
         self.unit = unit; self.choices = choices; self.logarithmic = log
+        syncKey = key + "Sync"; divisionKey = key + "Division"
     }
 
     public func clamp(_ v: Double) -> Double { Swift.min(Swift.max(v, min), max) }
 
     /// A switch: two choices, off and on.
     public var isSwitch: Bool { choices == ["Off", "On"] }
-    public var syncKey: String { key + "Sync" }
-    public var divisionKey: String { key + "Division" }
+    /// Built once here: the audio thread reads them, and building a long string there would allocate.
+    public private(set) var syncKey = ""
+    public private(set) var divisionKey = ""
 
     /// A time (unit "ms") or speed (unit "Hz") that can follow the tempo, with its switch and its note value.
+    /// `longest`: the longest note value offered, so a synced time fits the effect's buffer at 30 BPM.
     static func synced(_ key: String, _ name: String, _ min: Double, _ max: Double, _ def: Double, unit: String,
-                       division: String, log: Bool = true) -> [EffectParam] {
+                       division: String, longest: String = "8/1", log: Bool = true) -> [EffectParam] {
         var free = EffectParam(key, name, min, max, def, unit: unit, log: log)
         free.syncable = true
-        var note = EffectParam(free.divisionKey, name + " Note", 0, Double(NoteDivision.all.count - 1),
+        var note = EffectParam(free.divisionKey, name + " Note", Double(NoteDivision.index(longest)), Double(NoteDivision.all.count - 1),
                                Double(NoteDivision.index(division)), choices: NoteDivision.all.map(\.name))
         note.rotary = true
         return [free, EffectParam(free.syncKey, name + " Sync", 0, 1, 0, choices: ["Off", "On"]), note]
@@ -116,12 +119,12 @@ public enum BuiltInEffects {
             EffectParam("midFreq", "Mid Freq", 200, 8_000, 1_000, unit: "Hz", log: true),
             EffectParam("high", "High", -18, 18, 0, unit: "dB"),
         ]),
-        EffectSpec(id: "delay", name: "Delay", params: EffectParam.synced("timeMs", "Time", 1, 2_000, 375, unit: "ms", division: "1/8.") + [
+        EffectSpec(id: "delay", name: "Delay", params: EffectParam.synced("timeMs", "Time", 1, 2_000, 375, unit: "ms", division: "1/8.", longest: "1/1") + [
             EffectParam("feedback", "Feedback", 0, 0.95, 0.4),
             EffectParam("pingPong", "Ping Pong", 0, 1, 1, choices: ["Off", "On"]),
             EffectParam("mix", "Dry/Wet", 0, 1, 0.3),
         ]),
-        EffectSpec(id: "reverb", name: "Reverb", params: EffectParam.synced("preDelayMs", "Pre-Delay", 0, 500, 0, unit: "ms", division: "1/32", log: false) + [
+        EffectSpec(id: "reverb", name: "Reverb", params: EffectParam.synced("preDelayMs", "Pre-Delay", 0, 500, 0, unit: "ms", division: "1/32", longest: "1/4", log: false) + [
             EffectParam("size", "Size", 0, 1, 0.6),
             EffectParam("damping", "Damping", 0, 1, 0.5),
             EffectParam("mix", "Dry/Wet", 0, 1, 0.25),

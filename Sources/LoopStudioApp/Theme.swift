@@ -76,6 +76,8 @@ struct HoverHint: ViewModifier {
             .onHover { inside in
                 if inside { model.hoverInfo = text } else if model.hoverInfo == text { model.hoverInfo = "" }
             }
+            // A view removed under the pointer gets no hover end.
+            .onDisappear { if model.hoverInfo == text { model.hoverInfo = "" } }
     }
 }
 

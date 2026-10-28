@@ -126,7 +126,9 @@ extension AppModel {
         // A slot is selected now, not the track, so Delete cannot remove the track.
         trackFocused = false
         let last = sessionRows // the stop row
-        let row = min(max((selectedRow ?? (rows > 0 ? -1 : last)) + rows, 0), last)
+        // With no row yet: down starts at the top, up at the last scene, left and right at the top.
+        let start = selectedRow ?? (rows > 0 ? -1 : (rows < 0 ? last : 0))
+        let row = min(max(start + rows, 0), last)
         selectedSceneRow = row
         let track = columns[column]
         selectedClip = row < track.slots.count && track.kind != .master ? track.slots[row]?.clip.id : nil

@@ -45,7 +45,8 @@ struct TrackMenuItems: View {
     var body: some View {
         AppAction.renameTrack.button(model) { model.renameRequest = track.id }
         AppAction.duplicateTrack.button(model) { model.duplicateTrack(track.id) }
-        AppAction.deleteSelection.button(model, title: "Delete Track") { model.focusTrack(track.id); model.deleteFocusedTracks() }
+        // Only this track: a marked range on other tracks does not widen a right-click delete.
+        AppAction.deleteSelection.button(model, title: "Delete Track") { model.rangeSelection = nil; model.focusTrack(track.id); model.deleteFocusedTracks() }
         Divider()
         Menu("Color") {
             ForEach(0..<colorNames.count, id: \.self) { i in

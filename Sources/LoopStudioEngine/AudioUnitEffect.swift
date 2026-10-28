@@ -89,7 +89,9 @@ public final class AudioUnitEffect: @unchecked Sendable {
             return true
         }
         unit.transportStateBlock = { flags, position, cycleStart, cycleEnd in
-            flags?.pointee = song.playing ? [.changed, .moving] : [.changed]
+            var state: AUHostTransportStateFlags = song.playing ? [.moving] : []
+            if song.changed { state.insert(.changed) }
+            flags?.pointee = state
             position?.pointee = song.frame
             cycleStart?.pointee = 0
             cycleEnd?.pointee = 0
@@ -132,6 +134,10 @@ public final class AudioUnitEffect: @unchecked Sendable {
     /// Sets the song position the plugin sees in the next `process` call. Realtime safe.
     func setSongPosition(frame: Int64, beat: Double, bpm: Double, numerator: Int, denominator: Int,
                          downbeat: Double, playing: Bool) {
+        // "Changed" only when the transport starts, stops or jumps (a locate or a loop wrap).
+        let jumped = frame < song.lastFrame || frame > song.lastFrame + Int64(maxFrames)
+        song.changed = playing != song.playing || (playing && jumped)
+        song.lastFrame = frame
         song.frame = Double(frame); song.beat = beat; song.bpm = bpm
         song.numerator = numerator; song.denominator = denominator
         song.downbeat = downbeat; song.playing = playing; song.sampleRate = sampleRate
@@ -224,4 +230,6 @@ private final class SongPosition: @unchecked Sendable {
     var numerator = 4, denominator = 4
     var playing = false
     var sampleRate = 48_000.0
+    var changed = true
+    var lastFrame = Int64.min / 2
 }

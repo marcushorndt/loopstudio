@@ -7,8 +7,8 @@ import os
 
 /// Plays a `Renderer` through the default output device.
 ///
-/// The audio thread only reads state under a try-lock. If the lock is busy (the control thread swaps
-/// the renderer), that block is silent. The control thread holds the lock for a few pointer writes only.
+/// The audio thread reads state under a lock. Every other thread holds that lock for a few plain writes
+/// only (no allocation, no release of the last reference), so the audio thread never waits long.
 public final class LiveEngine: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
@@ -175,9 +175,8 @@ public final class LiveEngine: @unchecked Sendable {
         }
     }
 
-    /// Queues a MIDI message for the instrument of a render node. Safe from any thread (a MIDI callback, the UI).
     /// Queues a live MIDI message for the instrument of `track`. The track, not a node index, is the
-    /// address, so a message sent while the graph changes still reaches the right instrument.
+    /// address, so a message sent while the graph changes still reaches the right instrument. Safe from any thread.
     public func sendLiveMIDI(track: TrackID, _ status: UInt8, _ data1: UInt8, _ data2: UInt8) {
         locked {
             guard liveCount < liveCapacity else { return }
@@ -203,10 +202,10 @@ public final class LiveEngine: @unchecked Sendable {
               let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
               let right = buffers[1].mData?.assumingMemoryBound(to: Float.self) else { return }
 
-        guard os_unfair_lock_trylock(lock) else {
-            left.update(repeating: 0, count: frameCount); right.update(repeating: 0, count: frameCount)
-            return
-        }
+        // Every holder of the lock does a few plain writes and never allocates or frees under it, and
+        // os_unfair_lock lends this thread's priority to the holder. A short wait is better than a silent
+        // block that also stops both clocks.
+        os_unfair_lock_lock(lock)
         defer { os_unfair_lock_unlock(lock) }
 
         guard let renderer else {

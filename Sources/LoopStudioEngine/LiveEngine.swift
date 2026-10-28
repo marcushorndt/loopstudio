@@ -31,6 +31,8 @@ public final class LiveEngine: @unchecked Sendable {
     private var beatsPerBar = 4
     private var countInRemaining: Int64 = 0
     private var countInDone: Int64 = 0
+    private var stampPending = false
+    private var startHost: UInt64 = 0
     public let sampleRate: Double
 
     public init(sampleRate: Double) {
@@ -49,8 +51,8 @@ public final class LiveEngine: @unchecked Sendable {
     public func start() throws {
         guard sourceNode == nil else { return }
         let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
-        let node = AVAudioSourceNode(format: format) { [unowned self] _, _, frameCount, bufferList in
-            self.render(frameCount: Int(frameCount), bufferList: bufferList)
+        let node = AVAudioSourceNode(format: format) { [unowned self] _, timestamp, frameCount, bufferList in
+            self.render(frameCount: Int(frameCount), bufferList: bufferList, host: timestamp.pointee.mHostTime)
             return noErr
         }
         sourceNode = node
@@ -114,7 +116,10 @@ public final class LiveEngine: @unchecked Sendable {
     /// The next frame to play.
     public var positionFrame: Int64 { locked { position } }
 
-    public func play() { locked { playing = true; countInRemaining = 0 } }
+    public func play() { locked { playing = true; countInRemaining = 0; stampPending = true } }
+
+    /// Host time at which the transport last began to play. For lining up a recording with the timeline.
+    public var playStartHostTime: UInt64 { locked { startHost } }
 
     /// Sets the click. `beatFrames` is the length of one beat in frames at the current tempo.
     public func setMetronome(enabled: Bool, beatFrames: Int64, beatsPerBar: Int) {
@@ -154,7 +159,7 @@ public final class LiveEngine: @unchecked Sendable {
 
     // MARK: Audio thread
 
-    private func render(frameCount: Int, bufferList: UnsafeMutablePointer<AudioBufferList>) {
+    private func render(frameCount: Int, bufferList: UnsafeMutablePointer<AudioBufferList>, host: UInt64) {
         let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
         guard buffers.count >= 2,
               let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
@@ -188,11 +193,15 @@ public final class LiveEngine: @unchecked Sendable {
                 addClick(left + done, right + done, n, clock: countInDone)
                 countInDone += Int64(n)
                 countInRemaining -= Int64(n)
-                if countInRemaining <= 0 { countInRemaining = 0; playing = true }
+                if countInRemaining <= 0 {
+                    countInRemaining = 0; playing = true
+                    startHost = host &+ HostClock.ticks(fromSeconds: Double(done + n) / sampleRate)
+                }
             }
             done += n
         }
 
+        if stampPending && playing { startHost = host; stampPending = false }
         while done < frameCount {
             var n = min(frameCount - done, renderer.maxBlock)
             if let loop, position < loop.upperBound {

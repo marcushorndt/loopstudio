@@ -18,6 +18,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSMicrophoneUsageDescription</key><string>LoopStudio records audio from your sound card input.</string>
 </dict></plist>
 PLIST
 codesign --force --sign - "$app" >/dev/null 2>&1 || true

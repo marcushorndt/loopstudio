@@ -66,6 +66,19 @@ final class AppModel {
         didSet { UserDefaults.standard.set(countInBars, forKey: "countInBars") }
     }
     var recordStartTick: Tick = 0
+    /// Audio input for recording. Like the output, it belongs to this Mac.
+    var inputUID: String? = UserDefaults.standard.string(forKey: "inputUID") {
+        didSet { UserDefaults.standard.set(inputUID, forKey: "inputUID") }
+    }
+    var inputLeft: Int = UserDefaults.standard.object(forKey: "inputLeft") as? Int ?? 0 {
+        didSet { UserDefaults.standard.set(inputLeft, forKey: "inputLeft") }
+    }
+    var inputStereo: Bool = UserDefaults.standard.object(forKey: "inputStereo") as? Bool ?? false {
+        didSet { UserDefaults.standard.set(inputStereo, forKey: "inputStereo") }
+    }
+    @ObservationIgnored let audioRecorder = AudioInputRecorder()
+    var recordingAudio = false
+    var recordTrackID: TrackID?
     /// Sound card choice. It belongs to this Mac, not to a project. `nil` means the system default.
     var outputUID: String? = UserDefaults.standard.string(forKey: "outputUID") {
         didSet { UserDefaults.standard.set(outputUID, forKey: "outputUID") }
@@ -93,7 +106,7 @@ final class AppModel {
     private(set) var pluginRevision = 0
     private(set) var midiSources = 0
     var pixelsPerBar: Double = 90
-    private(set) var transportPlaying = false
+    var transportPlaying = false
     private(set) var canUndo = false
     private(set) var canRedo = false
     private(set) var previewing: URL?
@@ -217,14 +230,17 @@ final class AppModel {
     }
 
     private func recordTargetOK() -> Bool {
-        guard let id = selectedTrack, let t = project.track(id) else { status = "Select a MIDI track to record"; return false }
-        if t.kind == .audio { status = "Audio recording is not available yet. Select a MIDI track."; return false }
-        guard t.kind == .midi else { status = "Select a MIDI track to record"; return false }
+        guard let id = selectedTrack, let t = project.track(id) else { status = "Select an audio or MIDI track to record"; return false }
+        guard t.kind == .midi || t.kind == .audio else { status = "Select an audio or MIDI track to record"; return false }
         return true
     }
 
     private func startRecording() {
         guard recordTargetOK() else { recordArmed = false; play(); return }
+        if let id = selectedTrack, project.track(id)?.kind == .audio {
+            Task { @MainActor in await startAudioRecording() }
+            return
+        }
         recordStartTick = currentTick
         recorder.begin()
         recording = true
@@ -239,6 +255,7 @@ final class AppModel {
         guard recording else { return }
         recording = false
         recordArmed = false
+        if recordingAudio { finishAudioRecording(); return }
         let events = recorder.end()
         guard let id = selectedTrack else { return }
         let endFrame = engine.positionFrame

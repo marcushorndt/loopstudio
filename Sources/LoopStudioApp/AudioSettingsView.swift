@@ -39,6 +39,26 @@ struct AudioSettingsView: View {
                         .font(.caption).foregroundStyle(Theme.dim)
                 }
             }
+            Section("Audio input (recording)") {
+                let inputs = devices.filter { !$0.inputs.isEmpty }
+                Picker("Device", selection: Binding(get: { model.inputUID ?? "" }, set: { model.inputUID = $0.isEmpty ? nil : $0; model.inputLeft = 0 })) {
+                    Text("System default").tag("")
+                    ForEach(inputs, id: \.uid) { Text("\($0.name) (\($0.inputs.count) in)").tag($0.uid) }
+                }
+                let device = inputs.first { $0.uid == (model.inputUID ?? AudioDeviceCatalog.defaultInputUID()) }
+                if let device {
+                    Picker("Channels", selection: Binding(get: { "\(model.inputStereo ? 1 : 0)-\(model.inputLeft)" }, set: { v in
+                        let p = v.split(separator: "-"); model.inputStereo = p[0] == "1"; model.inputLeft = Int(p[1]) ?? 0
+                    })) {
+                        ForEach(device.inputs.indices, id: \.self) { Text("Mono: \(device.inputs[$0].name)").tag("0-\($0)") }
+                        ForEach(Array(stride(from: 0, to: max(0, device.inputs.count - 1), by: 2)), id: \.self) {
+                            Text("Stereo: \(device.inputs[$0].name) + \(device.inputs[$0 + 1].name)").tag("1-\($0)")
+                        }
+                    }
+                    Text("Input latency: \(device.inputLatencyFrames) frames. A take is moved earlier by the round trip, so it lines up.")
+                        .font(.caption).foregroundStyle(Theme.dim)
+                }
+            }
             Section("MIDI inputs") {
                 if midi.isEmpty { Text("No MIDI device found").foregroundStyle(Theme.dim) }
                 ForEach(midi, id: \.uniqueID) { Text("\($0.name)\($0.isOffline ? " (offline)" : "")") }

@@ -35,3 +35,13 @@ import Testing
         #expect(notes.first?.length == Tick(1))
     }
 }
+
+@Test func hostClockConvertsBothWays() {
+    let ticks = HostClock.ticks(fromSeconds: 0.25)
+    #expect(abs(HostClock.seconds(fromTicks: Int64(ticks)) - 0.25) < 1e-6)
+    // The transport began 0.1 s after the take: 4800 frames at 48 kHz.
+    let base: UInt64 = 1_000_000
+    #expect(abs(HostClock.frames(from: base, to: base + HostClock.ticks(fromSeconds: 0.1), rate: 48_000) - 4_800) <= 1)
+    // And before it: negative.
+    #expect(HostClock.frames(from: base + HostClock.ticks(fromSeconds: 0.1), to: base, rate: 48_000) < 0)
+}

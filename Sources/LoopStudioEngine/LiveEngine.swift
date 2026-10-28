@@ -36,6 +36,10 @@ public final class LiveEngine: @unchecked Sendable {
     private var liveCount = 0
     // Metronome and count-in, guarded by `lock`.
     private var metronome = false
+    /// While the transport plays, the click sits on these frames (sorted), from the tempo and time
+    /// signature maps. Empty: a steady click of `beatFrames`.
+    private var clickFrames: [Int64] = []
+    private var clickAccents: [Bool] = []
     private var beatFrames: Int64 = 24_000
     private var beatsPerBar = 4
     private var countInRemaining: Int64 = 0
@@ -170,6 +174,13 @@ public final class LiveEngine: @unchecked Sendable {
         locked { metronome = enabled; self.beatFrames = max(1, beatFrames); self.beatsPerBar = max(1, beatsPerBar) }
     }
 
+    /// The beats of the song, in frames, with the bar accents. The old arrays are freed here, not on the audio thread.
+    public func setClickGrid(frames: [Int64], accents: [Bool]) {
+        var oldFrames = frames, oldAccents = accents
+        locked { swap(&clickFrames, &oldFrames); swap(&clickAccents, &oldAccents) }
+        withExtendedLifetime((oldFrames, oldAccents)) {}
+    }
+
     /// Plays only the click for `beats` beats, then starts the transport. Instruments keep running meanwhile.
     public func playAfterCountIn(beats: Int) {
         locked {
@@ -280,7 +291,10 @@ public final class LiveEngine: @unchecked Sendable {
                 n = min(n, Int(loop.upperBound - position))
             }
             renderer.process(startFrame: position, sessionFrame: sessionPosition, frames: n, outLeft: left + done, outRight: right + done)
-            if metronome { addClick(left + done, right + done, n, clock: position) }
+            if metronome {
+                if clickFrames.isEmpty { addClick(left + done, right + done, n, clock: position) }
+                else { addGridClick(left + done, right + done, n, clock: position) }
+            }
             position += Int64(n)
             sessionPosition += Int64(n)
             done += n
@@ -289,6 +303,25 @@ public final class LiveEngine: @unchecked Sendable {
     }
 
     /// Adds the click for `count` frames. `clock` is the frame count since a beat grid that starts at 0.
+    /// The click on the beat grid: each sample sounds the latest beat at or before it.
+    private func addGridClick(_ left: UnsafeMutablePointer<Float>, _ right: UnsafeMutablePointer<Float>, _ count: Int, clock: Int64) {
+        let length = Int64(sampleRate * 0.04)
+        var lo = 0, hi = clickFrames.count
+        while lo < hi { let mid = (lo + hi) / 2; if clickFrames[mid] <= clock { lo = mid + 1 } else { hi = mid } }
+        var beat = lo - 1 // the latest beat at or before `clock`, or -1
+        for i in 0..<count {
+            let t = clock + Int64(i)
+            while beat + 1 < clickFrames.count && clickFrames[beat + 1] <= t { beat += 1 }
+            guard beat >= 0 else { continue }
+            let offset = t - clickFrames[beat]
+            guard offset < length else { continue }
+            let phase = 2 * Double.pi * (clickAccents[beat] ? 1_500 : 1_000) * Double(offset) / sampleRate
+            let v = Float(sin(phase) * exp(-Double(offset) / (sampleRate * 0.008)) * 0.4)
+            left[i] += v
+            right[i] += v
+        }
+    }
+
     private func addClick(_ left: UnsafeMutablePointer<Float>, _ right: UnsafeMutablePointer<Float>, _ count: Int, clock: Int64) {
         let length = Int64(sampleRate * 0.04)
         for i in 0..<count {

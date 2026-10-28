@@ -43,3 +43,14 @@ private func setup() -> (Project, TrackID) {
     let later = [SessionEvent(track: id, slot: 0, clip: clipID, startTick: 7_680, endTick: 9_000, cause: .launch)]
     #expect(p.captureCommands(later, until: 3_840).isEmpty)
 }
+
+@Test func clickFollowsTheTimeSignatures() {
+    var p = Project(name: "M")
+    // Two bars of 4/4, then 3/4.
+    p.timeSignatures = [TimeSignatureChange(tick: 0, signature: TimeSignature(4, 4)),
+                        TimeSignatureChange(tick: 7_680, signature: TimeSignature(3, 4))]
+    let beats = p.clickBeats(upTo: Tick(7_680 + 2_880 * 2))
+    #expect(beats.count == 8 + 6)
+    #expect(beats.filter { $0.accent }.map { $0.tick.rawValue } == [0, 3_840, 7_680, 10_560])
+    #expect(beats.allSatisfy { $0.tick.rawValue % 960 == 0 })
+}

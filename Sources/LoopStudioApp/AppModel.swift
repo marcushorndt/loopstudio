@@ -350,10 +350,16 @@ final class AppModel {
         return (sig.numerator, sig.ticksPerBar.rawValue / Int64(max(1, sig.numerator)))
     }
 
+    /// The count-in uses the tempo and meter where playback starts; the song click follows both maps.
     func updateMetronome() {
-        let quarter = (60.0 / max(20, bpm)) * sampleRate
+        let here = currentTick
+        let quarter = (60.0 / max(20, project.tempoMap.bpm(at: here))) * sampleRate
         let beat = Int64(quarter * Double(meter.beatTicks) / Double(Tick.perQuarter))
         engine.setMetronome(enabled: metronomeOn, beatFrames: beat, beatsPerBar: meter.beats)
+        guard metronomeOn else { engine.setClickGrid(frames: [], accents: []); return }
+        let beats = project.clickBeats(upTo: max(planHorizon, here + Tick(barTicks * 300)))
+        let map = project.tempoMap, sr = sampleRate
+        engine.setClickGrid(frames: beats.map { map.frame(at: $0.tick, sampleRate: sr).rawValue }, accents: beats.map(\.accent))
     }
 
     /// Shift+Space: pause in place, or continue from there.

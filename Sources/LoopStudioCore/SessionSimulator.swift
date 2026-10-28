@@ -206,3 +206,25 @@ public enum SessionSimulator {
         }
     }
 }
+
+extension Project {
+    /// Every metronome beat from tick 0 up to `end`, with `accent` on the first beat of a bar.
+    /// It follows the time signature changes; a change restarts the bar count where it lands.
+    public func clickBeats(upTo end: Tick) -> [(tick: Tick, accent: Bool)] {
+        let changes = timeSignatures.sorted { $0.tick < $1.tick }
+        var segments = changes.isEmpty ? [TimeSignatureChange(tick: 0, signature: TimeSignature(4, 4))] : changes
+        if segments[0].tick > 0 { segments.insert(TimeSignatureChange(tick: 0, signature: TimeSignature(4, 4)), at: 0) }
+        var beats: [(tick: Tick, accent: Bool)] = []
+        for (i, change) in segments.enumerated() {
+            let stop = i + 1 < segments.count ? min(segments[i + 1].tick, end) : end
+            let sig = change.signature
+            let beat = max(1, sig.ticksPerBar.rawValue / Int64(max(1, sig.numerator)))
+            var t = change.tick.rawValue, n = 0
+            while t < stop.rawValue {
+                beats.append((Tick(t), n % max(1, sig.numerator) == 0))
+                t += beat; n += 1
+            }
+        }
+        return beats
+    }
+}

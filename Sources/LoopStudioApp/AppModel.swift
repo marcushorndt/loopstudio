@@ -884,13 +884,13 @@ final class AppModel {
         let monitor = MIDIInputMonitor()
         let target = liveTarget, engine = engine, recorder = recorder
         let held = HeldNotes()
-        monitor.handler = { status, a, b, src in
+        monitor.handler = { status, a, b, src, time in
             let t = target.current
             // A release goes where its note went, even after the selection changed.
             let kind = status & 0xF0, key = UInt16(status & 0x0F) << 8 | UInt16(a)
             if kind == 0x80 || (kind == 0x90 && b == 0), let noted = held.tracks.removeValue(forKey: key) {
                 engine.sendLiveMIDI(track: noted, status, a, b)
-                if engine.isPlaying { recorder.capture(frame: engine.sessionFrame, status, a, b) }
+                if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: time), status, a, b) }
                 return
             }
             guard t.enabled, t.source == nil || t.source == src,
@@ -898,7 +898,7 @@ final class AppModel {
             if let track = t.track {
                 if kind == 0x90 && b > 0 { held.tracks[key] = track }
                 engine.sendLiveMIDI(track: track, status, a, b)
-                if engine.isPlaying { recorder.capture(frame: engine.sessionFrame, status, a, b) }
+                if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: time), status, a, b) }
             }
         }
         midiMonitor = monitor

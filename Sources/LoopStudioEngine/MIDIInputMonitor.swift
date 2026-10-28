@@ -7,10 +7,11 @@ public final class MIDIInputMonitor: @unchecked Sendable {
     private var client = MIDIClientRef()
     private var port = MIDIPortRef()
     private let lock = NSLock()
-    private var _handler: (@Sendable (UInt8, UInt8, UInt8, Int32) -> Void)?
+    private var _handler: (@Sendable (UInt8, UInt8, UInt8, Int32, UInt64) -> Void)?
 
-    /// Called on a CoreMIDI thread with status, data1, data2 and the unique ID of the source.
-    public var handler: (@Sendable (UInt8, UInt8, UInt8, Int32) -> Void)? {
+    /// Called on a CoreMIDI thread with status, data1, data2, the unique ID of the source, and the
+    /// host time stamp of the packet (0 means "now").
+    public var handler: (@Sendable (UInt8, UInt8, UInt8, Int32, UInt64) -> Void)? {
         get { lock.lock(); defer { lock.unlock() }; return _handler }
         set { lock.lock(); _handler = newValue; lock.unlock() }
     }
@@ -48,7 +49,7 @@ public final class MIDIInputMonitor: @unchecked Sendable {
         guard let handler else { return }
         var packet = UnsafeRawPointer(list).advanced(by: MemoryLayout<UInt32>.size).assumingMemoryBound(to: MIDIPacket.self)
         for _ in 0..<list.pointee.numPackets {
-            let length = Int(packet.pointee.length)
+            let length = Int(packet.pointee.length), time = packet.pointee.timeStamp
             withUnsafeBytes(of: packet.pointee.data) { raw in
                 var i = 0
                 while i < min(length, raw.count) {
@@ -57,7 +58,7 @@ public final class MIDIInputMonitor: @unchecked Sendable {
                     if status >= 0xF0 { i += 1; continue }              // system messages are ignored
                     let size = (status & 0xF0 == 0xC0 || status & 0xF0 == 0xD0) ? 2 : 3
                     guard i + size <= length else { break }
-                    handler(status, raw[i + 1], size == 3 ? raw[i + 2] : 0, source)
+                    handler(status, raw[i + 1], size == 3 ? raw[i + 2] : 0, source, time)
                     i += size
                 }
             }

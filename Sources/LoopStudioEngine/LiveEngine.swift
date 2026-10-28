@@ -42,6 +42,9 @@ public final class LiveEngine: @unchecked Sendable {
     private var countInDone: Int64 = 0
     private var stampPending = false
     private var startHost: UInt64 = 0
+    /// The session frame that sounds at host time `anchorHost`. Updated every block, for MIDI timestamps.
+    private var anchorHost: UInt64 = 0
+    private var anchorFrame: Int64 = 0
     /// The rate the plans render at. It follows the open project; the output converts to the device rate.
     public private(set) var sampleRate: Double
 
@@ -144,6 +147,15 @@ public final class LiveEngine: @unchecked Sendable {
     public var positionFrame: Int64 { locked { position } }
     /// The session clock. Session launches count on it.
     public var sessionFrame: Int64 { locked { sessionPosition } }
+
+    /// The session frame that sounded at `hostTime` (a MIDI packet time stamp). 0 means "now".
+    /// Several notes in one MIDI burst keep their own times, instead of all landing on the next block.
+    public func sessionFrame(atHost hostTime: UInt64) -> Int64 {
+        locked {
+            guard hostTime != 0, anchorHost != 0 else { return sessionPosition }
+            return anchorFrame + HostClock.frames(from: anchorHost, to: hostTime, rate: sampleRate)
+        }
+    }
 
     public func play() {
         // The session clock is not reset here: a resume after a pause continues it. A jump while stopped syncs it.
@@ -260,6 +272,8 @@ public final class LiveEngine: @unchecked Sendable {
         }
 
         if stampPending && playing { startHost = host; stampPending = false }
+        anchorHost = host &+ HostClock.ticks(fromSeconds: Double(done) / sampleRate)
+        anchorFrame = sessionPosition
         while done < frameCount {
             var n = min(frameCount - done, renderer.maxBlock)
             if let loop, position < loop.upperBound {

@@ -189,8 +189,8 @@ extension AppModel {
             guard fits(clip, track.kind) else { continue }
             var slot = item.slot ?? SessionSlot(clip: clip)
             slot.clip = clip
-            // Slots are a connected list; a paste past the end lands on the first free place.
-            commands.append(.setSlot(track: track.id, index: min(row, track.slots.count), slot: slot))
+            // The clip lands in the selected scene; empty slots fill the gap.
+            commands.append(.setSlot(track: track.id, index: row, slot: slot))
         }
         guard !commands.isEmpty else { return }
         apply(.batch(commands: commands))

@@ -76,7 +76,10 @@ final class AppModel {
     var keyboardVelocity = 100
     var detailTab: DetailTab = .clip
     var selectedClip: ClipID? {
-        didSet { if let c = selectedClip, !selectedClips.contains(c) { selectedClips = [c] } }
+        // One selection: no clip in focus means no marked clips either, so Delete cannot hit a clip out of view.
+        didSet {
+            if let c = selectedClip { if !selectedClips.contains(c) { selectedClips = [c] } } else if oldValue != nil { selectedClips = [] }
+        }
     }
     /// All marked clips. `selectedClip` is the one the clip panel shows.
     var selectedClips: Set<ClipID> = []
@@ -609,6 +612,11 @@ final class AppModel {
         startIfStopped()
         let now = sessionTick
         for id in ids { performance.append(Launch(track: id, slot: row, tick: now)) }
+        // As in Live, an empty slot in the scene stops its track, on the next bar.
+        let stopAt = project.barBoundary(atOrAfter: now)
+        for t in project.tracks where !ids.contains(t.id) && !t.slots.isEmpty {
+            performance.append(Launch(track: t.id, slot: nil, tick: stopAt))
+        }
         rebuild()
     }
 
@@ -625,7 +633,16 @@ final class AppModel {
         case .returnTrack, .group:
             guard transportPlaying else { return }
             let at = project.barBoundary(atOrAfter: sessionTick)
-            for t in project.tracks where (t.output == track.id || t.id == track.id) && !t.slots.isEmpty { performance.append(Launch(track: t.id, slot: nil, tick: at)) }
+            // Every track that reaches this bus: by output, send or input, also through nested groups.
+            var reach: Set<TrackID> = [track.id]
+            var grew = true
+            while grew {
+                grew = false
+                for t in project.tracks where !reach.contains(t.id) && Routing.feeds(of: t, in: project).contains(where: reach.contains) {
+                    reach.insert(t.id); grew = true
+                }
+            }
+            for t in project.tracks where reach.contains(t.id) && !t.slots.isEmpty { performance.append(Launch(track: t.id, slot: nil, tick: at)) }
             rebuild()
         default: stopTrack(track.id)
         }

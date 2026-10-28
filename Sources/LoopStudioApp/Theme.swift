@@ -22,10 +22,10 @@ struct ThemePalette: Sendable {
     /// shadcn "zinc", dark. Quiet surfaces, hairline borders, one accent.
     static let zincDark = ThemePalette(
         name: "Zinc Dark",
-        background: hex(0x09090B), panel: hex(0x111113), panelRaised: hex(0x1C1C20), line: hex(0x27272A),
-        text: hex(0xFAFAFA), dim: hex(0x8E8E99), accent: hex(0x818CF8), play: hex(0x4ADE80),
-        onTint: hex(0xFAFAFA), clipFill: 0.26,
-        trackColors: [hex(0xFB7185), hex(0xFB923C), hex(0xFACC15), hex(0x4ADE80), hex(0x2DD4BF), hex(0x60A5FA), hex(0xA78BFA), hex(0xF472B6)])
+        background: hex(0x0C0C0E), panel: hex(0x141417), panelRaised: hex(0x222227), line: hex(0x34343A),
+        text: hex(0xF4F4F5), dim: hex(0xA1A1AA), accent: hex(0x818CF8), play: hex(0x4ADE80),
+        onTint: hex(0xF4F4F5), clipFill: 0.22,
+        trackColors: [hex(0xE57F8E), hex(0xE49A63), hex(0xD9BC5A), hex(0x6FC68A), hex(0x56BDB0), hex(0x6F9FE0), hex(0x9D8EE0), hex(0xD982B8)])
 
     /// shadcn "zinc", light.
     static let zincLight = ThemePalette(
@@ -55,7 +55,7 @@ enum Theme {
     static var onTint: Color { palette.onTint }
     static var trackColors: [Color] { palette.trackColors }
 
-    static let radius: CGFloat = 6
+    static let radius: CGFloat = 3
 
     static func track(_ index: Int) -> Color { trackColors[((index % trackColors.count) + trackColors.count) % trackColors.count] }
 

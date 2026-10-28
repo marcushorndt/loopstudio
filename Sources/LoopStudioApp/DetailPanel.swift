@@ -49,7 +49,7 @@ private struct ClipPanel: View {
                     if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                         let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
                         WaveformView(peaks: peaks, color: Theme.track(track.colorIndex), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
-                            .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 4))
+                            .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: Theme.radius))
                     } else {
                         Spacer()
                     }
@@ -294,7 +294,7 @@ private struct DummyPanel: View {
                              width: width, height: height - 2, tint: tint) { pts in
                 model.apply(.setDummyAutomation(clip: clip.id, target: address, points: pts))
             }
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
             .overlay(alignment: .topTrailing) {
                 if !points.isEmpty {
                     Button { model.apply(.setDummyAutomation(clip: clip.id, target: address, points: [])) } label: {

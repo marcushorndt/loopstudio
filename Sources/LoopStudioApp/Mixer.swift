@@ -131,8 +131,8 @@ struct MixerStrip: View {
         Button(action: action) {
             Text(label).font(.system(size: 11, weight: .bold)).frame(width: 34, height: 22)
                 .foregroundStyle(on ? tint : Theme.dim)
-                .background(on ? tint.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
-                .overlay(RoundedRectangle(cornerRadius: 5).stroke(on ? tint.opacity(0.55) : Theme.line, lineWidth: 1))
+                .background(on ? tint.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.55) : Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }

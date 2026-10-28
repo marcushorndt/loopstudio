@@ -118,8 +118,8 @@ private struct ArrangementHeader: View {
         Button(action: action) {
             Text(label).font(.system(size: 10, weight: .bold)).frame(width: 24, height: 18)
                 .foregroundStyle(on ? tint : Theme.dim)
-                .background(on ? tint.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
-                .overlay(RoundedRectangle(cornerRadius: 5).stroke(on ? tint.opacity(0.55) : Theme.line, lineWidth: 1))
+                .background(on ? tint.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.55) : Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -218,7 +218,7 @@ private struct ArrangementClip: View {
         let w = max(6, tickX(clip.length, model) + resize)
         let selected = model.selectedClips.contains(clip.id) || model.selectedClip == clip.id
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 5).fill(Theme.clipBody(clip.colorIndex ?? track.colorIndex))
+            RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.clipBody(clip.colorIndex ?? track.colorIndex))
             if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                 let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
                 WaveformView(peaks: peaks, color: tint.opacity(0.9), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
@@ -230,7 +230,7 @@ private struct ArrangementClip: View {
                 .padding(.horizontal, 6).padding(.top, 3).lineLimit(1)
         }
         .frame(width: w, height: laneHeight - 6)
-        .overlay(RoundedRectangle(cornerRadius: 5).stroke(selected ? Theme.text : tint.opacity(0.55), lineWidth: selected ? 1.5 : 1))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : tint.opacity(0.55), lineWidth: selected ? 1.5 : 1))
         .overlay(alignment: .trailing) {
             Rectangle().fill(.clear).frame(width: 8).contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 1)

@@ -48,7 +48,7 @@ struct PianoRoll: View {
                     proxy.scrollTo("roll", anchor: UnitPoint(x: 0, y: 1 - Double(mid - lowPitch) / Double(highPitch - lowPitch)))
                 }
             }
-            .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 4))
+            .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: Theme.radius))
         }
     }
 

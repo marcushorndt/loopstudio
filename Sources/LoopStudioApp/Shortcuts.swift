@@ -269,7 +269,7 @@ struct ShortcutsSheet: View {
                                             .font(.system(size: 12, design: .monospaced))
                                             .foregroundStyle(action.binding == nil ? Theme.dim : .white)
                                             .padding(.horizontal, 8).padding(.vertical, 2)
-                                            .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 4))
+                                            .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Theme.radius))
                                     }
                                 }
                             }

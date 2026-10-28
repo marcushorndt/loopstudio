@@ -27,6 +27,9 @@ struct LoopStudioApp: App {
                 AppAction.newProject.button(model)
                 AppAction.newDemo.button(model)
                 AppAction.save.button(model)
+                AppAction.saveAs.button(model)
+                Divider()
+                AppAction.exportAudio.button(model)
             }
             CommandGroup(replacing: .undoRedo) {
                 AppAction.undo.button(model)

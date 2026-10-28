@@ -32,6 +32,7 @@ extension AppModel {
         case .backToArrangement: arrangementOverridden
         case .renameTrack: selectedTrack != nil || selectedClip != nil
         case .groupTracks, .duplicateTrack: selectedTrack != nil
+        case .exportAudio: !exporting
         default: true
         }
     }
@@ -41,6 +42,8 @@ extension AppModel {
         case .newProject: newProject()
         case .newDemo: newDemoProject()
         case .save: save()
+        case .saveAs: saveAs()
+        case .exportAudio: exportAudio()
         case .undo: undo()
         case .redo: redo()
         case .cut: cutSelection()

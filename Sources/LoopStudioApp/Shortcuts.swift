@@ -4,7 +4,7 @@ import SwiftUI
 /// Every command a key can start. The menu bar, the right-click menus, the key monitor and the
 /// shortcut sheet all read this one table, so they cannot disagree.
 enum AppAction: String, CaseIterable, Identifiable {
-    case newProject, newDemo, save
+    case newProject, newDemo, save, saveAs, exportAudio
     case undo, redo, cut, copy, paste, duplicate, deleteSelection, splitAtPlayhead, deactivateClip
     case record, toggleMetronome, play, pause, stopRewind, stopAllClips, loopSelection, loopToggle, backToArrangement
     case insertAudioTrack, insertMIDITrack, insertReturnTrack, insertGroupTrack, groupTracks, renameTrack, duplicateTrack
@@ -19,7 +19,7 @@ enum AppAction: String, CaseIterable, Identifiable {
 
     var category: Category {
         switch self {
-        case .newProject, .newDemo, .save: .file
+        case .newProject, .newDemo, .save, .saveAs, .exportAudio: .file
         case .undo, .redo, .cut, .copy, .paste, .duplicate, .deleteSelection, .splitAtPlayhead, .deactivateClip: .edit
         case .record, .toggleMetronome, .play, .pause, .stopRewind, .stopAllClips, .loopSelection, .loopToggle, .backToArrangement: .transport
         case .insertAudioTrack, .insertMIDITrack, .insertReturnTrack, .insertGroupTrack, .groupTracks, .renameTrack, .duplicateTrack: .track
@@ -35,6 +35,8 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .newProject: "New Project"
         case .newDemo: "New Demo Project"
         case .save: "Save"
+        case .saveAs: "Save As…"
+        case .exportAudio: "Export Audio…"
         case .undo: "Undo"
         case .redo: "Redo"
         case .cut: "Cut"
@@ -82,6 +84,8 @@ enum AppAction: String, CaseIterable, Identifiable {
         switch self {
         case .newProject: KeyBinding("n", .command)
         case .save: KeyBinding("s", .command)
+        case .saveAs: KeyBinding("s", [.command, .shift])
+        case .exportAudio: KeyBinding("r", [.command, .shift])
         case .undo: KeyBinding("z", .command)
         case .redo: KeyBinding("z", [.command, .shift])
         case .cut: KeyBinding("x", .command)

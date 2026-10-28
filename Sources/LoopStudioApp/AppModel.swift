@@ -5,6 +5,7 @@ import LoopStudioCore
 import LoopStudioEngine
 import LoopStudioProject
 import Observation
+import UniformTypeIdentifiers
 
 /// A marked time range over one or more tracks in the arrangement.
 struct RangeSelection: Equatable {
@@ -47,6 +48,7 @@ final class AppModel {
     // Project
     private(set) var project: Project
     private(set) var packageURL: URL
+    private(set) var exporting = false
     private(set) var waveforms: [AssetID: [Float]] = [:]
     private(set) var simulation = SessionSimulation(events: [], warnings: [])
     private(set) var warnings: [String] = []
@@ -1229,6 +1231,70 @@ final class AppModel {
         } catch {
             status = "Cannot open \(url.lastPathComponent): \(error)"
             if project.tracks.isEmpty { createDemo() }
+        }
+    }
+
+    /// Saves a copy of the project, with its samples, under a new name, and goes on in the copy.
+    func saveAs() {
+        let panel = NSSavePanel()
+        panel.title = "Save Project As"
+        panel.nameFieldStringValue = project.name
+        panel.directoryURL = Self.projectsFolder
+        panel.allowedContentTypes = [UTType(filenameExtension: "loopstudio") ?? .package]
+        guard panel.runModal() == .OK, var url = panel.url else { return }
+        if url.pathExtension != "loopstudio" { url.appendPathExtension("loopstudio") }
+        guard url.standardizedFileURL != packageURL.standardizedFileURL else { save(); return }
+        captureStates()
+        let fm = FileManager.default
+        do {
+            // The panel asked before it allowed a replace; the old package goes to the Trash, not away.
+            if fm.fileExists(atPath: url.path) { try fm.trashItem(at: url, resultingItemURL: nil) }
+            try fm.createDirectory(at: url, withIntermediateDirectories: true)
+            let audio = packageURL.appendingPathComponent("audio", isDirectory: true)
+            if fm.fileExists(atPath: audio.path) { try fm.copyItem(at: audio, to: url.appendingPathComponent("audio", isDirectory: true)) }
+            var copy = project
+            copy.name = url.deletingPathExtension().lastPathComponent
+            try ProjectPackage.write(copy, to: url)
+            saveTask?.cancel()
+            project = copy
+            packageURL = url
+            dirty = false
+            UserDefaults.standard.set(url.path, forKey: "lastProject")
+            status = "Saved as \(url.lastPathComponent)"
+        } catch {
+            status = "Cannot save as \(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    /// Renders the arrangement to a 24-bit WAV file, off the main thread.
+    func exportAudio() {
+        guard !exporting else { status = "An export is running"; return }
+        let plan = RenderPlan.compile(project, bank: bank)
+        guard plan.endFrame > 0 else { status = "Nothing to export: the arrangement is empty"; return }
+        let panel = NSSavePanel()
+        panel.title = "Export Audio"
+        panel.nameFieldStringValue = "\(project.name).wav"
+        panel.allowedContentTypes = [.wav]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        // Hosted plugins live on the audio thread, so the offline render cannot use them yet.
+        let note = host.units.isEmpty ? "" : " (without hosted plugins)"
+        exporting = true
+        status = "Exporting \(url.lastPathComponent)…"
+        nonisolated(unsafe) let job = plan
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result: Result<Double, Error> = Result {
+                let audio = Bounce.render(job, tailSeconds: 2)
+                try Bounce.writeWAV(audio, to: url)
+                return Double(audio.frames) / audio.sampleRate
+            }
+            await MainActor.run {
+                guard let self else { return }
+                self.exporting = false
+                switch result {
+                case .success(let seconds): self.status = "Exported \(url.lastPathComponent), \(Int(seconds.rounded())) s\(note)"
+                case .failure(let error): self.status = "Export failed: \(error.localizedDescription)"
+                }
+            }
         }
     }
 

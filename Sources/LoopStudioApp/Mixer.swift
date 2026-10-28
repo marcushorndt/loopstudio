@@ -117,7 +117,7 @@ struct MixerStrip: View {
                     toggle("S", on: track.solo, tint: Theme.track(5)) {
                         model.apply(.setSolo(id: track.id, solo: !track.solo))
                     }
-                    toggle("M", on: !track.mute, tint: Theme.accent, invert: true) {
+                    toggle("M", on: track.mute, tint: Theme.accent) {
                         model.apply(.setMute(id: track.id, mute: !track.mute))
                     }
                 }
@@ -151,7 +151,7 @@ struct MixerStrip: View {
     }
 
     /// For mute, the lit state means "audible", as in Live (the activator).
-    private func toggle(_ label: String, on: Bool, tint: Color, invert: Bool = false, action: @escaping () -> Void) -> some View {
+    private func toggle(_ label: String, on: Bool, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label).font(.system(size: 11, weight: .bold)).frame(width: 34, height: 22)
                 .foregroundStyle(on ? tint : Theme.dim)

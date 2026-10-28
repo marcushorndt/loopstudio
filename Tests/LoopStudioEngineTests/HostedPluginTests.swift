@@ -95,7 +95,7 @@ private func audioUnitSlot(_ id: String, _ name: String) -> DeviceSlot {
     let renderer = Renderer(plan: RenderPlan.compile(project, bank: AudioBank(), units: host.units), maxBlock: 512)
 
     var l = [Float](repeating: 0, count: 512), r = l
-    renderer.sendLive(node: 0, 0x90, 60, 100)
+    renderer.sendLive(track: track.id, 0x90, 60, 100)
     var peak: Float = 0
     for _ in 0..<20 {
         l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in

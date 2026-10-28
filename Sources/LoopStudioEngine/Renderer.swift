@@ -146,10 +146,13 @@ public final class Renderer {
         silenceNotes()
     }
 
-    /// Sends a MIDI message to the instrument of a node right now (a note you play, not one from a clip).
-    public func sendLive(node: Int, _ status: UInt8, _ data1: UInt8, _ data2: UInt8) {
-        guard node >= 0, node < nodeCount else { return }
-        nodes[node].instrument?.sendMIDI(status, data1, data2)
+    /// Sends a MIDI message to the instrument of a track right now. No allocation: a linear search.
+    public func sendLive(track: TrackID, _ status: UInt8, _ data1: UInt8, _ data2: UInt8) {
+        let order = plan.trackOrder
+        for i in 0..<min(order.count, nodeCount) where order[i] == track {
+            nodes[i].instrument?.sendMIDI(status, data1, data2)
+            return
+        }
     }
 
     /// Releases every note of every hosted instrument. Called on stop and on a jump.

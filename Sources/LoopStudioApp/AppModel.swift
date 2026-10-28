@@ -6,6 +6,7 @@ import LoopStudioEngine
 import LoopStudioProject
 import Observation
 import UniformTypeIdentifiers
+import os
 
 /// A marked time range over one or more tracks in the arrangement.
 struct RangeSelection: Equatable {
@@ -14,18 +15,23 @@ struct RangeSelection: Equatable {
     var tracks: Set<TrackID>
 }
 
-/// Notes from MIDI devices that sound now, by channel and pitch, with their render node. Used on the CoreMIDI thread only.
+/// Notes from MIDI devices that sound now, by channel and pitch, with their track. Used on the CoreMIDI thread only.
 final class HeldNotes: @unchecked Sendable {
-    var nodes: [UInt16: Int] = [:]
+    var tracks: [UInt16: TrackID] = [:]
 }
 
-/// The render node that live MIDI goes to. Written on the main thread, read on a CoreMIDI thread.
-final class LiveTarget: @unchecked Sendable {
-    var node = -1
-    /// The MIDI input of the selected track. `enabled` false means "No Input".
-    var enabled = true
-    var source: Int32?
-    var channel: UInt8?
+/// The track that live MIDI goes to. Written on the main thread, read on a CoreMIDI thread, always as one value.
+final class LiveTarget: Sendable {
+    struct State: Sendable {
+        var track: TrackID?
+        /// The MIDI input of the selected track. `enabled` false means "No Input".
+        var enabled = true
+        var source: Int32?
+        var channel: UInt8?
+    }
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    var current: State { state.withLock { $0 } }
+    func set(_ new: State) { state.withLock { $0 = new } }
 }
 
 enum ViewMode: String { case session, arrangement }
@@ -167,7 +173,7 @@ final class AppModel {
     @ObservationIgnored private var midiMonitor: MIDIInputMonitor?
     @ObservationIgnored private let liveTarget = LiveTarget()
     /// Keyboard and piano-roll notes that sound now, with the render node that got them.
-    @ObservationIgnored private var heldKeys: [UInt8: Int] = [:]
+    @ObservationIgnored private var heldKeys: [UInt8: TrackID] = [:]
 
     static let projectsFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("LoopStudio Projects", isDirectory: true)
@@ -877,19 +883,19 @@ final class AppModel {
         let target = liveTarget, engine = engine, recorder = recorder
         let held = HeldNotes()
         monitor.handler = { status, a, b, src in
-            let node = target.node
+            let t = target.current
             // A release goes where its note went, even after the selection changed.
             let kind = status & 0xF0, key = UInt16(status & 0x0F) << 8 | UInt16(a)
-            if kind == 0x80 || (kind == 0x90 && b == 0), let noted = held.nodes.removeValue(forKey: key) {
-                engine.sendLiveMIDI(node: noted, status, a, b)
+            if kind == 0x80 || (kind == 0x90 && b == 0), let noted = held.tracks.removeValue(forKey: key) {
+                engine.sendLiveMIDI(track: noted, status, a, b)
                 if engine.isPlaying { recorder.capture(frame: engine.sessionFrame, status, a, b) }
                 return
             }
-            guard target.enabled, target.source == nil || target.source == src,
-                  target.channel == nil || target.channel == status & 0x0F else { return }
-            if kind == 0x90 && b > 0 && node >= 0 { held.nodes[key] = node }
-            if node >= 0 {
-                engine.sendLiveMIDI(node: node, status, a, b)
+            guard t.enabled, t.source == nil || t.source == src,
+                  t.channel == nil || t.channel == status & 0x0F else { return }
+            if let track = t.track {
+                if kind == 0x90 && b > 0 { held.tracks[key] = track }
+                engine.sendLiveMIDI(track: track, status, a, b)
                 if engine.isPlaying { recorder.capture(frame: engine.sessionFrame, status, a, b) }
             }
         }
@@ -899,27 +905,23 @@ final class AppModel {
 
     /// Points live notes (keyboard, MIDI devices, piano roll clicks) at the selected MIDI track.
     private func updateLiveTarget() {
-        guard let plan, let id = selectedTrack, let track = project.track(id), track.kind == .midi,
-              let index = plan.trackOrder.firstIndex(where: { $0 == id }) else { liveTarget.node = -1; return }
-        liveTarget.node = index
-        liveTarget.enabled = track.midiInput != nil
-        liveTarget.source = track.midiInput?.sourceUID
-        liveTarget.channel = track.midiInput?.channel
+        guard let id = selectedTrack, let track = project.track(id), track.kind == .midi else { liveTarget.set(.init(track: nil)); return }
+        liveTarget.set(.init(track: id, enabled: track.midiInput != nil,
+                             source: track.midiInput?.sourceUID, channel: track.midiInput?.channel))
     }
 
     func noteOn(_ pitch: UInt8, velocity: UInt8 = 100) {
-        if liveTarget.node >= 0 {
-            heldKeys[pitch] = liveTarget.node
-            engine.sendLiveMIDI(node: liveTarget.node, 0x90, pitch, velocity)
+        if let track = liveTarget.current.track {
+            heldKeys[pitch] = track
+            engine.sendLiveMIDI(track: track, 0x90, pitch, velocity)
             if engine.isPlaying { recorder.capture(frame: engine.sessionFrame, 0x90, pitch, velocity) }
         }
     }
 
     /// The release goes to the instrument that got the note, even if another track is selected now.
     func noteOff(_ pitch: UInt8) {
-        let node = heldKeys.removeValue(forKey: pitch) ?? liveTarget.node
-        if node >= 0 {
-            engine.sendLiveMIDI(node: node, 0x80, pitch, 0)
+        if let track = heldKeys.removeValue(forKey: pitch) ?? liveTarget.current.track {
+            engine.sendLiveMIDI(track: track, 0x80, pitch, 0)
             if engine.isPlaying { recorder.capture(frame: engine.sessionFrame, 0x80, pitch, 0) }
         }
     }

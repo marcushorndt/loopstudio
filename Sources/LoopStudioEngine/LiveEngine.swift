@@ -27,7 +27,7 @@ public final class LiveEngine: @unchecked Sendable {
     private var handover: Renderer?
     /// Keeps the handover renderer alive on the control thread, so the audio thread never frees it.
     private var retired: Renderer?
-    private struct LiveMIDI { var node: Int; var status: UInt8; var data1: UInt8; var data2: UInt8 }
+    private struct LiveMIDI { var track: TrackID; var status: UInt8; var data1: UInt8; var data2: UInt8 }
     private let liveCapacity = 512
     private let live: UnsafeMutablePointer<LiveMIDI>
     private var liveCount = 0
@@ -176,10 +176,12 @@ public final class LiveEngine: @unchecked Sendable {
     }
 
     /// Queues a MIDI message for the instrument of a render node. Safe from any thread (a MIDI callback, the UI).
-    public func sendLiveMIDI(node: Int, _ status: UInt8, _ data1: UInt8, _ data2: UInt8) {
+    /// Queues a live MIDI message for the instrument of `track`. The track, not a node index, is the
+    /// address, so a message sent while the graph changes still reaches the right instrument.
+    public func sendLiveMIDI(track: TrackID, _ status: UInt8, _ data1: UInt8, _ data2: UInt8) {
         locked {
             guard liveCount < liveCapacity else { return }
-            live[liveCount] = LiveMIDI(node: node, status: status, data1: data1, data2: data2)
+            live[liveCount] = LiveMIDI(track: track, status: status, data1: data1, data2: data2)
             liveCount += 1
         }
     }
@@ -219,7 +221,7 @@ public final class LiveEngine: @unchecked Sendable {
         }
         if resetPending { renderer.reset(); resetPending = false; silencePending = false }
         if silencePending { renderer.silenceNotes(); silencePending = false }
-        for i in 0..<liveCount { renderer.sendLive(node: live[i].node, live[i].status, live[i].data1, live[i].data2) }
+        for i in 0..<liveCount { renderer.sendLive(track: live[i].track, live[i].status, live[i].data1, live[i].data2) }
         liveCount = 0
 
         // Stopped: no clips, but instruments and effects keep running, so live notes sound and tails ring out.

@@ -103,6 +103,8 @@ public struct AudioClip: Hashable, Codable, Sendable, Identifiable {
     public var colorIndex: Int?
     /// Own name. `nil` shows the asset name (audio) or a default.
     public var name: String?
+    /// Clip gain envelope in dB, ticks from the clip start. It multiplies with `gainDb`. `nil` or empty: none.
+    public var gainEnvelope: [AutomationPoint]?
 
     public init(id: ClipID = ClipID(), asset: AssetID, start: Tick = 0, length: Tick, offset: Tick = 0,
                 loop: Bool = false, gainDb: Double = 0,

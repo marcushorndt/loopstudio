@@ -295,6 +295,8 @@ public final class Renderer {
         let total = Int64(clip.pcm.frames)
         let srcL = clip.pcm.channel(0), srcR = clip.pcm.channel(1)
 
+        // The envelope is read on a fixed 32-frame grid of absolute frames, so the result does not depend on the block size.
+        var envGrid = Int64.min, envGain: Float = 1
         var f = from
         while f < to {
             let p = f - clip.start
@@ -305,6 +307,11 @@ public final class Renderer {
             if p < clip.fadeIn { g *= sinf(.pi / 2 * Float(p) / Float(clip.fadeIn)) }
             let remaining = length - 1 - p
             if remaining < clip.fadeOut { g *= sinf(.pi / 2 * Float(remaining) / Float(clip.fadeOut)) }
+            if let env = clip.envelope {
+                let grid = f & ~31
+                if grid != envGrid { envGrid = grid; envGain = powf(10, env.value(at: grid) / 20) }
+                g *= envGain
+            }
 
             let k = Int(f - blockStart)
             l[k] += srcL[Int(s)] * g

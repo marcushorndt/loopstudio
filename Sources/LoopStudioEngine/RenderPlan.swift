@@ -10,6 +10,8 @@ struct ClipPlan {
     var gain: Float
     var fadeIn: Int64         // frames
     var fadeOut: Int64
+    /// Clip gain envelope in dB, in project frames.
+    var envelope: AutoSegment? = nil
 }
 
 /// One envelope, in frames. Active inside [start, end).
@@ -201,6 +203,14 @@ public struct RenderPlan {
             return result
         }
 
+        /// A clip gain envelope placed on the timeline from `startTick`.
+        func envelope(_ c: AudioClip, from startTick: Tick, start: Int64, end: Int64) -> AutoSegment? {
+            guard let points = c.gainEnvelope, !points.isEmpty else { return nil }
+            return AutoSegment(start: start, end: end,
+                               frames: points.map { map.frame(at: startTick + $0.tick, sampleRate: rate).rawValue },
+                               values: points.map { Float($0.value) }, curves: points.map(\.curve))
+        }
+
         for id in order {
             let t = project.track(id)!
             if t.hardwareOutput != nil { warnings.append("track \"\(t.name)\" goes straight to a hardware port and is not in the master mix") }
@@ -229,7 +239,8 @@ public struct RenderPlan {
                         fadeOut = Int64(Double(fadeOut) * scale)
                     }
                     clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: offsetFrames, loop: c.loop,
-                                          gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut)))
+                                          gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut),
+                                          envelope: envelope(c, from: c.start, start: start, end: end)))
                     endFrame = max(endFrame, end)
                 }
             }
@@ -249,7 +260,8 @@ public struct RenderPlan {
                         fadeOut = Int64(Double(fadeOut) * scale)
                     }
                     clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: 0, loop: c.loop,
-                                          gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut)))
+                                          gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut),
+                                          envelope: envelope(c, from: e.startTick, start: start, end: end)))
                 }
             }
             if t.kind == .midi || t.kind == .group || t.kind == .returnTrack { /* summing nodes or not rendered yet */ }

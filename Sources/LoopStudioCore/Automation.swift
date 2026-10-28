@@ -11,6 +11,18 @@ public struct AutomationTarget: Hashable, Sendable {
     public var logarithmic: Bool
     public var choices: [String]
 
+    public init(address: ParameterAddress, name: String, min: Double, max: Double, def: Double,
+                unit: String = "", logarithmic: Bool = false, choices: [String] = []) {
+        self.address = address
+        self.name = name
+        self.min = min
+        self.max = max
+        self.def = def
+        self.unit = unit
+        self.logarithmic = logarithmic
+        self.choices = choices
+    }
+
     public func clamp(_ v: Double) -> Double { Swift.min(Swift.max(v, min), max) }
 
     public func position(_ v: Double) -> Double {

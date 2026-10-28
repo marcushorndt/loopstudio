@@ -137,3 +137,25 @@ private func volumeLane(_ rig: Rig, _ points: [AutomationPoint]) -> Command {
     let names = p.automationTargets(of: p.tracks[0]).map(\.name)
     #expect(names.contains("Volume") && names.contains("Pan") && names.contains("Delay › Feedback"))
 }
+
+@Test func clipGainEnvelopeShapesTheClipAndIgnoresBlockSize() throws {
+    var rig = Rig()
+    let clip = rig.track.clips[0].id
+    try Command.setClipEnvelope(clip: clip, points: [AutomationPoint(tick: 0, value: 0), AutomationPoint(tick: 3_840, value: -60)])
+        .apply(to: &rig.project)
+    let audio = rig.render()
+    let start = rms(audio.left[0..<960]), late = rms(audio.left[150_000..<154_800])
+    #expect(abs(Double(start) - 0.5 / 2.0.squareRoot()) < 0.02, "near 0 dB at the clip start")
+    #expect(late < 0.001, "-60 dB after the last point")
+    let small = rig.render(block: 113)
+    #expect(audio.left == small.left)
+}
+
+@Test func clipEnvelopeCommandUndoes() throws {
+    var rig = Rig()
+    let clip = rig.track.clips[0].id
+    let before = rig.project
+    let inverse = try Command.setClipEnvelope(clip: clip, points: [AutomationPoint(tick: 0, value: -6)]).apply(to: &rig.project)
+    _ = try inverse.apply(to: &rig.project)
+    #expect(rig.project == before)
+}

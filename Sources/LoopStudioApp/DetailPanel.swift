@@ -49,10 +49,22 @@ private struct ClipPanel: View {
                     } else if case .dummy(let d) = clip {
                         DummyPanel(clip: d, tint: Theme.track(track.colorIndex))
                     } else {
-                    Text(model.clipName(clip)).font(.headline)
+                    HStack {
+                        Text(model.clipName(clip)).font(.headline)
+                        Spacer()
+                        if case .audio = clip {
+                            Picker("", selection: Bindable(model).showClipEnvelope) {
+                                Text("Sample").tag(false)
+                                Text("Gain Envelope").tag(true)
+                            }
+                            .pickerStyle(.segmented).labelsHidden().fixedSize().controlSize(.small)
+                        }
+                    }
                     if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                         let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
-                        if a.warpMode != .off {
+                        if model.showClipEnvelope {
+                            ClipEnvelopeView(clip: a, peaks: peaks, assetTicks: assetTicks, tint: Theme.track(track.colorIndex))
+                        } else if a.warpMode != .off {
                             WarpEditor(clip: a, asset: asset, peaks: peaks, tint: Theme.track(track.colorIndex))
                         } else {
                             WaveformView(peaks: peaks, color: Theme.track(track.colorIndex), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
@@ -108,6 +120,13 @@ private struct ClipPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Sound").font(.caption.bold()).foregroundStyle(Theme.dim)
             slider("Gain", value: a.gainDb, range: -36...12, format: "%.1f dB") { set(a, gain: $0) }
+                .contextMenu {
+                    Button(model.showClipEnvelope ? "Hide Gain Envelope" : "Show Gain Envelope") { model.showClipEnvelope.toggle() }
+                    Button("Clear Gain Envelope") { model.apply(.setClipEnvelope(clip: a.id, points: [])) }
+                        .disabled(a.gainEnvelope?.isEmpty ?? true)
+                    Divider()
+                    Button("Reset Gain") { set(a, gain: 0) }
+                }
             slider("Fade in", value: a.fadeInMs, range: 0...200, format: "%.1f ms") { set(a, fadeIn: $0) }
             slider("Fade out", value: a.fadeOutMs, range: 0...200, format: "%.1f ms") { set(a, fadeOut: $0) }
             Spacer()
@@ -323,5 +342,34 @@ private struct DummyPanel: View {
                 }
             }
         }
+    }
+}
+
+/// The clip gain envelope drawn over the clip's waveform. Points count from the clip start.
+private struct ClipEnvelopeView: View {
+    @Environment(AppModel.self) private var model
+    let clip: AudioClip
+    let peaks: [Float]
+    let assetTicks: Double
+    let tint: Color
+
+    private static let target = AutomationTarget(
+        address: ParameterAddress(node: UUID(), parameter: "clipGain"), name: "Clip Gain",
+        min: -60, max: 12, def: 0, unit: "dB", logarithmic: false, choices: [])
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                WaveformView(peaks: peaks, color: tint.opacity(0.45),
+                             fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: clip.loop)
+                AutomationEditor(target: Self.target, points: clip.gainEnvelope ?? [],
+                                 pixelsPerTick: Double(geo.size.width) / Double(max(1, clip.length.rawValue)),
+                                 width: geo.size.width, height: geo.size.height, tint: tint) { pts in
+                    model.apply(.setClipEnvelope(clip: clip.id, points: pts))
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
     }
 }

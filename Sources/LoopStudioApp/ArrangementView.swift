@@ -224,6 +224,9 @@ private struct ArrangementClip: View {
                 WaveformView(peaks: peaks, color: tint.opacity(0.9), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
                     .padding(.top, 16).padding(.bottom, 3)
             }
+            if case .audio(let a) = clip, let env = a.gainEnvelope, !env.isEmpty {
+                EnvelopeLine(points: env, length: a.length, color: Theme.text.opacity(0.85)).padding(.top, 16).padding(.bottom, 3)
+            }
             if case .dummy(let d) = clip { MiniCurves(clip: d).padding(.top, 16).padding(.bottom, 3).padding(.horizontal, 2) }
             if case .midi(let m) = clip { MiniNotes(clip: m).padding(.top, 16).padding(.bottom, 3).padding(.horizontal, 2) }
             Text(model.clipName(clip)).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.onTint)
@@ -342,6 +345,29 @@ private struct MiniNotes: View {
                 let y = CGFloat(Int(hi) - Int(n.pitch)) * rowH
                 ctx.fill(Path(CGRect(x: x, y: y, width: w, height: max(1.5, rowH - 0.5))), with: .color(Theme.text.opacity(0.75)))
             }
+        }
+    }
+}
+
+/// A clip gain envelope inside an arrangement clip, -60...+12 dB from bottom to top.
+struct EnvelopeLine: View {
+    let points: [AutomationPoint]
+    let length: Tick
+    let color: Color
+
+    var body: some View {
+        Canvas { ctx, size in
+            let total = Double(max(1, length.rawValue))
+            var path = Path()
+            let steps = max(2, Int(size.width / 3))
+            for i in 0...steps {
+                let t = Double(i) / Double(steps)
+                let v = AutomationMath.value(points, at: Tick(Int64(t * total))) ?? 0
+                let y = size.height * (1 - CGFloat((min(max(v, -60), 12) + 60) / 72))
+                let pt = CGPoint(x: CGFloat(t) * size.width, y: y)
+                if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+            }
+            ctx.stroke(path, with: .color(color), lineWidth: 1.2)
         }
     }
 }

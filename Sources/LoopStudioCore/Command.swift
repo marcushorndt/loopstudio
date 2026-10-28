@@ -45,6 +45,7 @@ public enum Command: Codable, Sendable {
     /// Own colour of a clip. `nil` goes back to the track colour.
     case setClipColor(clip: ClipID, colorIndex: Int?)
     case setClipName(clip: ClipID, name: String)
+    case setClipEnvelope(clip: ClipID, points: [AutomationPoint])
     /// Sets the envelope of one parameter on a track. Empty points remove the lane.
     case setAutomation(track: TrackID, target: ParameterAddress, points: [AutomationPoint])
     /// Sets the envelope of one parameter inside a dummy clip (ticks relative to the clip start).
@@ -298,6 +299,18 @@ extension Project {
             c.notes = notes.sorted { ($0.tick, $0.pitch) < ($1.tick, $1.pitch) }
             try withTrack(trackID) { t in try t.replaceClip(.midi(c)) }
             return .setMIDINotes(clip: id, notes: old)
+
+        case .setClipEnvelope(let id, let points):
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            guard case .audio(var c) = clip else { throw CommandError.invalidValue("only audio clips have a gain envelope") }
+            guard points.allSatisfy({ $0.value.isFinite && $0.tick.rawValue >= 0 }) else { throw CommandError.invalidValue("envelope point") }
+            let old = Command.setClipEnvelope(clip: id, points: c.gainEnvelope ?? [])
+            let sorted = points.sorted { $0.tick < $1.tick }.map { p -> AutomationPoint in
+                var p = p; p.value = min(max(p.value, -96), 12); return p
+            }
+            c.gainEnvelope = sorted.isEmpty ? nil : sorted
+            try withTrack(trackID) { t in try t.replaceClip(.audio(c)) }
+            return old
 
         case .setClipName(let id, let name):
             guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }

@@ -53,6 +53,8 @@ final class AppModel {
     var detailOpen = true
     /// The computer keyboard plays the selected MIDI track.
     var keyboardMIDI = false
+    /// The clip inspector shows the gain envelope instead of the sample.
+    var showClipEnvelope = false
     /// Name of the active colour theme, kept per Mac. Changing it repaints the whole window.
     var themeName: String = UserDefaults.standard.string(forKey: "theme") ?? ThemePalette.zincDark.name {
         didSet {

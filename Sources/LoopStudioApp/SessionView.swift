@@ -177,7 +177,7 @@ private struct SlotCell: View {
                 GeometryReader { geo in
                     Rectangle().fill(Theme.panel)
                     Rectangle().fill(Theme.clipBody(slot.clip.colorIndex ?? track.colorIndex, active: isPlaying(state)))
-                    if case .dummy(let d) = slot.clip { MiniCurves(clip: d).padding(.leading, 26).padding(.vertical, 2) }
+                    if !slot.clip.lanes.isEmpty { MiniCurves(clip: slot.clip, owner: track).padding(.leading, 26).padding(.vertical, 2) }
                     if case .playing(let p) = state {
                         Rectangle().fill(tint.opacity(0.35)).frame(width: geo.size.width * p)
                     }

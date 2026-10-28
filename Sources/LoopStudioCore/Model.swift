@@ -35,11 +35,15 @@ public struct AutomationPoint: Hashable, Codable, Sendable {
     public var value: Double
     /// Shape of the segment that starts at this point.
     public var curve: Curve
+    /// Slope of a linear segment, -1...1. Positive: the segment moves fast first, then slowly.
+    /// Negative: slowly first, then fast. `nil` or 0: straight.
+    public var bend: Double?
 
-    public init(tick: Tick, value: Double, curve: Curve = .linear) {
+    public init(tick: Tick, value: Double, curve: Curve = .linear, bend: Double? = nil) {
         self.tick = tick
         self.value = value
         self.curve = curve
+        self.bend = bend
     }
 }
 
@@ -52,6 +56,15 @@ public struct ParameterAddress: Hashable, Codable, Sendable {
     public init(node: UUID, parameter: String) {
         self.node = node
         self.parameter = parameter
+    }
+
+    /// In the lanes of an audio or MIDI clip: "the track that holds the clip". A mixer lane with this node
+    /// moves with the clip to another track.
+    public static let ownTrack = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+
+    /// The address with `ownTrack` replaced by the track that holds the clip.
+    public func resolved(owner: TrackID) -> ParameterAddress {
+        node == Self.ownTrack ? ParameterAddress(node: owner.rawValue, parameter: parameter) : self
     }
 }
 
@@ -105,6 +118,8 @@ public struct AudioClip: Hashable, Codable, Sendable, Identifiable {
     public var name: String?
     /// Clip gain envelope in dB, ticks from the clip start. It multiplies with `gainDb`. `nil` or empty: none.
     public var gainEnvelope: [AutomationPoint]?
+    /// Clip automation of the track's parameters, ticks from the clip start. `nil`: none. See `Clip.lanes`.
+    public var lanes: [AutomationLane]?
 
     public init(id: ClipID = ClipID(), asset: AssetID, start: Tick = 0, length: Tick, offset: Tick = 0,
                 loop: Bool = false, gainDb: Double = 0,
@@ -150,6 +165,8 @@ public struct MIDIClip: Hashable, Codable, Sendable, Identifiable {
     public var notes: [MIDINote]
     public var colorIndex: Int?
     public var name: String?
+    /// Clip automation of the track's parameters, ticks from the clip start. `nil`: none. See `Clip.lanes`.
+    public var lanes: [AutomationLane]?
 
     public init(id: ClipID = ClipID(), start: Tick = 0, length: Tick, loop: Bool = false, notes: [MIDINote] = []) {
         self.id = id
@@ -197,6 +214,26 @@ public enum Clip: Hashable, Sendable, Identifiable {
         case .audio(let c): c.start
         case .midi(let c): c.start
         case .dummy(let c): c.start
+        }
+    }
+
+    /// The clip's own automation, ticks from the clip start. While the clip plays, a lane overrides the
+    /// track lane of the same parameter. An audio or MIDI clip moves the parameters of its own track
+    /// (mixer lanes use `ParameterAddress.ownTrack`); a dummy clip can move any parameter of the project.
+    public var lanes: [AutomationLane] {
+        get {
+            switch self {
+            case .audio(let c): c.lanes ?? []
+            case .midi(let c): c.lanes ?? []
+            case .dummy(let c): c.lanes
+            }
+        }
+        set {
+            switch self {
+            case .audio(var c): c.lanes = newValue.isEmpty ? nil : newValue; self = .audio(c)
+            case .midi(var c): c.lanes = newValue.isEmpty ? nil : newValue; self = .midi(c)
+            case .dummy(var c): c.lanes = newValue; self = .dummy(c)
+            }
         }
     }
 

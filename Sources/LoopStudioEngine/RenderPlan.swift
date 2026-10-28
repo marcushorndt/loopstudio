@@ -23,7 +23,8 @@ struct AutoSegment {
     var frames: [Int64]
     var values: [Float]
     var curves: [Curve]
-    /// From a session dummy clip: its frames count on the session clock.
+    var bends: [Double?]
+    /// From a session clip: its frames count on the session clock.
     var session = false
 
     func value(at f: Int64) -> Float {
@@ -36,12 +37,12 @@ struct AutoSegment {
             if frames[mid] <= f { lo = mid } else { hi = mid }
         }
         let t = Double(f - frames[lo]) / Double(max(1, frames[hi] - frames[lo]))
-        let shaped = Float(AutomationMath.shape(curves[lo], t))
+        let shaped = Float(AutomationMath.shape(curves[lo], bend: bends[lo], t))
         return values[lo] + (values[hi] - values[lo]) * shaped
     }
 }
 
-/// All envelopes that move one parameter. The arrangement lane comes first; dummy clips that play
+/// All envelopes that move one parameter. The track lane comes first; clips that play
 /// override it while they play (the one that started last wins).
 struct AutoLane {
     var segments: [AutoSegment]
@@ -181,28 +182,48 @@ public struct RenderPlan {
         var nodes: [NodePlan] = []
         var endFrame: Int64 = 0
 
-        // Envelopes by parameter: the track lanes, then the dummy clips that play.
+        // Envelopes by parameter: the track lanes, then the clips. A later segment wins while it covers the frame.
         var segments: [ParameterAddress: [AutoSegment]] = [:]
         func segment(_ points: [AutomationPoint], origin: Tick, start: Int64, end: Int64) -> AutoSegment? {
             guard !points.isEmpty else { return nil }
             return AutoSegment(start: start, end: end,
                                frames: points.map { map.frame(at: origin + $0.tick, sampleRate: rate).rawValue },
-                               values: points.map { Float($0.value) }, curves: points.map(\.curve))
+                               values: points.map { Float($0.value) }, curves: points.map(\.curve), bends: points.map(\.bend))
         }
         for t in project.allTracks {
             for lane in t.automation {
                 if let seg = segment(lane.points, origin: 0, start: Int64.min, end: Int64.max) { segments[lane.target, default: []].append(seg) }
             }
         }
+        // Clip automation of the arrangement clips. It overrides the track lane while the clip covers the frame.
+        func active(_ clip: Clip) -> Bool { if case .audio(let a) = clip { return !a.muted }; return true }
+        for t in project.allTracks {
+            for clip in t.clips where active(clip) {
+                let a = map.frame(at: clip.start, sampleRate: rate).rawValue
+                let b = map.frame(at: clip.start + clip.length, sampleRate: rate).rawValue
+                for lane in project.effectiveLanes(of: clip, owner: t) {
+                    if let seg = segment(lane.points, origin: clip.start, start: a, end: b) { segments[lane.target, default: []].append(seg) }
+                }
+            }
+        }
+        // Then the session clips that play, on the session clock: they override both. A looping clip
+        // repeats its automation every loop.
         if let session {
             for e in session.events.sorted(by: { $0.startTick < $1.startTick }) {
-                guard case .dummy(let d)? = project.findClip(e.clip)?.clip else { continue }
-                let a = map.frame(at: e.startTick, sampleRate: rate).rawValue, b = map.frame(at: e.endTick, sampleRate: rate).rawValue
-                for lane in d.lanes {
-                    if var seg = segment(lane.points, origin: e.startTick, start: a, end: b) {
-                        seg.session = true
-                        segments[lane.target, default: []].append(seg)
+                guard let (trackID, clip) = project.findClip(e.clip), let owner = project.track(trackID), active(clip) else { continue }
+                let lanes = project.effectiveLanes(of: clip, owner: owner)
+                guard !lanes.isEmpty, clip.length > 0 else { continue }
+                var cycle = e.startTick, cycles = 0
+                while cycle < e.endTick && cycles < 4_096 {
+                    let next = min(cycle + clip.length, e.endTick)
+                    let a = map.frame(at: cycle, sampleRate: rate).rawValue, b = map.frame(at: next, sampleRate: rate).rawValue
+                    for lane in lanes {
+                        if var seg = segment(lane.points, origin: cycle, start: a, end: b) {
+                            seg.session = true
+                            segments[lane.target, default: []].append(seg)
+                        }
                     }
+                    cycle = next; cycles += 1
                 }
             }
         }
@@ -225,7 +246,7 @@ public struct RenderPlan {
             guard let points = c.gainEnvelope, !points.isEmpty else { return nil }
             return AutoSegment(start: start, end: end,
                                frames: points.map { map.frame(at: startTick + $0.tick, sampleRate: rate).rawValue },
-                               values: points.map { Float($0.value) }, curves: points.map(\.curve))
+                               values: points.map { Float($0.value) }, curves: points.map(\.curve), bends: points.map(\.bend))
         }
 
         for id in order {

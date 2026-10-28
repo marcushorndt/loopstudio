@@ -23,6 +23,8 @@ final class LiveTarget: @unchecked Sendable {
 
 enum ViewMode: String { case session, arrangement }
 enum DetailTab { case clip, devices }
+/// What the main area of the clip inspector shows.
+enum ClipPage { case content, gain, automation }
 enum SidebarTab: String, CaseIterable { case audio, effects, instruments, projects }
 
 enum SlotState {
@@ -57,8 +59,10 @@ final class AppModel {
     }
     /// The computer keyboard plays the selected MIDI track.
     var keyboardMIDI = false
-    /// The clip inspector shows the gain envelope instead of the sample.
-    var showClipEnvelope = false
+    /// What the clip inspector shows: the sample or notes, the gain envelope, or the clip automation.
+    var clipPage: ClipPage = .content
+    /// Automation lanes shown in the clip inspector, per clip. Missing: the lanes that hold points.
+    var clipLanesShown: [ClipID: [ParameterAddress]] = [:]
     /// Name of the active colour theme, kept per Mac. Changing it repaints the whole window.
     var themeName: String = UserDefaults.standard.string(forKey: "theme") ?? ThemePalette.zincDark.name {
         didSet {
@@ -403,6 +407,92 @@ final class AppModel {
         let show = !isLaneShown(track, address)
         setLane(track, address, shown: show)
         if show { viewMode = .arrangement; selectedTrack = track.id }
+    }
+
+    // MARK: Clip automation
+
+    /// The page of the clip inspector for a clip. A dummy clip has only automation; a MIDI clip has no gain page.
+    func page(for clip: Clip) -> ClipPage {
+        switch clip {
+        case .dummy: return .automation
+        case .midi: return clipPage == .gain ? .content : clipPage
+        case .audio: return clipPage
+        }
+    }
+
+    /// The clip lanes the inspector shows: the user's choice, else the lanes with points.
+    func shownClipLanes(_ clip: Clip, owner: Track) -> [ParameterAddress] {
+        let valid = Set(project.clipAutomationTargets(clip, owner: owner).map(\.address))
+        let list = clipLanesShown[clip.id] ?? clip.lanes.filter { !$0.points.isEmpty }.map(\.target)
+        return list.filter { valid.contains($0) }
+    }
+
+    func setClipLane(_ clip: Clip, owner: Track, _ address: ParameterAddress, shown: Bool) {
+        var list = shownClipLanes(clip, owner: owner)
+        list.removeAll { $0 == address }
+        if shown { list.append(address) }
+        clipLanesShown[clip.id] = list
+        if shown { clipPage = .automation }
+    }
+
+    /// Selects a clip and opens its automation in the inspector, with `address` (a clip lane address) in view.
+    func openClipAutomation(_ id: ClipID, address: ParameterAddress? = nil) {
+        guard let (trackID, clip) = project.findClip(id), let owner = project.track(trackID) else { return }
+        selectedClip = id
+        selectedTrack = trackID
+        detailTab = .clip
+        detailOpen = true
+        clipPage = .automation
+        if let address { setClipLane(clip, owner: owner, address, shown: true) }
+    }
+
+    /// The clip lane address for a track parameter: mixer parameters of the clip's own track use `ownTrack`.
+    func clipAddress(_ address: ParameterAddress, in clip: Clip, owner: Track) -> ParameterAddress {
+        if case .dummy = clip { return address }
+        return address.node == owner.id.rawValue ? ParameterAddress(node: ParameterAddress.ownTrack, parameter: address.parameter) : address
+    }
+
+    /// Writes an arrangement clip's automation into the track lanes and shows those lanes.
+    func moveClipAutomationToTrack(_ id: ClipID) {
+        guard let command = project.clipAutomationToTrack(id), let (trackID, clip) = project.findClip(id),
+              let owner = project.track(trackID) else { return }
+        let targets = project.effectiveLanes(of: clip, owner: owner).map(\.target)
+        apply(command)
+        for address in targets {
+            if let host = project.trackOwning(address) { setLane(host, address, shown: true) }
+        }
+        clipLanesShown[id] = nil
+        status = "Clip automation moved to the track lanes"
+    }
+
+    /// Arrangement clips whose automation overrides a track lane, for drawing over that lane.
+    func clipOverrides(_ address: ParameterAddress) -> [(clip: Clip, lane: [AutomationPoint], tint: Int)] {
+        var result: [(clip: Clip, lane: [AutomationPoint], tint: Int)] = []
+        for t in project.allTracks {
+            for clip in t.clips {
+                if case .audio(let a) = clip, a.muted { continue }
+                if let lane = project.effectiveLanes(of: clip, owner: t).first(where: { $0.target == address }) {
+                    result.append((clip, lane.points, clip.colorIndex ?? t.colorIndex))
+                }
+            }
+        }
+        return result
+    }
+
+    /// True when any track shows an automation lane in the arrangement.
+    var anyLanesShown: Bool { project.allTracks.contains { !shownLanes($0).isEmpty } }
+
+    /// The A key. Arrangement: shows or hides the lanes of every track (the used ones, else volume).
+    /// Session: switches the clip inspector between the clip automation and the clip content.
+    func toggleAutomationView() {
+        if viewMode == .session, let id = selectedClip, let clip = project.findClip(id)?.clip {
+            detailTab = .clip
+            detailOpen = true
+            clipPage = page(for: clip) == .automation ? .content : .automation
+            return
+        }
+        if anyLanesShown { automationShown = [:]; return }
+        for t in orderedTracks where t.kind != .master { toggleAutomation(t) }
     }
 
     func showAllUsedLanes(_ track: Track) {

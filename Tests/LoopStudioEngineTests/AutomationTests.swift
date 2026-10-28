@@ -192,3 +192,93 @@ private func volumeLane(_ rig: Rig, _ points: [AutomationPoint]) -> Command {
     } }
     #expect(l.allSatisfy { $0 == 0 }, "timeline at 0, but the session clock is past the stop")
 }
+
+// MARK: Clip automation
+
+private let ownVolume = ParameterAddress(node: ParameterAddress.ownTrack, parameter: "volume")
+
+@Test func arrangementClipAutomationOverridesTheTrackLaneOnlyInsideTheClip() throws {
+    var rig = Rig()
+    // Shorten the clip to 1 bar (2 s); the track lane is at 0 dB; the clip lane silences.
+    let id = rig.track.clips[0].id
+    try Command.setClipRange(clip: id, start: 0, length: 3_840).apply(to: &rig.project)
+    try volumeLane(rig, [AutomationPoint(tick: 0, value: 0)]).apply(to: &rig.project)
+    try Command.setClipAutomation(clip: id, target: ownVolume, points: [AutomationPoint(tick: 0, value: -96)]).apply(to: &rig.project)
+    // A second clip after the first, without automation: the track lane is back.
+    guard case .audio(var c) = rig.project.tracks[0].clips[0] else { Issue.record("no clip"); return }
+    c.id = ClipID(); c.start = 3_840; c.lanes = nil
+    try Command.insertClip(track: rig.track.id, clip: .audio(c)).apply(to: &rig.project)
+    let audio = rig.render()
+    #expect(rms(audio.left[4_800..<90_000]) < 0.001, "inside the automated clip: silent")
+    #expect(rms(audio.left[100_000..<180_000]) > 0.3, "in the next clip: the track lane again")
+}
+
+@Test func loopingSessionClipRepeatsItsAutomation() throws {
+    var rig = Rig()
+    guard case .audio(var c) = rig.track.clips[0] else { Issue.record("no clip"); return }
+    c.id = ClipID(); c.loop = true; c.length = 1_920 // 1 s loop
+    // Silent in the first half of each loop, loud in the second half.
+    c.lanes = [AutomationLane(target: ownVolume, points: [AutomationPoint(tick: 0, value: -96, curve: .hold), AutomationPoint(tick: 960, value: 0)])]
+    let session = Track(name: "S", kind: .audio, slots: [SessionSlot(clip: .audio(c), quantize: .none)])
+    try Command.insertTrack(track: session, index: 1).apply(to: &rig.project)
+    try Command.removeTrack(id: rig.track.id).apply(to: &rig.project)
+    rig.project.launches = [Launch(track: session.id, slot: 0, tick: 0)]
+    let audio = rig.render(session: SessionSimulator.run(rig.project, horizon: 7_680))
+    for loop in 0..<3 {
+        let base = loop * 48_000
+        #expect(rms(audio.left[(base + 2_000)..<(base + 20_000)]) < 0.001, "loop \(loop): first half silent")
+        #expect(rms(audio.left[(base + 26_000)..<(base + 46_000)]) > 0.3, "loop \(loop): second half loud")
+    }
+}
+
+@Test func clipLanesFollowTheClipsTrackAndIgnoreForeignDevices() throws {
+    var p = Project(name: "P")
+    var a = Track(name: "A", kind: .audio), b = Track(name: "B", kind: .audio)
+    let delay = BuiltInEffects.makeSlot("delay")!
+    a.devices = [delay]
+    let lane1 = AutomationLane(target: ownVolume, points: [AutomationPoint(tick: 0, value: -6)])
+    let lane2 = AutomationLane(target: ParameterAddress(node: delay.id.rawValue, parameter: "mix"), points: [AutomationPoint(tick: 0, value: 0.5)])
+    var clip = MIDIClip(length: 3_840); clip.lanes = [lane1, lane2]
+    p.tracks = [a, b]
+    let onA = p.effectiveLanes(of: .midi(clip), owner: a).map(\.target)
+    #expect(onA == [ParameterAddress(node: a.id.rawValue, parameter: "volume"), lane2.target])
+    let onB = p.effectiveLanes(of: .midi(clip), owner: b).map(\.target)
+    #expect(onB == [ParameterAddress(node: b.id.rawValue, parameter: "volume")], "mixer lane moves along; A's delay does nothing on B")
+    b.devices = []
+    #expect(p.clipAutomationTargets(.midi(clip), owner: a).contains { $0.address == ownVolume })
+}
+
+@Test func clipAutomationMovesToTheTrackLaneAndUndoes() throws {
+    var rig = Rig()
+    let id = rig.track.clips[0].id
+    try Command.setClipRange(clip: id, start: 1_920, length: 1_920).apply(to: &rig.project)
+    try volumeLane(rig, [AutomationPoint(tick: 0, value: -3)]).apply(to: &rig.project)
+    try Command.setClipAutomation(clip: id, target: ownVolume, points: [AutomationPoint(tick: 0, value: -20), AutomationPoint(tick: 960, value: -10)])
+        .apply(to: &rig.project)
+    let before = rig.project
+    let command = try #require(rig.project.clipAutomationToTrack(id))
+    let inverse = try command.apply(to: &rig.project)
+    #expect(rig.project.findClip(id)?.clip.lanes.isEmpty == true)
+    let lane = try #require(rig.project.tracks[0].automation.first)
+    func v(_ t: Int64) -> Double? { AutomationMath.value(lane.points, at: Tick(t)) }
+    #expect(v(0) == -3 && v(1_919) == -3, "before the clip: the old lane")
+    #expect(v(1_920) == -20 && v(2_880) == -10 && v(3_839) == -10, "inside: the clip curve")
+    #expect(v(3_840) == -3 && v(9_000) == -3, "after the clip: the old lane again")
+    try inverse.apply(to: &rig.project)
+    // Undo gives back the same curves (a removed lane comes back with a new id).
+    #expect(rig.project.tracks[0].automation == before.tracks[0].automation)
+    let lanes = rig.project.findClip(id)?.clip.lanes.map { [$0.target: $0.points] }
+    #expect(lanes == before.findClip(id)?.clip.lanes.map { [$0.target: $0.points] })
+}
+
+@Test func slopesBendALinearSegment() throws {
+    let up = [AutomationPoint(tick: 0, value: 0, bend: 0.8), AutomationPoint(tick: 100, value: 10)]
+    let down = [AutomationPoint(tick: 0, value: 0, bend: -0.8), AutomationPoint(tick: 100, value: 10)]
+    #expect(AutomationMath.value(up, at: 50)! > 5 && AutomationMath.value(down, at: 50)! < 5)
+    #expect(AutomationMath.value(up, at: 0) == 0 && AutomationMath.value(up, at: 100) == 10, "the ends stay put")
+    var rig = Rig()
+    try volumeLane(rig, [AutomationPoint(tick: 0, value: -60, bend: 7), AutomationPoint(tick: 3_840, value: 0)]).apply(to: &rig.project)
+    #expect(rig.project.tracks[0].automation[0].points[0].bend == 1, "the slope is clamped to -1...1")
+    let a = rig.render(block: 64), b = rig.render(block: 777)
+    #expect(a.left == b.left, "a bent lane is bit-identical at any block size")
+}

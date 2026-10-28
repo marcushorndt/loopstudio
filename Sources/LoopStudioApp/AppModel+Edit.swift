@@ -82,6 +82,7 @@ extension AppModel {
         case .arrangementView: viewMode = .arrangement
         case .switchView: viewMode = viewMode == .session ? .arrangement : .session
         case .toggleDetail: detailOpen.toggle()
+        case .toggleAutomation: toggleAutomationView()
         case .showShortcuts: shortcutsOpen = true
         }
     }
@@ -335,9 +336,9 @@ extension AppModel {
             lanes.map { var l = $0; l.id = LaneID(); l.target.node = nodes[l.target.node] ?? l.target.node; return l }
         }
         func retarget(_ clip: Clip) -> Clip {
-            guard case .dummy(var d) = clip else { return clip }
-            d.lanes = retarget(d.lanes)
-            return .dummy(d)
+            var clip = clip
+            clip.lanes = retarget(clip.lanes)
+            return clip
         }
         copy.clips = copy.clips.map { retarget(fresh($0, start: $0.start)) }
         copy.slots = copy.slots.map { slot in slot.map { var s = $0; s.clip = retarget(fresh($0.clip, start: $0.clip.start)); return s } }

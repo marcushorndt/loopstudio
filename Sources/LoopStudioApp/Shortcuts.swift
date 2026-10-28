@@ -11,7 +11,7 @@ enum AppAction: String, CaseIterable, Identifiable {
     case insertScene, deleteScene, duplicateScene
     case toggleKeyboardMIDI
     case moveUp, moveDown, moveLeft, moveRight, launchSelected
-    case sessionView, arrangementView, switchView, toggleDetail, showShortcuts
+    case sessionView, arrangementView, switchView, toggleDetail, toggleAutomation, showShortcuts
 
     var id: String { rawValue }
 
@@ -26,7 +26,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .insertScene, .deleteScene, .duplicateScene: .scene
         case .toggleKeyboardMIDI: .transport
         case .moveUp, .moveDown, .moveLeft, .moveRight, .launchSelected: .navigate
-        case .sessionView, .arrangementView, .switchView, .toggleDetail, .showShortcuts: .view
+        case .sessionView, .arrangementView, .switchView, .toggleDetail, .toggleAutomation, .showShortcuts: .view
         }
     }
 
@@ -73,6 +73,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .arrangementView: "Arrangement View"
         case .switchView: "Switch Session / Arrangement"
         case .toggleDetail: "Show Clip and Device Panel"
+        case .toggleAutomation: "Show / Hide Automation"
         case .showShortcuts: "Keyboard Shortcuts"
         }
     }
@@ -114,6 +115,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .arrangementView: KeyBinding("2", .command)
         case .switchView: KeyBinding("\t", [])
         case .toggleDetail: KeyBinding("d", [.command, .option])
+        case .toggleAutomation: KeyBinding("a", [])
         case .showShortcuts: KeyBinding("/", .command)
         default: nil
         }

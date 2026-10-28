@@ -85,34 +85,8 @@ private struct ClipPanel: View {
                     FollowEditor(track: track, row: row, slot: slot).frame(width: 280)
                 }
                 VStack(alignment: .leading, spacing: 6) {
-                    if case .midi(let m) = clip {
-                        PianoRoll(clip: m, tint: Theme.track(track.colorIndex))
-                    } else if case .dummy(let d) = clip {
-                        DummyPanel(clip: d, tint: Theme.track(track.colorIndex))
-                    } else {
-                    SectionHeader(title: model.clipName(clip)) {
-                        if case .audio = clip {
-                            Picker("", selection: Bindable(model).showClipEnvelope) {
-                                Text("Sample").tag(false)
-                                Text("Gain Envelope").tag(true)
-                            }
-                            .pickerStyle(.segmented).labelsHidden().fixedSize().controlSize(.small)
-                        }
-                    }
-                    if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
-                        let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
-                        if model.showClipEnvelope {
-                            ClipEnvelopeView(clip: a, peaks: peaks, assetTicks: assetTicks, tint: Theme.track(track.colorIndex))
-                        } else if a.warpMode != .off {
-                            WarpEditor(clip: a, asset: asset, peaks: peaks, tint: Theme.track(track.colorIndex))
-                        } else {
-                            WaveformView(peaks: peaks, color: Theme.track(track.colorIndex), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
-                                .background(Theme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.radius))
-                        }
-                    } else {
-                        Spacer()
-                    }
-                    }
+                    SectionHeader(title: model.clipName(clip)) { pagePicker(clip) }
+                    mainArea(clip, track: track)
                 }
             }
             .padding(10)
@@ -122,13 +96,51 @@ private struct ClipPanel: View {
         }
     }
 
+    /// The pages of the main area. A dummy clip has only automation, so it gets no picker.
+    @ViewBuilder
+    private func pagePicker(_ clip: Clip) -> some View {
+        if case .dummy = clip { EmptyView() } else {
+            Picker("", selection: Binding(get: { model.page(for: clip) }, set: { model.clipPage = $0 })) {
+                if case .midi = clip { Text("Notes").tag(ClipPage.content) } else { Text("Sample").tag(ClipPage.content) }
+                if case .audio = clip { Text("Gain").tag(ClipPage.gain) }
+                Text("Automation").tag(ClipPage.automation)
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize().controlSize(.small)
+        }
+    }
+
+    @ViewBuilder
+    private func mainArea(_ clip: Clip, track: Track) -> some View {
+        let tint = Theme.track(clip.colorIndex ?? track.colorIndex)
+        switch (model.page(for: clip), clip) {
+        case (.automation, _):
+            ClipLanesPanel(clip: clip, track: track, tint: tint)
+        case (_, .midi(let m)):
+            PianoRoll(clip: m, tint: tint)
+        case (let page, .audio(let a)):
+            if let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
+                let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
+                if page == .gain {
+                    ClipEnvelopeView(clip: a, peaks: peaks, assetTicks: assetTicks, tint: tint)
+                } else if a.warpMode != .off {
+                    WarpEditor(clip: a, asset: asset, peaks: peaks, tint: tint)
+                } else {
+                    WaveformView(peaks: peaks, color: tint, fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
+                        .background(Theme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.radius))
+                }
+            } else {
+                Spacer()
+            }
+        default:
+            Spacer()
+        }
+    }
+
     @ViewBuilder
     private func properties(_ clip: Clip, track: Track) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Clip") {
-                if case .dummy = clip { EmptyView() } else {
-                    PillMenu(label: "Automate") { AutomationLaneToggles(track: track) }
-                }
+                PillMenu(label: "Automate") { ClipLaneToggles(clip: clip, track: track) }
             }
             switch clip {
             case .audio(let a):
@@ -160,7 +172,9 @@ private struct ClipPanel: View {
             SectionHeader(title: "Sound")
             slider("Gain", value: a.gainDb, range: -36...12, format: "%.1f dB") { set(a, gain: $0) }
                 .contextMenu {
-                    Button(model.showClipEnvelope ? "Hide Gain Envelope" : "Show Gain Envelope") { model.showClipEnvelope.toggle() }
+                    Button(model.clipPage == .gain ? "Hide Gain Envelope" : "Show Gain Envelope") {
+                        model.clipPage = model.clipPage == .gain ? .content : .gain
+                    }
                     Button("Clear Gain Envelope") { model.apply(.setClipEnvelope(clip: a.id, points: [])) }
                         .disabled(a.gainEnvelope?.isEmpty ?? true)
                     Divider()
@@ -313,70 +327,48 @@ private struct FollowEditor: View {
     }
 }
 
-/// The curves of a dummy clip. Points count from the start of the clip.
-private struct DummyPanel: View {
+/// The automation lanes of a clip, one editor per lane. Points count from the start of the clip.
+private struct ClipLanesPanel: View {
     @Environment(AppModel.self) private var model
-    let clip: DummyClip
+    let clip: Clip
+    let track: Track
     let tint: Color
-    /// Lanes the user chose to show; nil means every curve of the clip, or volume if the clip has none.
-    @State private var chosen: [ParameterAddress]?
-
-    private var shown: [ParameterAddress] {
-        if let chosen { return chosen }
-        if !clip.lanes.isEmpty { return clip.lanes.map(\.target) }
-        return model.project.automationTargets().first.map { [$0.address] } ?? []
-    }
-
-    private func set(_ address: ParameterAddress, on: Bool) {
-        var list = shown
-        list.removeAll { $0 == address }
-        if on { list.append(address) }
-        chosen = list
-    }
 
     var body: some View {
-        let targets = model.project.automationTargets()
-        let lanes = shown
-        VStack(alignment: .leading, spacing: 6) {
-            SectionHeader(title: "Automation") {
-                PillMenu(label: lanes.isEmpty ? "Add Parameter" : "Parameters") {
-                    Button("Show Parameters With Curves") { chosen = clip.lanes.map(\.target) }.disabled(clip.lanes.isEmpty)
-                    Divider()
-                    ForEach(targets, id: \.address) { target in
-                        Toggle(target.name, isOn: Binding(get: { lanes.contains(target.address) },
-                                                          set: { set(target.address, on: $0) }))
-                    }
-                }
+        let lanes = model.shownClipLanes(clip, owner: track)
+        if lanes.isEmpty {
+            VStack(spacing: 6) {
+                Text("No clip automation shown").font(.system(size: 12, weight: .medium))
+                Text(hint).font(.system(size: 11)).foregroundStyle(Theme.dim).multilineTextAlignment(.center)
             }
-            if lanes.isEmpty {
-                VStack(spacing: 6) {
-                    Text("No parameter chosen").font(.system(size: 12, weight: .medium))
-                    Text("Use Add Parameter to pick what this clip moves.").font(.system(size: 11)).foregroundStyle(Theme.dim)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-            } else {
-                GeometryReader { geo in
-                    let rowH = max(64, (geo.size.height - CGFloat(lanes.count - 1) * 4) / CGFloat(lanes.count))
-                    ScrollView(.vertical) {
-                        VStack(spacing: 4) {
-                            ForEach(lanes, id: \.self) { address in laneRow(address, height: rowH, width: geo.size.width) }
-                        }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+        } else {
+            GeometryReader { geo in
+                let rowH = max(64, (geo.size.height - CGFloat(lanes.count - 1) * 4) / CGFloat(lanes.count))
+                ScrollView(.vertical) {
+                    VStack(spacing: 4) {
+                        ForEach(lanes, id: \.self) { address in laneRow(address, height: rowH, width: geo.size.width) }
                     }
-                    .scrollDisabled(rowH * CGFloat(lanes.count) <= geo.size.height)
                 }
+                .scrollDisabled(rowH * CGFloat(lanes.count) <= geo.size.height)
             }
         }
     }
 
+    private var hint: String {
+        if case .dummy = clip { return "Use Automate to pick what this clip moves.\nIt can move any track or device while it plays." }
+        return "Use Automate to pick a parameter of this track.\nWhile the clip plays, its curve overrides the track automation."
+    }
+
     @ViewBuilder
     private func laneRow(_ address: ParameterAddress, height: CGFloat, width: CGFloat) -> some View {
-        if let target = model.project.automationTarget(address) {
+        if let target = model.project.clipAutomationTargets(clip, owner: track).first(where: { $0.address == address }) {
             let points = clip.lanes.first { $0.target == address }?.points ?? []
             AutomationEditor(target: target, points: points,
                              pixelsPerTick: Double(width) / Double(max(1, clip.length.rawValue)),
                              width: width, height: height - 2, tint: tint) { pts in
-                model.apply(.setDummyAutomation(clip: clip.id, target: address, points: pts))
+                model.apply(.setClipAutomation(clip: clip.id, target: address, points: pts))
             }
             .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
             .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
@@ -393,18 +385,40 @@ private struct DummyPanel: View {
             .overlay(alignment: .topTrailing) {
                 HStack(spacing: 2) {
                     if !points.isEmpty {
-                        Button { model.apply(.setDummyAutomation(clip: clip.id, target: address, points: [])) } label: {
+                        Button { model.apply(.setClipAutomation(clip: clip.id, target: address, points: [])) } label: {
                             Image(systemName: "trash").font(.system(size: 10)).frame(width: 20, height: 20)
                         }
                         .buttonStyle(.plain).help("Delete this curve")
                     }
-                    Button { set(address, on: false) } label: {
+                    Button { model.setClipLane(clip, owner: track, address, shown: false) } label: {
                         Image(systemName: "xmark").font(.system(size: 10)).frame(width: 20, height: 20)
                     }
-                    .buttonStyle(.plain).help("Hide this parameter")
+                    .buttonStyle(.plain).help("Hide this lane")
                 }
                 .foregroundStyle(Theme.dim).padding(2)
             }
+        }
+    }
+}
+
+/// The checkmark items of a clip's Automate menu: which clip lanes the inspector shows.
+struct ClipLaneToggles: View {
+    @Environment(AppModel.self) private var model
+    let clip: Clip
+    let track: Track
+
+    var body: some View {
+        let used = clip.lanes.filter { !$0.points.isEmpty }.map(\.target)
+        Button("Lanes With Points") { model.clipLanesShown[clip.id] = used; model.clipPage = .automation }.disabled(used.isEmpty)
+        Button("Hide All") { model.clipLanesShown[clip.id] = [] }.disabled(model.shownClipLanes(clip, owner: track).isEmpty)
+        if track.clips.contains(where: { $0.id == clip.id }) {
+            Button("Move Clip Automation to Track") { model.moveClipAutomationToTrack(clip.id) }.disabled(used.isEmpty)
+        }
+        Divider()
+        ForEach(model.project.clipAutomationTargets(clip, owner: track), id: \.address) { target in
+            Toggle(target.name + (used.contains(target.address) ? "  •" : ""), isOn: Binding(
+                get: { model.shownClipLanes(clip, owner: track).contains(target.address) },
+                set: { model.setClipLane(clip, owner: track, target.address, shown: $0) }))
         }
     }
 }

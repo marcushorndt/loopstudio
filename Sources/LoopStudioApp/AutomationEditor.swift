@@ -3,6 +3,7 @@ import SwiftUI
 
 /// An envelope editor. Click empty space to add a point, drag a point to move it,
 /// double-click a point to delete it, shift-click a point to change the shape of the segment after it.
+/// The diamond in the middle of a straight segment sets its slope: drag it up or down; double-click straightens.
 struct AutomationEditor: View {
     let target: AutomationTarget
     let points: [AutomationPoint]
@@ -15,6 +16,8 @@ struct AutomationEditor: View {
 
     @State private var draft: [AutomationPoint]?
     @State private var dragging: Int?
+    /// The segment whose slope is being dragged: its first point, the slope at the start, and the drag direction.
+    @State private var bending: (index: Int, start: Double, sign: Double)?
 
     private var shown: [AutomationPoint] { draft ?? points }
     private let grid = Int64(Tick.perQuarter / 4)
@@ -33,14 +36,14 @@ struct AutomationEditor: View {
             line.addLine(to: CGPoint(x: x(shown[0].tick), y: y(shown[0].value)))
             for i in 0..<(shown.count - 1) {
                 let a = shown[i], b = shown[i + 1]
-                let steps = a.curve == .linear || a.curve == .hold ? 1 : 24
+                let steps = (a.curve == .linear && (a.bend ?? 0) == 0) || a.curve == .hold ? 1 : 24
                 if a.curve == .hold {
                     line.addLine(to: CGPoint(x: x(b.tick), y: y(a.value)))
                     line.addLine(to: CGPoint(x: x(b.tick), y: y(b.value)))
                 } else {
                     for s in 1...steps {
                         let t = Double(s) / Double(steps)
-                        let v = a.value + (b.value - a.value) * AutomationMath.shape(a.curve, t)
+                        let v = a.value + (b.value - a.value) * AutomationMath.shape(a.curve, bend: a.bend, t)
                         line.addLine(to: CGPoint(x: x(a.tick) + (x(b.tick) - x(a.tick)) * t, y: y(v)))
                     }
                 }
@@ -50,6 +53,16 @@ struct AutomationEditor: View {
             fill.addLine(to: CGPoint(x: size.width, y: size.height)); fill.addLine(to: CGPoint(x: 0, y: size.height)); fill.closeSubpath()
             ctx.fill(fill, with: .color(tint.opacity(0.12)))
             ctx.stroke(line, with: .color(tint), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
+            for i in shown.indices.dropLast() {
+                guard let c = handle(i, in: shown) else { continue }
+                let r: CGFloat = bending?.index == i ? 4.5 : 3.5
+                let diamond = Path { p in
+                    p.move(to: CGPoint(x: c.x, y: c.y - r)); p.addLine(to: CGPoint(x: c.x + r, y: c.y))
+                    p.addLine(to: CGPoint(x: c.x, y: c.y + r)); p.addLine(to: CGPoint(x: c.x - r, y: c.y)); p.closeSubpath()
+                }
+                ctx.fill(diamond, with: .color(Theme.background))
+                ctx.stroke(diamond, with: .color(bending?.index == i ? .white : tint), lineWidth: 1.2)
+            }
             for (i, p) in shown.enumerated() {
                 let c = CGPoint(x: x(p.tick), y: y(p.value))
                 ctx.fill(Path(ellipseIn: CGRect(x: c.x - 4, y: c.y - 4, width: 8, height: 8)), with: .color(dragging == i ? .white : tint))
@@ -64,7 +77,13 @@ struct AutomationEditor: View {
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { g in
-                if dragging == nil { begin(at: g.startLocation) }
+                if dragging == nil && bending == nil { begin(at: g.startLocation) }
+                if let b = bending, var working = draft, working.indices.contains(b.index) {
+                    let dy = Double(g.startLocation.y - g.location.y) / 60
+                    working[b.index].bend = min(max(b.start + dy * b.sign, -1), 1)
+                    draft = working
+                    return
+                }
                 guard let i = dragging, var working = draft, working.indices.contains(i) else { return }
                 let tick = snap(Int64(max(0, g.location.x / pixelsPerTick)))
                 working[i].tick = Tick(tick)
@@ -73,7 +92,9 @@ struct AutomationEditor: View {
             }
             .onEnded { _ in finish() })
         .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { v in
-            if let i = nearest(to: v.location, in: points) {
+            if let i = nearestHandle(to: v.location, in: points) {
+                var next = points; next[i].bend = nil; onChange(next)
+            } else if let i = nearest(to: v.location, in: points) {
                 var next = points; next.remove(at: i); onChange(next)
             }
         })
@@ -97,8 +118,28 @@ struct AutomationEditor: View {
         return best?.0
     }
 
+    /// The slope handle of the segment that starts at point `i`: halfway in time, on the curve.
+    /// Only straight (linear) segments with a rise or fall have one.
+    private func handle(_ i: Int, in list: [AutomationPoint]) -> CGPoint? {
+        guard i + 1 < list.count else { return nil }
+        let a = list[i], b = list[i + 1]
+        guard a.curve == .linear, a.value != b.value, x(b.tick) - x(a.tick) >= 16 else { return nil }
+        let v = a.value + (b.value - a.value) * AutomationMath.shape(.linear, bend: a.bend, 0.5)
+        return CGPoint(x: (x(a.tick) + x(b.tick)) / 2, y: y(v))
+    }
+
+    private func nearestHandle(to point: CGPoint, in list: [AutomationPoint]) -> Int? {
+        list.indices.first { i in handle(i, in: list).map { hypot($0.x - point.x, $0.y - point.y) < 7 } ?? false }
+    }
+
     private func begin(at point: CGPoint) {
         var working = points
+        if nearest(to: point, in: working) == nil, let i = nearestHandle(to: point, in: working) {
+            // Dragging up bows the curve up: for a rising segment that is a positive slope.
+            bending = (i, working[i].bend ?? 0, working[i + 1].value > working[i].value ? 1 : -1)
+            draft = working
+            return
+        }
         if let i = nearest(to: point, in: working) {
             if NSEvent.modifierFlags.contains(.shift) {
                 let order: [Curve] = [.linear, .hold, .easeIn, .easeOut, .easeInOut]
@@ -122,5 +163,6 @@ struct AutomationEditor: View {
         if let draft { onChange(draft) }
         draft = nil
         dragging = nil
+        bending = nil
     }
 }

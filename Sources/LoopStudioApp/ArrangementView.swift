@@ -20,6 +20,14 @@ struct ArrangementView: View {
                     HStack {
                         Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(Theme.dim)
                         Slider(value: Bindable(model).pixelsPerBar, in: 24...420).controlSize(.mini)
+                        Button { model.toggleAutomationView() } label: {
+                            Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 11))
+                                .foregroundStyle(model.anyLanesShown ? Theme.accent : Theme.dim)
+                                .frame(width: 22, height: 18)
+                                .overlay(RoundedRectangle(cornerRadius: Theme.radius)
+                                    .stroke(model.anyLanesShown ? Theme.accent.opacity(0.55) : Theme.line, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain).help("Show or hide automation lanes on all tracks (A)")
                     }
                     .padding(.horizontal, 8).frame(height: rulerHeight)
                     ForEach(tracks, id: \.id) { ArrangementHeader(track: $0) }
@@ -179,6 +187,7 @@ private struct Lane: View {
                                      width: width, height: AppModel.automationRow, tint: Theme.track(track.colorIndex)) { pts in
                         model.apply(.setAutomation(track: track.id, target: address, points: pts))
                     }
+                    .overlay(alignment: .topLeading) { ClipOverrideSpans(address: address) }
                     .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
                     .offset(y: laneHeight + CGFloat(i) * AppModel.automationRow)
                 }
@@ -227,7 +236,7 @@ private struct ArrangementClip: View {
             if case .audio(let a) = clip, let env = a.gainEnvelope, !env.isEmpty {
                 EnvelopeLine(points: env, length: a.length, color: Theme.text.opacity(0.85)).padding(.top, 16).padding(.bottom, 3)
             }
-            if case .dummy(let d) = clip { MiniCurves(clip: d).padding(.top, 16).padding(.bottom, 3).padding(.horizontal, 2) }
+            if !clip.lanes.isEmpty { MiniCurves(clip: clip, owner: track).padding(.top, 16).padding(.bottom, 3).padding(.horizontal, 2) }
             if case .midi(let m) = clip { MiniNotes(clip: m).padding(.top, 16).padding(.bottom, 3).padding(.horizontal, 2) }
             Text(model.clipName(clip)).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.onTint)
                 .padding(.horizontal, 6).padding(.top, 3).lineLimit(1)
@@ -372,15 +381,16 @@ struct EnvelopeLine: View {
     }
 }
 
-/// The automation curves of a dummy clip, drawn small inside the clip, one line per lane.
+/// The automation curves of a clip, drawn small inside the clip, one dashed line per lane.
 struct MiniCurves: View {
     @Environment(AppModel.self) private var model
-    let clip: DummyClip
+    let clip: Clip
+    let owner: Track
 
     var body: some View {
         Canvas { ctx, size in
             let length = Double(max(1, clip.length.rawValue))
-            for lane in clip.lanes where !lane.points.isEmpty {
+            for lane in model.project.effectiveLanes(of: clip, owner: owner) {
                 guard let target = model.project.automationTarget(lane.target) else { continue }
                 var path = Path()
                 let steps = max(2, Int(size.width / 3))
@@ -390,9 +400,60 @@ struct MiniCurves: View {
                     let pt = CGPoint(x: CGFloat(t) * size.width, y: size.height * (1 - CGFloat(target.position(v))))
                     if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
                 }
-                ctx.stroke(path, with: .color(Theme.text.opacity(0.8)), lineWidth: 1.3)
+                ctx.stroke(path, with: .color(Theme.text.opacity(0.8)), style: StrokeStyle(lineWidth: 1.2, dash: [4, 2]))
             }
         }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Over a track lane: the spans where a clip's own automation overrides the lane, with the clip's curve.
+/// A double-click opens that curve in the clip inspector.
+private struct ClipOverrideSpans: View {
+    @Environment(AppModel.self) private var model
+    let address: ParameterAddress
+
+    var body: some View {
+        let target = model.project.automationTarget(address)
+        ZStack(alignment: .topLeading) {
+            ForEach(model.clipOverrides(address), id: \.clip.id) { item in
+                let tint = Theme.track(item.tint)
+                let w = max(4, tickX(item.clip.length, model))
+                Canvas { ctx, size in
+                    guard let target else { return }
+                    let length = Double(max(1, item.clip.length.rawValue))
+                    var path = Path()
+                    let steps = max(2, Int(size.width / 3))
+                    for i in 0...steps {
+                        let t = Double(i) / Double(steps)
+                        let v = AutomationMath.value(item.lane, at: Tick(Int64(t * length))) ?? target.def
+                        let pt = CGPoint(x: CGFloat(t) * size.width, y: size.height * (1 - CGFloat(target.position(v))))
+                        if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+                    }
+                    ctx.stroke(path, with: .color(tint), lineWidth: 1.5)
+                }
+                .frame(width: w, height: AppModel.automationRow)
+                .background(Theme.background.opacity(0.75))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(tint.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                .overlay(alignment: .topLeading) {
+                    Text("Clip: " + model.clipName(item.clip)).font(.system(size: 9, weight: .medium)).foregroundStyle(tint)
+                        .lineLimit(1).padding(.horizontal, 4).padding(.top, 2)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { openInClip(item.clip) }
+                .contextMenu {
+                    Button("Edit in Clip") { openInClip(item.clip) }
+                    Button("Move Clip Automation to Track") { model.moveClipAutomationToTrack(item.clip.id) }
+                }
+                .help("The clip's own automation overrides this lane here. Double-click to edit it in the clip.")
+                .offset(x: tickX(item.clip.start, model))
+            }
+        }
+    }
+
+    private func openInClip(_ clip: Clip) {
+        guard let owner = model.project.findClip(clip.id).flatMap({ model.project.track($0.track) }) else { return }
+        model.openClipAutomation(clip.id, address: model.clipAddress(address, in: clip, owner: owner))
     }
 }
 

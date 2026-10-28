@@ -1,6 +1,6 @@
 # loopstudio architecture
 
-Status: 2026-10-28. Milestones 0 and 1 are done, and the app covers most of milestones 3 to 10 (see section 16a). 233 tests pass.
+Status: 2026-10-28. Milestones 0 and 1 are done, and the app covers most of milestones 3 to 10 (see section 16a). 242 tests pass.
 Decisions made: name `loopstudio`, minimum macOS 26, distribution left open (nothing in the design blocks a later release).
 This document sets the rules for everything after it.
 Edge cases, their rules, and creative ideas are in [edge-cases-and-ideas.md](edge-cases-and-ideas.md). Its section J lists the changes it made to this plan:
@@ -263,8 +263,8 @@ Tools to add as features land: `asset_import` (hash and copy a file into the pro
 - Main actor: UI. `ProjectStore` actor: model, undo, jobs. Realtime thread: plain code, no actors, no async.
 - Data crosses to the realtime thread only as immutable plans (pointer swap) or small fixed-size messages. Every other thread holds the engine lock for a few plain writes only; the callback takes it and waits (os_unfair_lock lends its priority), so it never drops a block or stops a clock.
 - A renderer swap keeps running effects, delay lines and held notes. Only the audio thread changes a running effect (`needsConfigure`), and on the first block it takes over the held notes of the old renderer; a note whose note-off is gone gets one at once.
-- Live MIDI names a track, not a node index. Audio capture goes through a preallocated SPSC ring (`CaptureRing`) to a writer queue (`CaptureWriter`); lost frames and write errors come back in the take.
-- Slow work stays off the main thread: warps are made by a worker while the clip keeps its last warped audio (`AudioBank.live()`), and opening a project decodes all samples in parallel.
+- Live MIDI names a track, not a node index. Audio capture goes through a preallocated SPSC ring (`CaptureRing`) to a writer queue (`CaptureWriter`); lost frames and write errors come back in the take. The ring records each drop as a gap, and the writer puts silence there, so later audio keeps its time.
+- Slow work stays off the main thread: warps are made by a worker while the clip keeps its last warped audio (`AudioBank.live()`), and opening a project decodes all samples in parallel. A clip without a warp yet stays silent; raw audio would play off tempo. The warp cache keeps the most recently used warps, and an export says when a warp was not ready.
 
 ## 15. Testing strategy
 

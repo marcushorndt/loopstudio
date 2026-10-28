@@ -297,6 +297,14 @@ public struct RenderPlan {
                         fadeIn = Int64(Double(fadeIn) * scale)
                         fadeOut = Int64(Double(fadeOut) * scale)
                     }
+                    if let beats = sourceBeats(c, project: project),
+                       let starts = passStarts(c, pass: beats, from: c.start, to: c.start + c.length, project: project) {
+                        clips += passPlans(c, raw: raw, starts: starts, pass: beats, end: end, fadeIn: fadeIn, fadeOut: fadeOut,
+                                           envelope: envelope(c, from: c.start, start: start, end: end), session: false,
+                                           project: project, bank: bank, trackName: t.name, warnings: &warnings)
+                        endFrame = max(endFrame, end)
+                        continue
+                    }
                     clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: offsetFrames, loop: c.loop,
                                           gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut),
                                           envelope: envelope(c, from: c.start, start: start, end: end)))
@@ -317,6 +325,12 @@ public struct RenderPlan {
                         let scale = Double(end - start) / Double(fadeIn + fadeOut)
                         fadeIn = Int64(Double(fadeIn) * scale)
                         fadeOut = Int64(Double(fadeOut) * scale)
+                    }
+                    if let starts = passStarts(c, pass: c.length, from: e.startTick, to: e.endTick, project: project) {
+                        clips += passPlans(c, raw: raw, starts: starts, pass: c.length, end: end, fadeIn: fadeIn, fadeOut: fadeOut,
+                                           envelope: envelope(c, from: e.startTick, start: start, end: end), session: true,
+                                           project: project, bank: bank, trackName: t.name, warnings: &warnings)
+                        continue
                     }
                     // A session clip plays from its start offset and loops its own length, like the clip shows.
                     let offsetFrames = max(0, map.frame(at: e.startTick + c.offset, sampleRate: rate).rawValue - start)
@@ -375,7 +389,57 @@ public struct RenderPlan {
     }
 
     /// The clip's audio, stretched to the project tempo when warping is on. Otherwise the audio as it is.
-    private static func warpedAudio(_ c: AudioClip, raw: PCMBuffer, startTick: Tick, project: Project, bank: AudioBank,
+    /// The start of every pass of a looping warped clip whose bars do not all have one tempo.
+    /// `nil` when one rendered pass can simply repeat (no warp, no loop, a constant tempo, or too many passes).
+    /// `pass` is the musical length of one pass: the clip length for a session clip, the source for an arrangement clip.
+    static func passStarts(_ c: AudioClip, pass: Tick, from start: Tick, to end: Tick, project: Project) -> [Tick]? {
+        guard c.warpMode != .off, c.loop, pass.rawValue > 0, end > start,
+              constantTempo(project.tempoMap, from: start, to: end) == nil else { return nil }
+        let count = (end.rawValue - start.rawValue + pass.rawValue - 1) / pass.rawValue
+        guard count > 1, count <= 1_024 else { return nil }
+        return (0..<count).map { start + Tick($0 * pass.rawValue) }
+    }
+
+    /// The source of a warped clip in beats, from its tempo. `nil` without a tempo (marker warps keep one pass).
+    static func sourceBeats(_ c: AudioClip, project: Project) -> Tick? {
+        guard let asset = project.asset(c.asset), let bpm = asset.sourceTempo, bpm > 0, asset.sampleRate > 0 else { return nil }
+        return Tick.quarters(Double(asset.frames) / asset.sampleRate * bpm / 60)
+    }
+
+    /// One plan per pass, each warped at its own start, so every pass follows the tempo of its own bars.
+    private static func passPlans(_ c: AudioClip, raw: PCMBuffer, starts: [Tick], pass: Tick, end: Int64, fadeIn: Int64, fadeOut: Int64,
+                                  envelope: AutoSegment?, session: Bool, project: Project, bank: AudioBank,
+                                  trackName: String, warnings: inout [String]) -> [ClipPlan] {
+        let map = project.tempoMap, rate = project.sampleRate
+        var plans: [ClipPlan] = []
+        for (k, passStart) in starts.enumerated() {
+            let pcm = warpedAudio(c, raw: raw, startTick: passStart, span: pass, project: project, bank: bank,
+                                  trackName: trackName, warnings: &warnings)
+            let a = map.frame(at: passStart, sampleRate: rate).rawValue
+            let b = min(end, map.frame(at: passStart + pass, sampleRate: rate).rawValue)
+            guard b > a else { continue }
+            let offset = max(0, map.frame(at: passStart + c.offset, sampleRate: rate).rawValue - a)
+            // Only the ends of the whole clip fade; the passes join like the loop of one buffer.
+            plans.append(ClipPlan(pcm: pcm, start: a, end: b, sourceOffset: offset, loop: true, gain: dB(c.gainDb),
+                                  fadeIn: k == 0 ? max(0, min(fadeIn, b - a)) : 0,
+                                  fadeOut: k == starts.count - 1 ? max(0, min(fadeOut, b - a)) : 0,
+                                  envelope: envelope, session: session, loopLength: b - a))
+        }
+        return plans
+    }
+
+    /// The tempo, when it does not change inside [start, end).
+    static func constantTempo(_ map: TempoMap, from start: Tick, to end: Tick) -> Double? {
+        let points = map.points
+        guard let first = points.first else { return nil }
+        var active = first
+        for p in points where p.tick <= start { active = p }
+        if points.contains(where: { $0.tick > start && $0.tick < end }) { return nil }
+        if active.ramp, let next = points.first(where: { $0.tick > active.tick }), next.bpm != active.bpm { return nil }
+        return active.bpm
+    }
+
+    private static func warpedAudio(_ c: AudioClip, raw: PCMBuffer, startTick: Tick, span: Tick? = nil, project: Project, bank: AudioBank,
                                     trackName: String, warnings: inout [String]) -> PCMBuffer {
         guard c.warpMode != .off else { return raw }
         let asset = project.asset(c.asset)
@@ -387,7 +451,12 @@ public struct RenderPlan {
             return raw
         }
         let constant = project.tempoMap.points.count <= 1
-        let key = "\(c.asset)|\(c.warpMode)|\(asset?.sourceTempo ?? 0)|\(c.warpMarkers)|\(project.tempoMap.points)|\(constant ? 0 : startTick.rawValue)|\(rate)"
+        // A pass that lies in one tempo sounds the same wherever it starts, so such passes share one buffer.
+        let timing: String
+        if constant { timing = "0" }
+        else if let span, let bpm = constantTempo(project.tempoMap, from: startTick, to: startTick + span) { timing = "bpm \(bpm) span \(span.rawValue)" }
+        else { timing = "\(project.tempoMap.points)|\(startTick.rawValue)" }
+        let key = "\(c.asset)|\(c.warpMode)|\(asset?.sourceTempo ?? 0)|\(c.warpMarkers)|\(timing)|\(rate)"
         return bank.warped(key: key) {
             TimeStretch.stretch(raw, mode: c.warpMode, outFrames: mapping.outFrames, source: mapping.source)
         }

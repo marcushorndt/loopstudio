@@ -121,3 +121,36 @@ private func frequency(_ x: UnsafePointer<Float>, from: Int, count: Int) -> Doub
     _ = try undo.apply(to: &project)
     if case .audio(let c)? = project.findClip(clip.id)?.clip { #expect(c.warpMode == .off) }
 }
+
+@Test func eachLoopPassFollowsItsOwnTempo() throws {
+    var project = Project(name: "W", sampleRate: rate)
+    // One bar at 120 BPM (2 s), then 60 BPM.
+    project.tempoMap = TempoMap(points: [TempoPoint(tick: 0, bpm: 120), TempoPoint(tick: 3_840, bpm: 60)])
+    let bank = AudioBank()
+    let src = sine(440, seconds: 2.4) // four beats (one bar) at 100 BPM
+    let asset = Asset(sha256: "wp", name: "w", frames: Int64(src.frames), sampleRate: rate, channels: 2, sourceTempo: 100)
+    try! Command.addAsset(asset: asset).apply(to: &project)
+    bank.insert(src, for: asset.id)
+    let t = Track(name: "T", kind: .audio)
+    try! Command.insertTrack(track: t, index: 0).apply(to: &project)
+    // A one-bar loop, two bars long: the first pass at 120 BPM, the second at 60 BPM.
+    var clip = project.makeAudioClip(asset: asset.id, start: 0, length: Tick(7_680))
+    clip.loop = true; clip.warpMode = .tones
+    try! Command.insertClip(track: t.id, clip: .audio(clip)).apply(to: &project)
+
+    let plan = RenderPlan.compile(project, bank: bank)
+    let clips = plan.nodes[0].clips
+    try #require(clips.count == 2)
+    #expect(clips.map { $0.end - $0.start } == [Int64(2 * rate), Int64(4 * rate)], "a bar at 120 BPM, then a bar at 60 BPM")
+    // Each pass holds the whole loop, stretched to its own bar.
+    #expect(abs(Double(clips[1].pcm.frames) - 2 * Double(clips[0].pcm.frames)) < rate * 0.05)
+}
+
+@Test func constantTempoKeepsOneRepeatingPass() {
+    var c = AudioClip(asset: AssetID(UUID()), start: 0, length: 3_840, loop: true, fadeInMs: 0, fadeOutMs: 0)
+    c.warpMode = .beats
+    var project = Project(name: "C", sampleRate: rate)
+    project.tempoMap = TempoMap(points: [TempoPoint(tick: 0, bpm: 120), TempoPoint(tick: 38_400, bpm: 90)])
+    #expect(RenderPlan.passStarts(c, pass: 3_840, from: 0, to: 7_680, project: project) == nil, "no change inside the clip")
+    #expect(RenderPlan.passStarts(c, pass: 3_840, from: 34_560, to: 42_240, project: project)?.count == 2)
+}

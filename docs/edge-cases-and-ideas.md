@@ -74,6 +74,7 @@ Items marked **(design change)** changed `architecture.md`.
 | `maximumFramesToRender` smaller than our block | Set it to our maximum block at instantiate. If the plugin refuses, split the block. |
 | Editor window opens on the wrong thread | All editor work on the main thread. A watchdog marks a stalled editor. |
 | State restore fails | Load defaults, flag the slot, keep the blob in the project so nothing is lost. |
+| Effect render fails with -10876 (no connection) | The input bus is disabled. The host enables input and output buses before it allocates render resources (found in spike S1, has a test). |
 | Plugin allocates in its render call | We cannot fix it. The watchdog and the freeze option are the protection. |
 
 ## E. MIDI

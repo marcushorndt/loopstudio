@@ -227,7 +227,7 @@ A later "new variation each play" mode changes the seed on each play; the fixed 
 |---|---|---|
 | 0 | Single loop player | Done: 4 tests pass |
 | 1 | **Core**: time types, `TempoMap`, project model, commands, undo, JSON package with migrations, command journal, follow-action resolver | Done: 70 tests pass, including random edit sequences that undo back to the start |
-| 2 | **Renderer spike** (see section 17) | Custom graph hosting an Apple AU runs 10 min with zero allocations |
+| 2 | **Renderer spike** (see section 17) | Part 1 done: `AudioUnitEffect` hosts Apple's AUDelay through `renderBlock`; output is the same for 64 and 1024 frame blocks. Still open: 10 min soak with zero allocations, and one third-party AUv3 |
 | 3 | Renderer v1: tracks, clips, transport, loop region, offline bounce = realtime | Null test passes |
 | 4 | Mixer: sends, buses, groups, PDC, meters | Routing and latency tests pass |
 | 5 | Timeline UI: tracks, clips, waveform, drag, trim, loop brace | Usable by hand on a real loop set |
@@ -243,7 +243,7 @@ A later "new variation each play" mode changes the seed on each play; the fixed 
 
 | Risk | Spike |
 |---|---|
-| Hosting AUs by calling `renderBlock` from our own callback may behave differently for AUv3 (XPC) plugins | Milestone 2: run Apple's AUs and one third-party AUv3 for 10 min; measure glitches and latency |
+| Hosting AUs by calling `renderBlock` from our own callback may behave differently for AUv3 (XPC) plugins | Milestone 2: run Apple's AUs and one third-party AUv3 for 10 min; measure glitches and latency. **Result so far (Apple v2 AU): works.** Gotcha found: effect buses start disabled; set `isEnabled = true` on the input and output bus before `allocateRenderResources`, or every render fails with -10876 |
 | Our stretcher may sound worse than Live's Complex mode | Milestone 6 starts with a listening test against `AVAudioUnitTimePitch` on 5 reference loops |
 | Waveform drawing for long clips may be slow | Build a peak cache (min/max per N frames, several zoom levels) and draw with Metal; test on a 1 h file |
 | SwiftUI may be too slow for a dense timeline | Draw the timeline in a custom `NSView`/Metal layer, with SwiftUI for the chrome; decide after a 1000-clip test |

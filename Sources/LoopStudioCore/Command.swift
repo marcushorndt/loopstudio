@@ -158,6 +158,14 @@ extension Project {
                     restore.append(.setSends(id: tracks[i].id, sends: tracks[i].sends))
                     tracks[i].sends.removeAll { $0.target == id }
                 }
+                if tracks[i].inputTrack == id {
+                    restore.append(.setInputTrack(id: tracks[i].id, source: id))
+                    tracks[i].inputTrack = nil
+                }
+            }
+            if launches.contains(where: { $0.track == id }) {
+                restore.append(.setLaunches(launches: launches))
+                launches.removeAll { $0.track == id }
             }
             return .batch(commands: restore)
 

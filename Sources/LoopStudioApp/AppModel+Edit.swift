@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import LoopStudioCore
 
@@ -402,7 +403,17 @@ extension AppModel {
     func setTrackColor(_ id: TrackID, _ index: Int) { apply(.setTrackColor(id: id, colorIndex: index)) }
 
     func toggleMute(_ t: Track) { apply(.setMute(id: t.id, mute: !t.mute)) }
-    func toggleSolo(_ t: Track) { apply(.setSolo(id: t.id, solo: !t.solo)) }
+    /// Solo is exclusive, like Live: a click solos this track and unsolos the others. With Command held,
+    /// the click only toggles this track, so several tracks can be soloed together.
+    func toggleSolo(_ t: Track, additive: Bool = NSEvent.modifierFlags.contains(.command)) {
+        if additive || t.solo {
+            apply(.setSolo(id: t.id, solo: !t.solo))
+            return
+        }
+        var commands: [Command] = project.allTracks.filter { $0.solo && $0.id != t.id }.map { .setSolo(id: $0.id, solo: false) }
+        commands.append(.setSolo(id: t.id, solo: true))
+        apply(.batch(commands: commands))
+    }
 
     func duplicateTrack(_ id: TrackID) {
         guard var copy = project.track(id), let index = project.tracks.firstIndex(where: { $0.id == id }) else { return }

@@ -105,7 +105,8 @@ private struct ArrangementHeader: View {
                 Text(track.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 HStack(spacing: 4) {
                     if track.kind != .master {
-                        pill("S", on: track.solo, tint: Theme.track(5)) { model.apply(.setSolo(id: track.id, solo: !track.solo)) }
+                        pill("S", on: track.solo, tint: Theme.track(5)) { model.toggleSolo(track) }
+                            .hint("Solo this track only. ⌘-click adds it to the soloed tracks.")
                     }
                     pill("M", on: track.mute, tint: Theme.accent) { model.apply(.setMute(id: track.id, mute: !track.mute)) }
                     pill("A", on: !model.shownLanes(track).isEmpty, tint: Theme.track(0)) { model.toggleAutomation(track) }

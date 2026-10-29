@@ -117,8 +117,9 @@ struct MixerStrip: View {
             HStack(spacing: 4) {
                 if !isMaster {
                     toggle("S", on: track.solo, tint: Theme.track(5)) {
-                        model.apply(.setSolo(id: track.id, solo: !track.solo))
+                        model.toggleSolo(track)
                     }
+                    .hint("Solo this track only. ⌘-click adds it to the soloed tracks.")
                     toggle("M", on: track.mute, tint: Theme.accent) {
                         model.apply(.setMute(id: track.id, mute: !track.mute))
                     }

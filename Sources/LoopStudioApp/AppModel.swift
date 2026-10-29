@@ -143,7 +143,11 @@ final class AppModel {
     var recordStartTick: Tick = 0
     /// Audio input for recording. Like the output, it belongs to this Mac.
     var inputUID: String? = UserDefaults.standard.string(forKey: "inputUID") {
-        didSet { UserDefaults.standard.set(inputUID, forKey: "inputUID"); refreshDeviceLists() }
+        didSet {
+            UserDefaults.standard.set(inputUID, forKey: "inputUID"); refreshDeviceLists()
+            // Monitoring tracks move to the new device.
+            if !appliedInputs.isEmpty { updateInputMonitoring(appliedInputs, force: true) }
+        }
     }
     var inputLeft: Int = UserDefaults.standard.object(forKey: "inputLeft") as? Int ?? 0 {
         didSet { UserDefaults.standard.set(inputLeft, forKey: "inputLeft") }
@@ -212,7 +216,30 @@ final class AppModel {
     /// The tracks armed for recording (their arm buttons). They record and get the MIDI keyboard, whatever is
     /// selected. Empty: the selected track does.
     var armedTracks: Set<TrackID> = [] {
-        didSet { updateLiveTarget() }
+        didSet {
+            updateLiveTarget()
+            // Monitor Auto: an armed track plays the sound card input, so the graph changes with the arm.
+            if monitoredInputs() != appliedInputs { rebuild() }
+            if armedTracks != oldValue { dirty = true; scheduleSave() }
+        }
+    }
+    /// The tracks that monitored the sound card when the plan was last built.
+    @ObservationIgnored var appliedInputs: [TrackID: RenderPlan.MonitorInput] = [:]
+    /// Microphone access was asked for once because of monitoring; no second dialog.
+    @ObservationIgnored var inputAccessAsked = false
+
+    /// The audio tracks that play the sound card input now: Monitor In always (in place of their clips),
+    /// Monitor Auto while armed. A track that takes another track as input is not among them.
+    func monitoredInputs() -> [TrackID: RenderPlan.MonitorInput] {
+        var result: [TrackID: RenderPlan.MonitorInput] = [:]
+        for t in project.tracks where t.kind == .audio && t.inputTrack == nil {
+            switch t.monitorMode {
+            case .input: result[t.id] = RenderPlan.MonitorInput(channels: inputChannels(of: t.id), mutesClips: true)
+            case .auto where armedTracks.contains(t.id): result[t.id] = RenderPlan.MonitorInput(channels: inputChannels(of: t.id), mutesClips: false)
+            default: break
+            }
+        }
+        return result
     }
     /// Where a recording and live notes go: the armed audio and MIDI tracks in track order, else the selected one.
     var recordTargets: [TrackID] {
@@ -1542,8 +1569,10 @@ final class AppModel {
             let stops = session.launches.filter { $0.track == track && $0.slot == nil }.map(\.tick)
             if let first = (starts + stops).min() { ends[track] = frame(first) }
         }
-        let compiled = RenderPlan.compile(p, bank: bank, session: simulation, units: host.units, arrangementEnds: ends)
+        let inputs = monitoredInputs()
+        let compiled = RenderPlan.compile(p, bank: bank, session: simulation, units: host.units, arrangementEnds: ends, inputs: inputs)
         plan = compiled
+        updateInputMonitoring(inputs)
         warnings = simulation.warnings + compiled.warnings
         updateLiveTarget()
         updateMetronome()
@@ -1598,7 +1627,7 @@ final class AppModel {
         captureStates()
         do {
             try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
-            try ProjectPackage.write(project, to: packageURL)
+            try ProjectPackage.write(projectForSaving(), to: packageURL)
             dirty = false
             UserDefaults.standard.set(packageURL.path, forKey: "lastProject")
             // The edits are in the package now. A journal that keeps them would apply them twice after a crash.
@@ -1680,9 +1709,11 @@ final class AppModel {
             try fm.createDirectory(at: url, withIntermediateDirectories: true)
             let audio = packageURL.appendingPathComponent("audio", isDirectory: true)
             if fm.fileExists(atPath: audio.path) { try fm.copyItem(at: audio, to: url.appendingPathComponent("audio", isDirectory: true)) }
-            var copy = project
+            var copy = projectForSaving()
             copy.name = url.deletingPathExtension().lastPathComponent
             try ProjectPackage.write(copy, to: url)
+            copy = project
+            copy.name = url.deletingPathExtension().lastPathComponent
             saveTask?.cancel()
             // The old package stays at its last save, as Save As promises. Its journal must not bring the edits back.
             try? journal?.reset()
@@ -1767,8 +1798,18 @@ final class AppModel {
         undoStack = []; redoStack = []
         canUndo = false; canRedo = false
         selectedClip = nil; selectedTrack = nil
+        // The arms come back as they were saved.
+        armedTracks = Set(new.tracks.filter { $0.armed == true }.map(\.id))
+        saveTask?.cancel()
         dirty = false
         rebuild()
+    }
+
+    /// The project as it goes to disk: with the arm state of each track.
+    func projectForSaving() -> Project {
+        var copy = project
+        for i in copy.tracks.indices { copy.tracks[i].armed = armedTracks.contains(copy.tracks[i].id) ? true : nil }
+        return copy
     }
 
     // MARK: Preview (browser)

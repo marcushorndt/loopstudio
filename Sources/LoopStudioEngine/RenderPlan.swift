@@ -116,6 +116,8 @@ struct NodePlan {
     var arrangementEnd: Int64? = nil
     /// Nodes that take this node's sound as input, after the fader.
     var taps: [Int] = []
+    /// Sound card channels this node monitors ("Ext. In"), before its effects. `right` nil: one channel to both sides.
+    var input: (left: Int, right: Int?)? = nil
     /// Latency of the plugins on this node, in frames.
     var latency = 0
     /// Delay on the output connection and on each tap, from plugin delay compensation.
@@ -158,9 +160,19 @@ public struct RenderPlan {
         return (Float(left), Float(right))
     }
 
+    /// A track that monitors the sound card: which channels, and whether its clips stay silent meanwhile
+    /// (Live's Monitor In plays the input in place of the clips).
+    public struct MonitorInput: Hashable, Sendable {
+        public var channels: InputChannels
+        public var mutesClips: Bool
+        public init(channels: InputChannels, mutesClips: Bool) { self.channels = channels; self.mutesClips = mutesClips }
+    }
+
     /// `arrangementEnds`: per track, the session frame from which its arrangement stays silent (see `NodePlan`).
+    /// `inputs`: the tracks that monitor the sound card now (armed, or Monitor In), with their channels.
     public static func compile(_ project: Project, bank: AudioBank, session: SessionSimulation? = nil,
-                               units: [DeviceID: AudioUnitEffect] = [:], arrangementEnds: [TrackID: Int64] = [:]) -> RenderPlan {
+                               units: [DeviceID: AudioUnitEffect] = [:], arrangementEnds: [TrackID: Int64] = [:],
+                               inputs: [TrackID: MonitorInput] = [:]) -> RenderPlan {
         var warnings: [String] = []
         var outputPorts: [PortID] = []
         let tracks = project.tracks
@@ -288,8 +300,11 @@ public struct RenderPlan {
             let t = project.track(id)!
             let silent = t.mute || !audible.contains(id)
             var clips: [ClipPlan] = []
+            // Monitor In: the input takes the place of the clips (a muted track monitors nothing).
+            let input = t.kind == .audio && !silent && t.inputTrack == nil ? inputs[id] : nil
+            let clipsSilent = input?.mutesClips ?? false
 
-            if t.kind == .audio && !silent {
+            if t.kind == .audio && !silent && !clipsSilent {
                 for case .audio(let c) in t.clips where !c.muted {
                     guard let raw = bank.buffer(for: c.asset), raw.frames > 0 else {
                         warnings.append("clip on \"\(t.name)\" has no audio (missing or unreadable file)")
@@ -324,7 +339,7 @@ public struct RenderPlan {
                     endFrame = max(endFrame, end)
                 }
             }
-            if t.kind == .audio && !silent, let session {
+            if t.kind == .audio && !silent && !clipsSilent, let session {
                 for e in session.events where e.track == id {
                     guard case .audio(let c)? = project.findClip(e.clip)?.clip, !c.muted,
                           let raw = bank.buffer(for: c.asset), raw.frames > 0 else { continue }
@@ -377,6 +392,9 @@ public struct RenderPlan {
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
                 effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, instrumentAuto: instrumentAuto, midi: midi, sessionMidi: sessionMidi,
                 arrangementEnd: arrangementEnds[t.id]))
+            if let input {
+                nodes[nodes.count - 1].input = (input.channels.first, input.channels.stereo ? input.channels.first + 1 : nil)
+            }
             // A direct output: the track plays to its hardware port, not into the master.
             if let port = t.hardwareOutput {
                 if !outputPorts.contains(port) { outputPorts.append(port) }

@@ -474,8 +474,8 @@ public struct Send: Hashable, Codable, Sendable {
 }
 
 /// What a track lets through from its input (Live: Monitor In / Auto / Off).
-/// `auto` listens to the input while the track is not armed to record. Audio recording is not built yet,
-/// so for now `auto` and `input` both pass the input and `off` mutes it.
+/// Sound card input ("Ext. In"): `input` plays it always, in place of the clips; `auto` plays it while the
+/// track is armed; `off` never. Another track as input: `input` and `auto` pass its sound, `off` mutes it.
 public enum MonitorMode: String, Codable, Sendable, CaseIterable { case input, auto, off }
 
 public struct Track: Hashable, Codable, Sendable, Identifiable {
@@ -514,6 +514,8 @@ public struct Track: Hashable, Codable, Sendable, Identifiable {
     public var monitor: MonitorMode?
     /// No direct output; the track is heard only through its sends. Live: "Audio To: Sends Only".
     public var sendsOnly: Bool?
+    /// Armed to record when the project was saved, so the arms come back with it. Not an edit: no undo.
+    public var armed: Bool?
     public var monitorMode: MonitorMode { monitor ?? .auto }
     public var isSendsOnly: Bool { sendsOnly ?? false }
 

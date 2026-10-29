@@ -252,19 +252,19 @@ struct TrackIOSection: View {
             .labelsHidden().controlSize(.mini).hint("Ext. In records the sound card input. A track records that track's sound.")
             if track.inputTrack == nil { inputChannelPicker.fixedSize() }
         }
-        if track.inputTrack != nil {
-            HStack(spacing: 2) {
-                ForEach([(MonitorMode.input, "In"), (.auto, "Auto"), (.off, "Off")], id: \.1) { mode, name in
-                    Button { model.apply(.setMonitor(id: track.id, mode: mode)) } label: {
-                        Text(name).font(.system(size: 9, weight: .bold)).frame(maxWidth: .infinity, minHeight: 16)
-                            .foregroundStyle(track.monitorMode == mode ? .black : Theme.dim)
-                            .background(track.monitorMode == mode ? Theme.accent : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 3))
-                    }
-                    .buttonStyle(.plain)
+        HStack(spacing: 2) {
+            ForEach([(MonitorMode.input, "In"), (.auto, "Auto"), (.off, "Off")], id: \.1) { mode, name in
+                Button { model.apply(.setMonitor(id: track.id, mode: mode)) } label: {
+                    Text(name).font(.system(size: 9, weight: .bold)).frame(maxWidth: .infinity, minHeight: 16)
+                        .foregroundStyle(track.monitorMode == mode ? .black : Theme.dim)
+                        .background(track.monitorMode == mode ? Theme.accent : Theme.panelRaised, in: RoundedRectangle(cornerRadius: 3))
                 }
+                .buttonStyle(.plain)
             }
-            .hint("Monitor. In and Auto pass the input. Off mutes it.")
         }
+        .hint(track.inputTrack == nil
+              ? "Monitor. In: the input plays always, in place of the clips. Auto: it plays while the track is armed. Off: never."
+              : "Monitor. In and Auto pass the other track's sound. Off mutes it.")
     }
 
     /// The sound card channels of "Ext. In": one channel, or a pair. The device is chosen in the audio settings.

@@ -29,6 +29,8 @@ public final class LiveEngine: @unchecked Sendable {
     /// Resampling: the track whose sound is recorded, and the ring of the writer that records it.
     private var captureTrack: TrackID?
     private var captureRing: CaptureRing?
+    /// The sound card input, for tracks that monitor it.
+    private var inputMonitor: InputMonitor?
     /// The renderer that played last, until the audio thread takes over its held notes.
     private var handover: Renderer?
     private struct LiveMIDI { var track: TrackID; var status: UInt8; var data1: UInt8; var data2: UInt8 }
@@ -349,6 +351,12 @@ public final class LiveEngine: @unchecked Sendable {
         withExtendedLifetime(old) {}
     }
 
+    /// The input that monitoring tracks play. `nil` when no track monitors the sound card.
+    public func setInputMonitor(_ monitor: InputMonitor?) {
+        let old: InputMonitor? = locked { let old = inputMonitor; inputMonitor = monitor; return old }
+        if old !== monitor { retire(old) }
+    }
+
     public func takePeak(node: Int) -> Float {
         locked {
             guard node >= 0, node < meterCapacity else { return 0 }
@@ -379,6 +387,7 @@ public final class LiveEngine: @unchecked Sendable {
         let reset = resetPending, silence = silencePending
         resetPending = false; silencePending = false
         let capture = (captureTrack, captureRing)
+        let monitor = inputMonitor
         let liveTakenCount = liveCount
         liveTaken.update(from: live, count: liveCount)
         liveCount = 0
@@ -424,6 +433,7 @@ public final class LiveEngine: @unchecked Sendable {
         if reset { renderer.reset() } else if silence { renderer.silenceNotes() }
         renderer.captureTrack = capture.0
         renderer.captureRing = capture.1
+        renderer.inputMonitor = monitor
         for i in 0..<liveTakenCount { renderer.sendLive(track: liveTaken[i].track, liveTaken[i].status, liveTaken[i].data1, liveTaken[i].data2) }
 
         // Stopped: no clips, but instruments and effects keep running, so live notes sound and tails ring out.

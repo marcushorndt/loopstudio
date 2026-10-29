@@ -27,6 +27,8 @@ public final class Renderer {
     /// The engine sets both before every block, under its lock; it owns the ring, so this does not retain it.
     var captureTrack: TrackID?
     unowned(unsafe) var captureRing: CaptureRing?
+    /// The sound card input, for nodes with `NodePlan.input`. The engine owns it and sets it before every block.
+    unowned(unsafe) var inputMonitor: InputMonitor?
 
     private final class Slot {
         let effect: DSPEffect?
@@ -328,6 +330,10 @@ public final class Renderer {
         blockStart = startFrame; blockPlaying = transport
         buffers.update(repeating: 0, count: nodeCount * 2 * maxBlock)
         if portCount > 0 { portBuffers.update(repeating: 0, count: portCount * 2 * maxBlock) }
+        // The sound card input sounds with or without the transport, like a live instrument.
+        let monitor = inputMonitor
+        let inputReady = monitor?.beginBlock(frames: frames, outputRate: plan.sampleRate) ?? false
+        defer { monitor?.endBlock() }
 
         for i in 0..<nodeCount {
             let node = nodes[i]
@@ -341,6 +347,10 @@ public final class Renderer {
                     if clip.session { mix(clip, into: l, r, blockStart: startFrame + sessionOffset, frames: frames) }
                     else if arrangement > 0 { mix(clip, into: l, r, blockStart: startFrame, frames: arrangement) }
                 }
+            }
+            if inputReady, let monitor, let input = node.input {
+                monitor.add(channel: input.left, into: l, frames: frames)
+                monitor.add(channel: input.right ?? input.left, into: r, frames: frames)
             }
             if let instrument = node.instrument {
                 if transport {

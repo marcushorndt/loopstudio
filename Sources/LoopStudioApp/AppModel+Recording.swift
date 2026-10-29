@@ -15,6 +15,42 @@ extension AppModel {
         }
     }
 
+    // MARK: Input monitoring
+
+    /// Opens the sound card input while a track monitors it, and closes it when none does. `inputs` is what
+    /// the plan was built with. `force`: open again even if the set did not change (another input device).
+    func updateInputMonitoring(_ inputs: [TrackID: RenderPlan.MonitorInput], force: Bool = false) {
+        let changed = inputs != appliedInputs
+        appliedInputs = inputs
+        guard changed || force else { return }
+        if inputs.isEmpty {
+            engine.setInputMonitor(nil)
+            try? audioRecorder.setMonitoring(false, deviceUID: inputUID)
+            return
+        }
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            break
+        case .notDetermined where !inputAccessAsked:
+            inputAccessAsked = true
+            Task { @MainActor in
+                if await microphoneAllowed() { updateInputMonitoring(appliedInputs, force: true) }
+                else { status = "Monitoring needs microphone access. Turn it on in System Settings > Privacy & Security > Microphone." }
+            }
+            return
+        default:
+            status = "Monitoring needs microphone access. Turn it on in System Settings > Privacy & Security > Microphone."
+            return
+        }
+        do {
+            try audioRecorder.setMonitoring(true, deviceUID: inputUID, bufferFrames: bufferFrames > 0 ? bufferFrames : nil)
+            engine.setInputMonitor(audioRecorder.monitor)
+        } catch {
+            engine.setInputMonitor(nil)
+            status = "Cannot monitor the input: \(error)"
+        }
+    }
+
     /// Opens the audio input for the armed audio tracks, then starts the transport. Tracks that take another
     /// track's sound ("Audio From" a track) record it from the renderer; one such track per take.
     func startAudioRecording() async {
@@ -53,7 +89,9 @@ extension AppModel {
         recordLaneTracks = groups
         let urls = lanes.map { _ in FileManager.default.temporaryDirectory.appendingPathComponent("LoopStudio-take-\(UUID().uuidString).caf") }
         do {
-            try audioRecorder.start(deviceUID: inputUID, lanes: lanes, to: urls)
+            try audioRecorder.start(deviceUID: inputUID, lanes: lanes, to: urls, bufferFrames: bufferFrames > 0 ? bufferFrames : nil)
+            // The take opened the input: monitoring tracks hear it from now on too.
+            if !appliedInputs.isEmpty { engine.setInputMonitor(audioRecorder.monitor) }
         } catch {
             audioStartFailed("Cannot record: \(error)")
             return
@@ -135,6 +173,8 @@ extension AppModel {
         recordingAudio = false
         if let writer = resampleWriter { finishResampling(writer); return }
         let takes = audioRecorder.stopAll()
+        // The take may have closed the input (nothing monitors it): the engine must not read it any more.
+        engine.setInputMonitor(audioRecorder.monitor)
         let groups = recordLaneTracks
         recordLaneTracks = []
         recordAudioTracks = []

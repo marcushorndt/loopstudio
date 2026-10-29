@@ -44,7 +44,9 @@ sessions that are on and opens Audio MIDI Setup.
 Do this on both Macs:
 
 1. Open Audio MIDI Setup (Applications > Utilities, or the button in the app's settings).
-2. Window > Show MIDI Studio. Click the Network button (the globe) in the toolbar.
+2. Window > Show MIDI Studio (⌘2; on a German Mac: Fenster > MIDI-Studio einblenden). Click the
+   Network button (the globe, "Netzwerk") in the toolbar. That opens "MIDI Network Setup"
+   ("MIDI-Netzwerkkonfiguration").
 3. Under "My Sessions" click + to make a session. Tick its checkbox. Give it a name, "LoopStudio"
    on this Mac, "Live" on the other.
 4. Set "Who may connect to me" to "Anyone".

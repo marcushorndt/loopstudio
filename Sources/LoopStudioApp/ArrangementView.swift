@@ -5,75 +5,122 @@ private let laneHeight: CGFloat = 74
 private let headerWidth: CGFloat = 176
 private let rulerHeight: CGFloat = 28
 
+/// The arrangement: the tracks scroll; the returns and the master are pinned to the bottom, as in Live,
+/// and scroll sideways with the tracks.
 struct ArrangementView: View {
     @Environment(AppModel.self) private var model
     @State private var marquee: CGRect?
+    @State private var tracksScroll = ScrollPosition(x: 0)
+    @State private var pinnedScroll = ScrollPosition(x: 0)
+    @State private var tracksX: CGFloat = 0
+    @State private var pinnedX: CGFloat = 0
 
     var body: some View {
-        let tracks = model.orderedTracks
+        let tracks = model.arrangementTracks
+        let returns = model.returnTracks
         let bars = totalBars
         let width = CGFloat(Double(bars) * model.pixelsPerBar)
+        let pinnedHeight = model.pinnedRowsHeight
 
-        ScrollView(.vertical) {
-            HStack(alignment: .top, spacing: 0) {
-                VStack(spacing: 0) {
-                    HStack {
-                        Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(Theme.dim)
-                        Slider(value: Bindable(model).pixelsPerBar, in: 24...420).controlSize(.mini)
-                        Button { model.toggleAutomationView() } label: {
-                            Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 11))
-                                .foregroundStyle(model.anyLanesShown ? Theme.accent : Theme.dim)
-                                .frame(width: 22, height: 18)
-                                .overlay(RoundedRectangle(cornerRadius: Theme.radius)
-                                    .stroke(model.anyLanesShown ? Theme.accent.opacity(0.55) : Theme.line, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain).hint("Show or hide automation lanes on all tracks (A)")
-                    }
-                    .padding(.horizontal, 8).frame(height: rulerHeight)
-                    ForEach(tracks, id: \.id) { ArrangementHeader(track: $0) }
-                    // The master sits at the bottom, as in Live: it holds the master automation.
-                    ArrangementHeader(track: model.project.master)
-                    Button { model.addTrack() } label: { Label("Add track", systemImage: "plus").font(.caption) }
-                        .buttonStyle(.plain).foregroundStyle(Theme.dim).frame(height: 36)
-                }
-                .frame(width: headerWidth)
-
-                ScrollView(.horizontal) {
-                    ZStack(alignment: .topLeading) {
-                        VStack(spacing: 0) {
-                            Ruler(bars: bars).frame(width: width, height: rulerHeight)
-                            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                                Lane(track: track, index: index, count: tracks.count, width: width)
+        VStack(spacing: 0) {
+            ScrollView(.vertical) {
+                HStack(alignment: .top, spacing: 0) {
+                    VStack(spacing: 0) {
+                        HStack {
+                            Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(Theme.dim)
+                            Slider(value: Bindable(model).pixelsPerBar, in: 24...420).controlSize(.mini)
+                            Button { model.toggleAutomationView() } label: {
+                                Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 11))
+                                    .foregroundStyle(model.anyLanesShown ? Theme.accent : Theme.dim)
+                                    .frame(width: 22, height: 18)
+                                    .overlay(RoundedRectangle(cornerRadius: Theme.radius)
+                                        .stroke(model.anyLanesShown ? Theme.accent.opacity(0.55) : Theme.line, lineWidth: 1))
                             }
-                            Lane(track: model.project.master, index: tracks.count, count: tracks.count, width: width)
+                            .buttonStyle(.plain).hint("Show or hide automation lanes on all tracks (A)")
                         }
-                        SelectionOverlay(tracks: tracks)
-                        if let m = marquee {
-                            Rectangle().fill(Theme.accent.opacity(0.15)).overlay(Rectangle().stroke(Theme.accent, lineWidth: 1))
-                                .frame(width: m.width, height: m.height).offset(x: m.minX, y: m.minY).allowsHitTesting(false)
-                        }
-                        LoopBrace(width: width)
-                        Playhead(height: rulerHeight + model.rowsHeight)
+                        .padding(.horizontal, 8).frame(height: rulerHeight)
+                        ForEach(tracks, id: \.id) { ArrangementHeader(track: $0) }
+                        Button { model.addTrack() } label: { Label("Add track", systemImage: "plus").font(.caption) }
+                            .buttonStyle(.plain).foregroundStyle(Theme.dim).frame(height: 36)
                     }
-                    .frame(width: width, alignment: .topLeading)
-                    .gesture(DragGesture(minimumDistance: 5)
-                        .onChanged { g in
-                            guard g.startLocation.y > rulerHeight else { return }
-                            marquee = CGRect(x: min(g.startLocation.x, g.location.x), y: min(g.startLocation.y, g.location.y),
-                                             width: abs(g.location.x - g.startLocation.x), height: abs(g.location.y - g.startLocation.y))
+                    .frame(width: headerWidth)
+
+                    ScrollView(.horizontal) {
+                        ZStack(alignment: .topLeading) {
+                            VStack(spacing: 0) {
+                                Ruler(bars: bars).frame(width: width, height: rulerHeight)
+                                ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                                    Lane(track: track, index: index, count: tracks.count, width: width)
+                                }
+                            }
+                            SelectionOverlay(tracks: tracks)
+                            if let m = marquee {
+                                Rectangle().fill(Theme.accent.opacity(0.15)).overlay(Rectangle().stroke(Theme.accent, lineWidth: 1))
+                                    .frame(width: m.width, height: m.height).offset(x: m.minX, y: m.minY).allowsHitTesting(false)
+                            }
+                            LoopBrace(width: width)
+                            Playhead(height: rulerHeight + model.rowsHeight)
                         }
-                        .onEnded { g in
-                            defer { marquee = nil }
-                            guard let m = marquee, !tracks.isEmpty else { return }
-                            let first = model.rowIndex(atY: max(0, m.minY - rulerHeight))
-                            let last = model.rowIndex(atY: max(0, m.maxY - rulerHeight))
-                            guard first <= last else { return }
-                            let ids = Set(tracks[first...last].map(\.id))
-                            let a = model.snap(xTick(m.minX, model)), b = model.snap(xTick(m.maxX, model))
-                            model.selectRange(from: a, to: b > a ? b : a + Tick(Tick.perQuarter), tracks: ids)
-                        })
+                        .frame(width: width, alignment: .topLeading)
+                        .gesture(DragGesture(minimumDistance: 5)
+                            .onChanged { g in
+                                guard g.startLocation.y > rulerHeight else { return }
+                                marquee = CGRect(x: min(g.startLocation.x, g.location.x), y: min(g.startLocation.y, g.location.y),
+                                                 width: abs(g.location.x - g.startLocation.x), height: abs(g.location.y - g.startLocation.y))
+                            }
+                            .onEnded { g in
+                                defer { marquee = nil }
+                                guard let m = marquee, !tracks.isEmpty else { return }
+                                let first = model.rowIndex(atY: max(0, m.minY - rulerHeight))
+                                let last = model.rowIndex(atY: max(0, m.maxY - rulerHeight))
+                                guard first <= last else { return }
+                                let ids = Set(tracks[first...last].map(\.id))
+                                let a = model.snap(xTick(m.minX, model)), b = model.snap(xTick(m.maxX, model))
+                                model.selectRange(from: a, to: b > a ? b : a + Tick(Tick.perQuarter), tracks: ids)
+                            })
+                    }
+                    .scrollPosition($tracksScroll)
+                    .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.x }) { _, x in
+                        tracksX = x
+                        if abs(x - pinnedX) > 0.5 { pinnedScroll.scrollTo(x: x) }
+                    }
                 }
             }
+
+            // The pinned rows: returns and master. They hold automation and the session's dummy clips; no
+            // clips are dragged into them, so the marquee stays above. The playhead runs through them too.
+            Rectangle().fill(Theme.line).frame(height: 1)
+            HStack(alignment: .top, spacing: 0) {
+                VStack(spacing: 0) {
+                    ForEach(returns, id: \.id) { ArrangementHeader(track: $0) }
+                    ArrangementHeader(track: model.project.master)
+                }
+                .frame(width: headerWidth)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    ZStack(alignment: .topLeading) {
+                        VStack(spacing: 0) {
+                            ForEach(Array(returns.enumerated()), id: \.element.id) { index, track in
+                                Lane(track: track, index: tracks.count + index, count: tracks.count, width: width)
+                            }
+                            Lane(track: model.project.master, index: tracks.count + returns.count, count: tracks.count, width: width)
+                        }
+                        if let loop = model.project.loop, loop.enabled {
+                            Rectangle().fill(Theme.accent.opacity(0.07))
+                                .frame(width: max(1, tickX(loop.end, model) - tickX(loop.start, model)), height: pinnedHeight)
+                                .offset(x: tickX(loop.start, model)).allowsHitTesting(false)
+                        }
+                        Playhead(height: pinnedHeight)
+                    }
+                    .frame(width: width, alignment: .topLeading)
+                }
+                .scrollPosition($pinnedScroll)
+                .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.x }) { _, x in
+                    pinnedX = x
+                    if abs(x - tracksX) > 0.5 { tracksScroll.scrollTo(x: x) }
+                }
+            }
+            .frame(height: pinnedHeight)
+            .background(Theme.panel)
         }
         .background(Theme.background)
     }

@@ -386,6 +386,33 @@ private func raw(_ plan: RenderPlan, frames: Int, block: Int = 4096) -> [Float] 
     }
 }
 
+/// Stems: each track after its fader, the return with what was sent to it, the master. Aligned to the
+/// timeline even with plugin delay compensation, so the track stems and the return stem sum to the mix.
+@Test func stemsSumToTheMasterMixAndStayAligned() {
+    var rig = Rig()
+    let a = rig.asset(seconds: 2) { Float(sin(Double($0) * 0.05)) * 0.4 }
+    let b = rig.asset(seconds: 2) { _ in 0.2 }
+    let slow = rig.track("Slow"), fast = rig.track("Fast"), ret = rig.track("Ret", .returnTrack)
+    rig.clip(a, on: slow); rig.clip(b, on: fast)
+    try! Command.setSends(id: fast, sends: [Send(target: ret, levelDb: -6)]).apply(to: &rig.project)
+    var plan = rig.plan
+    plan.nodes[0].latency = 300
+    plan.applyDelayCompensation()
+    let frames: Int64 = 20_000
+    let mix = Bounce.render(plan, startFrame: 0, endFrame: frames)
+    let stems = Bounce.renderStems(plan, tracks: [slow, fast, ret, nil], startFrame: 0, endFrame: frames)
+    #expect(stems.allSatisfy { $0.frames == Int(frames) })
+    #expect(zip(stems[3].left, mix.left).allSatisfy { abs($0 - $1) < 1e-6 }, "the master stem is the mix")
+    // Fast is constant 0.2 from frame 0; the stem starts there too, not 300 frames late.
+    #expect(abs(stems[1].left[0] - 0.2) < 1e-6 && abs(stems[1].left[10_000] - 0.2) < 1e-6)
+    #expect(abs(stems[2].left[5_000] - 0.2 * 0.501_187) < 1e-4, "the return holds the -6 dB send of Fast")
+    var worst: Float = 0
+    for i in 0..<Int(frames) { worst = max(worst, abs(stems[0].left[i] + stems[1].left[i] + stems[2].left[i] - mix.left[i])) }
+    #expect(worst < 1e-5, "track stems plus the return stem equal the mix (worst \(worst))")
+    let unknown = Bounce.renderStems(plan, tracks: [TrackID()], startFrame: 0, endFrame: 1_000)
+    #expect(unknown[0].left.allSatisfy { $0 == 0 }, "an unknown track gives silence")
+}
+
 @Test func noLatencyMeansNoDelayLines() {
     var rig = Rig()
     let a = rig.asset(seconds: 1) { _ in 0.5 }

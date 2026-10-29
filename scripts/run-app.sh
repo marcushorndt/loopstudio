@@ -6,8 +6,10 @@ swift build -c debug --product LoopStudioApp
 bin="$(swift build -c debug --show-bin-path)/LoopStudioApp"
 app=".build/LoopStudio.app"
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/LoopStudioApp"
+# The icon: scripts/make-icon.swift draws it into Resources/AppIcon.icns.
+[ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -15,6 +17,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>CFBundleName</key><string>LoopStudio</string>
 <key>CFBundleExecutable</key><string>LoopStudioApp</string>
 <key>CFBundleIdentifier</key><string>app.loopstudio.dev</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
+<key>CFBundleShortVersionString</key><string>0.1</string>
+<key>CFBundleVersion</key><string>1</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>NSHighResolutionCapable</key><true/>

@@ -1,3 +1,4 @@
+import Accelerate
 import AppKit
 import AVFoundation
 import Foundation
@@ -74,7 +75,9 @@ final class AppModel {
     // Project
     private(set) var project: Project
     private(set) var packageURL: URL
-    private(set) var exporting = false
+    var exporting = false
+    var exportSheetOpen = false
+    var exportOptions = ExportOptions()
     private(set) var waveforms: [AssetID: [Float]] = [:]
     /// The live Session: launches, what plays from them, what the next Play starts. Rules and tests live in Core.
     private(set) var session = SessionPerformance()
@@ -329,7 +332,7 @@ final class AppModel {
 
     // Engine
     @ObservationIgnored let engine: LiveEngine
-    @ObservationIgnored private var bank = AudioBank.live()
+    @ObservationIgnored private(set) var bank = AudioBank.live()
     @ObservationIgnored private var warpTask: Task<Void, Never>?
     /// Every edit since the last save, in the package. After a crash, opening the project replays it.
     /// No fsync per edit, so a fader drag never waits for the disk; an app crash still keeps the file.
@@ -839,13 +842,21 @@ final class AppModel {
         project.tracks.filter { $0.kind != .returnTrack } + project.tracks.filter { $0.kind == .returnTrack }
     }
 
-    func rowTop(_ index: Int) -> CGFloat { orderedTracks.prefix(index).reduce(0) { $0 + rowHeight($1) } }
-    var rowsHeight: CGFloat { max(Self.clipRow, orderedTracks.reduce(0) { $0 + rowHeight($1) }) + rowHeight(project.master) }
+    /// The rows that scroll in the arrangement: every track but the returns.
+    var arrangementTracks: [Track] { project.tracks.filter { $0.kind != .returnTrack } }
+    /// The rows pinned to the bottom of the arrangement, like Live: the returns, then the master.
+    var returnTracks: [Track] { project.tracks.filter { $0.kind == .returnTrack } }
 
-    /// The track row at a height measured from the top of the first row.
+    func rowTop(_ index: Int) -> CGFloat { arrangementTracks.prefix(index).reduce(0) { $0 + rowHeight($1) } }
+    /// Height of the scrolling rows.
+    var rowsHeight: CGFloat { max(Self.clipRow, arrangementTracks.reduce(0) { $0 + rowHeight($1) }) }
+    /// Height of the pinned rows: the returns and the master.
+    var pinnedRowsHeight: CGFloat { returnTracks.reduce(0) { $0 + rowHeight($1) } + rowHeight(project.master) }
+
+    /// The scrolling track row at a height measured from the top of the first row.
     func rowIndex(atY y: CGFloat) -> Int {
         var top: CGFloat = 0
-        let tracks = orderedTracks
+        let tracks = arrangementTracks
         for (i, t) in tracks.enumerated() {
             top += rowHeight(t)
             if y < top { return i }
@@ -1695,14 +1706,18 @@ final class AppModel {
         }
     }
 
+    /// The overview waveform: the peak of both channels per bin. vDSP, so a one-hour file takes well
+    /// under a second (the plain loop took two).
     nonisolated private static func peaks(of pcm: PCMBuffer, bins: Int) -> [Float] {
         let n = max(1, pcm.frames / bins)
         let l = pcm.channel(0), r = pcm.channel(1)
         return (0..<bins).map { b in
-            var peak: Float = 0
-            let from = b * n, to = min(pcm.frames, from + n)
-            if from < to { for i in from..<to { peak = max(peak, abs(l[i]), abs(r[i])) } }
-            return peak
+            let from = b * n, count = min(pcm.frames, from + n) - from
+            guard count > 0 else { return 0 }
+            var pl: Float = 0, pr: Float = 0
+            vDSP_maxmgv(l + from, 1, &pl, vDSP_Length(count))
+            vDSP_maxmgv(r + from, 1, &pr, vDSP_Length(count))
+            return max(pl, pr)
         }
     }
 
@@ -1983,55 +1998,13 @@ final class AppModel {
         }
     }
 
-    /// Renders the arrangement and the saved Session launches, with hosted plugins, to a 24-bit WAV file.
-    /// The render runs off the main thread.
+    /// Export Audio (⇧⌘R): opens the export sheet. The render itself is in `AppModel+Export.swift`.
     func exportAudio() {
         guard !exporting else { status = "An export is running"; return }
-        let panel = NSSavePanel()
-        panel.title = "Export Audio"
-        panel.nameFieldStringValue = "\(project.name).wav"
-        panel.allowedContentTypes = [.wav]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        captureStates()
-        exporting = true
-        status = "Exporting \(url.lastPathComponent)…"
-        // Like Live, an export renders the arrangement. An empty arrangement renders what was played in the
-        // Session instead, so a jam does not export as silence. Capture puts a jam into the arrangement.
-        var snapshot = project
-        let arrangementEmpty = !project.tracks.contains { !$0.clips.isEmpty }
-        let jam = arrangementEmpty && !session.isEmpty
-        if jam { snapshot.launches = session.launches }
-        let skipped = !arrangementEmpty && !session.isEmpty
-        let bank = bank
-        Task { [weak self] in
-            // Own plugin instances: the live ones belong to the audio thread.
-            let prepared = await OfflineRender.prepare(snapshot, bank: bank)
-            guard prepared.endFrame > 0 else {
-                self?.exporting = false
-                self?.status = "Nothing to export: the arrangement and the Session launches are empty"
-                return
-            }
-            let note = prepared.warnings.isEmpty ? "" : " (\(prepared.warnings.count) warning\(prepared.warnings.count == 1 ? "" : "s"): \(prepared.warnings[0]))"
-            nonisolated(unsafe) let job = prepared
-            let end = prepared.endFrame + Int64(2 * snapshot.sampleRate)
-            let result: Result<Double, Error> = await Task.detached(priority: .userInitiated) {
-                Result {
-                    let audio = withExtendedLifetime(job.host) { Bounce.render(job.plan, endFrame: end) }
-                    try Bounce.writeWAV(audio, to: url)
-                    return Double(audio.frames) / audio.sampleRate
-                }
-            }.value
-            guard let self else { return }
-            self.exporting = false
-            switch result {
-            case .success(let seconds):
-                self.status = "Exported \(url.lastPathComponent), \(Int(seconds.rounded())) s\(note)"
-                if jam { self.status += ". It holds the Session performance, because the arrangement is empty" }
-                if skipped { self.status += ". The Session performance is not in it: Capture (⇧⌘C) puts it into the arrangement" }
-            case .failure(let error): self.status = "Export failed: \(error.localizedDescription)"
-            }
-        }
+        exportSheetOpen = true
     }
+
+    func captureStatesForExport() { captureStates() }
 
     private func reset(to new: Project, at url: URL) {
         saveTask?.cancel()

@@ -51,6 +51,7 @@ struct RootView: View {
         }
         .navigationTitle("")
         .sheet(isPresented: Bindable(model).shortcutsOpen) { ShortcutsSheet().environment(model) }
+        .sheet(isPresented: Bindable(model).exportSheetOpen) { ExportSheet().environment(model) }
         .onAppear { keys.install(model: model) }
         .sheet(isPresented: Binding(get: { model.renameRequest != nil || model.clipRenameRequest != nil },
                                     set: { if !$0 { model.renameRequest = nil; model.clipRenameRequest = nil } })) {

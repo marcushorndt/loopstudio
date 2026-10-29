@@ -36,6 +36,9 @@ public final class Renderer {
     /// Tracks whose sound after the fader is recorded (resampling), each with the ring it goes to.
     /// The engine sets it before every block, under its lock; it owns the set, so this does not retain it.
     unowned(unsafe) var captures: CaptureSet?
+    /// Offline only: gets every node's output after its fader (the master: the mix), per block.
+    /// `Bounce.renderStems` sets it. Never set on the live renderer: it runs on the audio thread.
+    var stemSink: ((Int, UnsafePointer<Float>, UnsafePointer<Float>, Int) -> Void)?
     /// The sound card input, for nodes with `NodePlan.input`. The engine owns it and sets it before every block.
     unowned(unsafe) var inputMonitor: InputMonitor?
     /// Notes for hardware destinations go here. The engine owns it and sets it before every callback.
@@ -470,6 +473,7 @@ public final class Renderer {
             }
             peaks[2 * i] = max(peaks[2 * i], peak.0)
             peaks[2 * i + 1] = max(peaks[2 * i + 1], peak.1)
+            if let stemSink { stemSink(i, node.isMaster ? outLeft : l, node.isMaster ? outRight : r, frames) }
             if transport, let captures, i < plan.trackOrder.count {
                 // The master is `nil` in the track order, and in a set that records it.
                 let track = plan.trackOrder[i]
@@ -710,6 +714,54 @@ public enum Bounce {
         }
         if latency > 0 { left.removeFirst(latency); right.removeFirst(latency) }
         return RenderedAudio(left: left, right: right, sampleRate: plan.sampleRate)
+    }
+
+    /// Renders stems: the output of each listed track after its fader (its clips, effects and automation,
+    /// no sends into it) and, for `nil`, the master mix. One pass; every stem is aligned to the timeline,
+    /// so the stems sum to the master mix when the returns are among them. A track the plan does not
+    /// hold (unknown id) gives silence.
+    public static func renderStems(_ plan: RenderPlan, tracks: [TrackID?], startFrame: Int64 = 0, endFrame: Int64? = nil,
+                                   tailSeconds: Double = 0, block: Int = 4096) -> [RenderedAudio] {
+        let end = endFrame ?? (plan.endFrame + Int64((tailSeconds * plan.sampleRate).rounded()))
+        let total = Int(max(0, end - startFrame))
+        let latency = max(0, plan.latencyFrames)
+        // The node of each stem, and how far its output travels through delay lines to the master.
+        let nodeIndex: [Int?] = tracks.map { track in
+            track == nil ? plan.nodes.firstIndex { $0.isMaster } : plan.trackOrder.firstIndex { $0 == track }
+        }
+        func delayToMaster(_ i: Int) -> Int {
+            var d = 0, node = i, hops = 0
+            while let next = plan.nodes[node].output, hops < plan.nodes.count { d += plan.nodes[node].outputDelay; node = next; hops += 1 }
+            return d
+        }
+        var stems = tracks.map { _ in (left: [Float](repeating: 0, count: total + latency), right: [Float](repeating: 0, count: total + latency)) }
+        var slot: [Int: [Int]] = [:]
+        for (k, i) in nodeIndex.enumerated() { if let i { slot[i, default: []].append(k) } }
+        let renderer = Renderer(plan: plan, maxBlock: block)
+        var done = 0
+        renderer.stemSink = { i, l, r, n in
+            guard let ks = slot[i] else { return }
+            for k in ks {
+                stems[k].left.withUnsafeMutableBufferPointer { $0.baseAddress!.advanced(by: done).update(from: l, count: n) }
+                stems[k].right.withUnsafeMutableBufferPointer { $0.baseAddress!.advanced(by: done).update(from: r, count: n) }
+            }
+        }
+        let scratchL = UnsafeMutablePointer<Float>.allocate(capacity: block), scratchR = UnsafeMutablePointer<Float>.allocate(capacity: block)
+        defer { scratchL.deallocate(); scratchR.deallocate() }
+        while done < total + latency {
+            let n = min(block, total + latency - done)
+            renderer.process(startFrame: startFrame + Int64(done), frames: n, outLeft: scratchL, outRight: scratchR)
+            done += n
+        }
+        renderer.stemSink = nil
+        return stems.indices.map { k in
+            // The master is `latency` late; a node's output is late by what it still has to travel.
+            let drop = nodeIndex[k].map { latency - delayToMaster($0) } ?? latency
+            var l = stems[k].left, r = stems[k].right
+            if drop > 0 { l.removeFirst(min(drop, l.count)); r.removeFirst(min(drop, r.count)) }
+            if l.count > total { l.removeLast(l.count - total); r.removeLast(r.count - total) }
+            return RenderedAudio(left: l, right: r, sampleRate: plan.sampleRate)
+        }
     }
 
     /// Writes a 24-bit WAV file.

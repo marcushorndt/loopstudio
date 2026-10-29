@@ -21,7 +21,10 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>NSMicrophoneUsageDescription</key><string>LoopStudio records audio from your sound card input.</string>
 </dict></plist>
 PLIST
-codesign --force --sign - "$app" >/dev/null 2>&1 || true
+# A development certificate gives every build the same identity, so macOS keeps the microphone permission.
+# Without one, the ad-hoc signature changes with each build and the permission is asked for again.
+identity="$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"')"
+codesign --force --sign "${identity:--}" "$app" >/dev/null 2>&1 || codesign --force --sign - "$app" >/dev/null 2>&1 || true
 # A running copy would only be brought to the front, with the old code. Quit it first.
 pkill -x LoopStudioApp 2>/dev/null && sleep 1
 open "$app"

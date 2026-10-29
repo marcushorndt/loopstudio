@@ -353,6 +353,15 @@ public enum Clip: Hashable, Sendable, Identifiable {
         return clip
     }
 
+    /// The same clip under a new ID.
+    public func withNewID() -> Clip {
+        switch self {
+        case .audio(var c): c.id = ClipID(); return .audio(c)
+        case .midi(var c): c.id = ClipID(); return .midi(c)
+        case .dummy(var c): c.id = ClipID(); return .dummy(c)
+        }
+    }
+
     public func with(start: Tick, length: Tick) -> Clip {
         switch self {
         case .audio(var c): c.start = start; c.length = length; return .audio(c)
@@ -684,5 +693,31 @@ public struct Project: Hashable, Codable, Sendable {
         if master.id == id { return try body(&master) }
         guard let i = tracks.firstIndex(where: { $0.id == id }) else { throw CommandError.trackNotFound(id) }
         return try body(&tracks[i])
+    }
+}
+
+extension Project {
+    /// Commands that make room on a track's arrangement from `start` to `end`, like a recording in Live:
+    /// clips inside go, clips that overlap an edge are cut there, a clip around the range is split in two.
+    public func clearing(track id: TrackID, from start: Tick, to end: Tick, except keep: ClipID? = nil) -> [Command] {
+        guard let track = track(id), end > start else { return [] }
+        var commands: [Command] = []
+        for clip in track.clips where clip.id != keep {
+            let s = clip.start, e = clip.start + clip.length
+            guard s < end && e > start else { continue }
+            if s >= start && e <= end {
+                commands.append(.removeClip(clip: clip.id))
+            } else if s < start && e > end {
+                commands.append(.setClipRange(clip: clip.id, start: s, length: start - s))
+                if let right = clip.trimmingStart(to: end)?.withNewID() { commands.append(.insertClip(track: id, clip: right)) }
+            } else if s < start {
+                commands.append(.setClipRange(clip: clip.id, start: s, length: start - s))
+            } else if let right = clip.trimmingStart(to: end) {
+                commands.append(.setClip(clip: right))
+            } else {
+                commands.append(.removeClip(clip: clip.id))
+            }
+        }
+        return commands
     }
 }

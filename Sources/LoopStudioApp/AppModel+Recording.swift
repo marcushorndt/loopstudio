@@ -160,7 +160,9 @@ extension AppModel {
     func placeTake(_ take: Clip, on id: TrackID) {
         defer { recordSlot = nil }
         guard let row = recordSlot else {
-            apply(.insertClip(track: id, clip: take))
+            // The take replaces what was under it, like Live: clips there are cut or removed, in one undo step.
+            apply(.batch(commands: project.clearing(track: id, from: take.start, to: take.start + take.length)
+                         + [.insertClip(track: id, clip: take)]))
             selectedClips = [take.id]
             return
         }

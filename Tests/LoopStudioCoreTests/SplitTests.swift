@@ -62,3 +62,20 @@ private let lane = ParameterAddress(node: ParameterAddress.ownTrack, parameter: 
     guard case .audio(let a)? = Clip.audio(audio).trimmingStart(to: 2400) else { Issue.record("no audio"); return }
     #expect(a.offset == 480 && a.length == 1440)
 }
+
+@Test func clearingARangeCutsRemovesAndSplitsClips() throws {
+    var p = Project(name: "T")
+    let t = Track(name: "M", kind: .midi)
+    try Command.insertTrack(track: t, index: 0).apply(to: &p)
+    let before = MIDIClip(start: 0, length: 1920)            // ends inside the range: cut at its start
+    let inside = MIDIClip(start: 2400, length: 480)          // inside: removed
+    let after = MIDIClip(start: 3600, length: 1920)          // starts inside: trimmed to the range end
+    let around = MIDIClip(start: 7680, length: 3840)         // a second range falls inside it: split
+    for c in [before, inside, after, around] { try Command.insertClip(track: t.id, clip: .midi(c)).apply(to: &p) }
+
+    try Command.batch(commands: p.clearing(track: t.id, from: 960, to: 3840)).apply(to: &p)
+    try Command.batch(commands: p.clearing(track: t.id, from: 8640, to: 9600)).apply(to: &p)
+    let clips = p.track(t.id)!.clips.map { ($0.start.rawValue, $0.length.rawValue) }
+    #expect(clips.map(\.0) == [0, 3840, 7680, 9600])
+    #expect(clips.map(\.1) == [960, 1680, 960, 1920])
+}

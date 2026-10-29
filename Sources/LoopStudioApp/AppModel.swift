@@ -17,17 +17,26 @@ struct RangeSelection: Equatable {
 
 /// Notes from MIDI devices that sound now, by channel and pitch, with their track. Used on the CoreMIDI thread only.
 final class HeldNotes: @unchecked Sendable {
-    var tracks: [UInt16: TrackID] = [:]
+    var tracks: [UInt16: [TrackID]] = [:]
 }
 
 /// The track that live MIDI goes to. Written on the main thread, read on a CoreMIDI thread, always as one value.
 final class LiveTarget: Sendable {
-    struct State: Sendable {
-        var track: TrackID?
-        /// The MIDI input of the selected track. `enabled` false means "No Input".
+    /// One track that takes live notes, with its MIDI input. `enabled` false means "No Input".
+    struct Listener: Sendable {
+        var track: TrackID
         var enabled = true
         var source: Int32?
         var channel: UInt8?
+
+        func accepts(source src: Int32, status: UInt8) -> Bool {
+            enabled && (source == nil || source == src) && (channel == nil || channel == status & 0x0F)
+        }
+    }
+    struct State: Sendable {
+        /// Every armed MIDI track, or the selected one when none is armed.
+        var listeners: [Listener] = []
+        var tracks: [TrackID] { listeners.map(\.track) }
     }
     private let state = OSAllocatedUnfairLock(initialState: State())
     var current: State { state.withLock { $0 } }
@@ -170,14 +179,16 @@ final class AppModel {
     /// Plugin latency of the track that a resampling take records, in frames.
     @ObservationIgnored var resampleLatency = 0
     var recordingAudio = false
-    var recordTrackID: TrackID?
+    /// The tracks a running take goes to, by kind. MIDI and audio tracks record at the same time.
+    @ObservationIgnored var recordMIDITracks: [TrackID] = []
+    @ObservationIgnored var recordAudioTracks: [TrackID] = []
     /// Timeline frame minus session frame when a MIDI take began. Turns its session-clock stamps into timeline frames.
     @ObservationIgnored var recordFrameOffset: Int64 = 0
     /// The recording started while the transport already played (R during playback): no count-in,
     /// and the take lines up with the moment R was pressed.
     @ObservationIgnored var recordPunch = false
-    /// Session recording: the empty slot the take goes into. `nil` records into the arrangement.
-    @ObservationIgnored var recordSlot: Int?
+    /// Session recording: per track, the empty slot the take goes into. A track not listed records into the arrangement.
+    @ObservationIgnored var recordSlots: [TrackID: Int] = [:]
     /// Sound card choice. It belongs to this Mac, not to a project. `nil` means the system default.
     var outputUID: String? = UserDefaults.standard.string(forKey: "outputUID") {
         didSet { UserDefaults.standard.set(outputUID, forKey: "outputUID") }
@@ -209,18 +220,29 @@ final class AppModel {
     var selectedTrack: TrackID? {
         didSet { updateLiveTarget() }
     }
-    /// The track armed for recording (its arm button). It records and gets the MIDI keyboard, whatever is
-    /// selected. `nil`: the selected track does.
-    var armedTrack: TrackID? {
+    /// The tracks armed for recording (their arm buttons). They record and get the MIDI keyboard, whatever is
+    /// selected. Empty: the selected track does.
+    var armedTracks: Set<TrackID> = [] {
         didSet { updateLiveTarget() }
     }
-    /// Where a recording and live notes go: the armed track, else the selected one.
-    var recordTarget: TrackID? { armedTrack.flatMap { project.track($0) != nil ? $0 : nil } ?? selectedTrack }
+    /// Where a recording and live notes go: the armed audio and MIDI tracks in track order, else the selected one.
+    var recordTargets: [TrackID] {
+        let armed = project.tracks.filter { armedTracks.contains($0.id) && ($0.kind == .audio || $0.kind == .midi) }.map(\.id)
+        if !armed.isEmpty { return armed }
+        guard let id = selectedTrack, let t = project.track(id), t.kind == .audio || t.kind == .midi else { return [] }
+        return [id]
+    }
 
-    /// Arms a track, like Live's arm button. A second click disarms it. One track is armed at a time.
-    func toggleArm(_ id: TrackID) {
-        armedTrack = armedTrack == id ? nil : id
-        if let id = armedTrack, let name = project.track(id)?.name { status = "\(name) is armed: it records and plays the MIDI keyboard" }
+    /// Arm is exclusive, like solo: a click arms this track only. Command-click adds it to the armed tracks
+    /// (or takes it out), so several tracks record together. A click on an armed track disarms it.
+    func toggleArm(_ id: TrackID, additive: Bool = NSEvent.modifierFlags.contains(.command)) {
+        if additive || armedTracks.contains(id) {
+            if armedTracks.contains(id) { armedTracks.remove(id) } else { armedTracks.insert(id) }
+        } else {
+            armedTracks = [id]
+        }
+        let names = project.tracks.filter { armedTracks.contains($0.id) }.map(\.name)
+        status = names.isEmpty ? "" : "Armed: \(names.joined(separator: ", ")). They record and play the MIDI keyboard."
     }
     /// Bumped when a plugin finished loading, so the device cards refresh.
     private(set) var pluginRevision = 0
@@ -279,7 +301,7 @@ final class AppModel {
     @ObservationIgnored private var lastDefaultOutput = AudioDeviceCatalog.defaultOutputUID()
     @ObservationIgnored private let liveTarget = LiveTarget()
     /// Keyboard and piano-roll notes that sound now, with the render node that got them.
-    @ObservationIgnored private var heldKeys: [UInt8: TrackID] = [:]
+    @ObservationIgnored private var heldKeys: [UInt8: [TrackID]] = [:]
 
     static let projectsFolder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("LoopStudio Projects", isDirectory: true)
@@ -402,53 +424,75 @@ final class AppModel {
     }
 
     private func recordTargetOK() -> Bool {
-        guard let id = recordTarget, let t = project.track(id) else { status = "Select or arm an audio or MIDI track to record"; return false }
-        guard t.kind == .midi || t.kind == .audio else { status = "Select an audio or MIDI track to record"; return false }
+        guard !recordTargets.isEmpty else { status = "Select or arm an audio or MIDI track to record"; return false }
         return true
     }
 
     private func startRecording() {
         guard recordTargetOK() else { recordArmed = false; play(); return }
+        let targets = recordTargets
         recordPunch = transportPlaying
-        if let id = recordTarget, project.track(id)?.kind == .audio {
+        recordStartTick = currentTick
+        // The take belongs to these tracks, even if the selection changes while it records.
+        recordMIDITracks = targets.filter { project.track($0)?.kind == .midi }
+        recordAudioTracks = targets.filter { project.track($0)?.kind == .audio }
+        recordSlots = Dictionary(uniqueKeysWithValues: targets.compactMap { id in sessionRecordSlot(id).map { (id, $0) } })
+        if !recordMIDITracks.isEmpty {
+            // Notes are stamped on the session clock, which does not jump back at the loop end.
+            recordFrameOffset = engine.positionFrame - engine.sessionFrame
+            recorder.begin()
+        }
+        recording = true
+        if !recordAudioTracks.isEmpty {
+            // The audio side starts the transport once the input is open.
             Task { @MainActor in await startAudioRecording() }
             return
         }
-        recordStartTick = currentTick
-        // The take belongs to this track, even if the selection changes while it records.
-        recordTrackID = recordTarget
-        recordSlot = recordTarget.flatMap(sessionRecordSlot)
-        // Notes are stamped on the session clock, which does not jump back at the loop end.
-        recordFrameOffset = engine.positionFrame - engine.sessionFrame
-        recorder.begin()
-        recording = true
         updateMetronome()
         if !recordPunch { engine.playAfterCountIn(beats: countInBars * meter.beats) }
         transportPlaying = true
-        status = recordSlot.map { "Recording into slot \($0 + 1)" } ?? "Recording"
+        status = recordStatus("Recording")
     }
 
-    /// Turns what was played into a MIDI clip on the selected track.
+    /// "Recording", with the tracks when there are several, or the slot of a single Session take.
+    func recordStatus(_ text: String) -> String {
+        let all = recordMIDITracks + recordAudioTracks
+        if all.count > 1 { return "\(text) on \(all.count) tracks" }
+        return all.first.flatMap { recordSlots[$0] }.map { "\(text) into slot \($0 + 1)" } ?? text
+    }
+
+    /// Turns what was played into MIDI clips on the armed MIDI tracks, and the audio take into audio clips.
     func finishRecording() {
         guard recording else { return }
         recording = false
         recordArmed = false
-        if recordingAudio { finishAudioRecording(); return }
-        let events = recorder.end()
-        guard let id = recordTrackID, project.track(id)?.kind == .midi else { recordTrackID = nil; status = "Nothing recorded"; return }
-        recordTrackID = nil
-        let offset = recordFrameOffset
-        let endFrame = engine.sessionFrame
-        let sr = sampleRate, map = project.tempoMap, start = recordStartTick.rawValue
-        let notes = MIDIRecorder.notes(from: events, endFrame: endFrame) { frame in
-            max(0, map.tick(atFrame: Frame(frame + offset), sampleRate: sr).rawValue - start)
+        var midiText: String?
+        let midiTracks = recordMIDITracks
+        recordMIDITracks = []
+        if !midiTracks.isEmpty {
+            let events = recorder.end()
+            let offset = recordFrameOffset
+            let endFrame = engine.sessionFrame
+            let sr = sampleRate, map = project.tempoMap, start = recordStartTick.rawValue
+            let notes = MIDIRecorder.notes(from: events, endFrame: endFrame) { frame in
+                max(0, map.tick(atFrame: Frame(frame + offset), sampleRate: sr).rawValue - start)
+            }
+            if !notes.isEmpty {
+                let elapsed = max(1, project.tempoMap.tick(atFrame: Frame(endFrame + offset), sampleRate: sr).rawValue - start)
+                let bars = max(1, (elapsed + barTicks - 1) / barTicks)
+                for id in midiTracks where project.track(id)?.kind == .midi {
+                    placeTake(.midi(MIDIClip(start: recordStartTick, length: Tick(bars * barTicks), loop: false, notes: notes)), on: id)
+                }
+                midiText = "Recorded \(notes.count) note\(notes.count == 1 ? "" : "s")"
+            }
         }
-        guard !notes.isEmpty else { status = "Nothing recorded"; return }
-        let elapsed = max(1, project.tempoMap.tick(atFrame: Frame(endFrame + offset), sampleRate: sr).rawValue - start)
-        let bars = max(1, (elapsed + barTicks - 1) / barTicks)
-        let clip = MIDIClip(start: recordStartTick, length: Tick(bars * barTicks), loop: false, notes: notes)
-        placeTake(.midi(clip), on: id)
-        status = "Recorded \(notes.count) note\(notes.count == 1 ? "" : "s")"
+        if recordingAudio {
+            finishAudioRecording()
+            if let midiText { status = midiText + ". " + status }
+        } else {
+            status = midiText ?? "Nothing recorded"
+        }
+        recordSlots = [:]
     }
 
     func toggleMetronome() { metronomeOn.toggle(); updateMetronome() }
@@ -928,6 +972,7 @@ final class AppModel {
             return
         }
         if trackFocused { deleteFocusedTracks(); return }
+        if let scene = selectedScene { deleteScene(scene); return }
         var commands: [Command] = []
         for id in selectedClips.isEmpty ? Set(selectedClip.map { [$0] } ?? []) : selectedClips {
             guard let (track, clip) = project.findClip(id) else { continue }
@@ -1096,43 +1141,45 @@ final class AppModel {
             // A release goes where its note went, even after the selection changed.
             let kind = status & 0xF0, key = UInt16(status & 0x0F) << 8 | UInt16(a)
             if kind == 0x80 || (kind == 0x90 && b == 0), let noted = held.tracks.removeValue(forKey: key) {
-                engine.sendLiveMIDI(track: noted, status, a, b)
+                for track in noted { engine.sendLiveMIDI(track: track, status, a, b) }
                 if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: time), status, a, b) }
                 return
             }
-            guard t.enabled, t.source == nil || t.source == src,
-                  t.channel == nil || t.channel == status & 0x0F else { return }
-            if let track = t.track {
-                if kind == 0x90 && b > 0 { held.tracks[key] = track }
-                engine.sendLiveMIDI(track: track, status, a, b)
-                if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: time), status, a, b) }
-            }
+            // Every listening track whose input matches plays the note; the take records it once.
+            let tracks = t.listeners.filter { $0.accepts(source: src, status: status) }.map(\.track)
+            guard !tracks.isEmpty else { return }
+            if kind == 0x90 && b > 0 { held.tracks[key] = tracks }
+            for track in tracks { engine.sendLiveMIDI(track: track, status, a, b) }
+            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: time), status, a, b) }
         }
         midiMonitor = monitor
         midiSources = monitor.sourceCount
     }
 
-    /// Points live notes (keyboard, MIDI devices, piano roll clicks) at the selected MIDI track.
+    /// Points live notes (keyboard, MIDI devices, piano roll clicks) at the armed MIDI tracks, else the selected one.
     private func updateLiveTarget() {
-        guard let id = recordTarget, let track = project.track(id), track.kind == .midi else { liveTarget.set(.init(track: nil)); return }
-        liveTarget.set(.init(track: id, enabled: track.midiInput != nil,
-                             source: track.midiInput?.sourceUID, channel: track.midiInput?.channel))
+        let listeners = recordTargets.compactMap { id -> LiveTarget.Listener? in
+            guard let track = project.track(id), track.kind == .midi else { return nil }
+            return LiveTarget.Listener(track: id, enabled: track.midiInput != nil,
+                                       source: track.midiInput?.sourceUID, channel: track.midiInput?.channel)
+        }
+        liveTarget.set(.init(listeners: listeners))
     }
 
     func noteOn(_ pitch: UInt8, velocity: UInt8 = 100) {
-        if let track = liveTarget.current.track {
-            heldKeys[pitch] = track
-            engine.sendLiveMIDI(track: track, 0x90, pitch, velocity)
-            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: mach_absolute_time()), 0x90, pitch, velocity) }
-        }
+        let tracks = liveTarget.current.tracks
+        guard !tracks.isEmpty else { return }
+        heldKeys[pitch] = tracks
+        for track in tracks { engine.sendLiveMIDI(track: track, 0x90, pitch, velocity) }
+        if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: mach_absolute_time()), 0x90, pitch, velocity) }
     }
 
-    /// The release goes to the instrument that got the note, even if another track is selected now.
+    /// The release goes to the instruments that got the note, even if other tracks are armed now.
     func noteOff(_ pitch: UInt8) {
-        if let track = heldKeys.removeValue(forKey: pitch) ?? liveTarget.current.track {
-            engine.sendLiveMIDI(track: track, 0x80, pitch, 0)
-            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: mach_absolute_time()), 0x80, pitch, 0) }
-        }
+        let tracks = heldKeys.removeValue(forKey: pitch) ?? liveTarget.current.tracks
+        guard !tracks.isEmpty else { return }
+        for track in tracks { engine.sendLiveMIDI(track: track, 0x80, pitch, 0) }
+        if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: mach_absolute_time()), 0x80, pitch, 0) }
     }
 
     /// A short note, for clicking in the piano roll.

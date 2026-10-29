@@ -112,8 +112,8 @@ private struct ArrangementHeader: View {
                     pill("A", on: !model.shownLanes(track).isEmpty, tint: Theme.track(0)) { model.toggleAutomation(track) }
                         .hint("Show automation")
                     if track.kind == .audio || track.kind == .midi {
-                        pill("●", on: model.armedTrack == track.id, tint: .red) { model.toggleArm(track.id) }
-                            .hint("Arm: this track records and plays the MIDI keyboard, whatever is selected")
+                        pill("●", on: model.armedTracks.contains(track.id), tint: .red) { model.toggleArm(track.id) }
+                            .hint("Arm this track only: it records and plays the MIDI keyboard. ⌘-click adds it to the armed tracks.")
                     }
                 }
             }

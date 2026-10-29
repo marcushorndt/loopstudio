@@ -15,10 +15,14 @@ extension AppModel {
         }
     }
 
+    /// Opens the audio input for the armed audio tracks, then starts the transport. Tracks that take another
+    /// track's sound ("Audio From" a track) record it from the renderer; one such track per take.
     func startAudioRecording() async {
-        guard let id = recordTarget else { return }
+        guard let id = recordAudioTracks.first else { return }
         // "Audio From" another track: record its sound after the fader, with no sound card involved.
         if let source = project.track(id)?.inputTrack {
+            // One resampling track records per take; other armed audio tracks wait for the next one.
+            recordAudioTracks = [id]
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("LoopStudio-\(UUID().uuidString)", isDirectory: true)
             do {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -27,40 +31,60 @@ extension AppModel {
                 resampleLatency = plan?.arrival(of: source) ?? 0
                 engine.startCapture(track: source, into: writer)
             } catch {
-                status = "Cannot record: \(error.localizedDescription)"
-                recordArmed = false
+                audioStartFailed("Cannot record: \(error.localizedDescription)")
                 return
             }
-            beginRecording(on: id, status: "Recording \(project.track(source)?.name ?? "the input track")")
+            beginRecording(status: "Recording \(project.track(source)?.name ?? "the input track")")
             return
         }
+        // Every armed audio track gets the same take from the sound card input.
+        recordAudioTracks = recordAudioTracks.filter { project.track($0)?.inputTrack == nil }
         guard await microphoneAllowed() else {
-            status = "Microphone access is off. Turn it on in System Settings > Privacy & Security > Microphone."
-            recordArmed = false
+            audioStartFailed("Microphone access is off. Turn it on in System Settings > Privacy & Security > Microphone.")
             return
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("LoopStudio-take-\(UUID().uuidString).caf")
         do {
             try audioRecorder.start(deviceUID: inputUID, left: inputLeft, right: inputStereo ? inputLeft + 1 : nil, to: url)
         } catch {
-            status = "Cannot record: \(error)"
-            recordArmed = false
+            audioStartFailed("Cannot record: \(error)")
             return
         }
-        beginRecording(on: id, status: "Recording audio")
+        beginRecording(status: "Recording audio")
     }
 
-    private func beginRecording(on id: TrackID, status text: String) {
+    /// The audio input did not open. Armed MIDI tracks still record; with none, recording ends.
+    private func audioStartFailed(_ message: String) {
+        recordAudioTracks = []
+        if recordMIDITracks.isEmpty {
+            recording = false
+            recordArmed = false
+            status = message
+            return
+        }
+        updateMetronome()
+        if !recordPunch { engine.playAfterCountIn(beats: countInBars * meter.beats) }
+        transportPlaying = true
+        status = message + ". The MIDI tracks record."
+    }
+
+    private func beginRecording(status text: String) {
         recordStartTick = currentTick
-        recordTrackID = id
-        recordSlot = sessionRecordSlot(id)
         recordFrameOffset = engine.clockOffset
         recording = true
         recordingAudio = true
         updateMetronome()
         if !recordPunch { engine.playAfterCountIn(beats: countInBars * meter.beats) }
         transportPlaying = true
-        status = recordSlot.map { "\(text) into slot \($0 + 1)" } ?? text
+        status = recordStatus(text)
+    }
+
+    /// Puts an audio take on every track it was recorded for: the first gets the clip, the others a copy.
+    private func placeAudioTake(_ clip: AudioClip) {
+        for (k, id) in recordAudioTracks.enumerated() where project.track(id)?.kind == .audio {
+            placeTake(k == 0 ? .audio(clip) : Clip.audio(clip).withNewID(), on: id)
+        }
+        recordAudioTracks = []
     }
 
     /// Ends a recording of another track's sound. It starts exactly where the renderer wrote its first frame.
@@ -70,8 +94,7 @@ extension AppModel {
         let result = writer.finish()
         let url = writer.url
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        guard let id = recordTrackID, result.frames > 0, let first = result.firstFrame else { recordTrackID = nil; status = "Nothing recorded"; return }
-        recordTrackID = nil
+        guard !recordAudioTracks.isEmpty, result.frames > 0, let first = result.firstFrame else { recordAudioTracks = []; status = "Nothing recorded"; return }
         guard let asset = importAudio(url) else { status = "Could not import the recording"; return }
         let sr = sampleRate
         // The source's plugins made its sound late; the take moves back by as much. Before the song start,
@@ -85,7 +108,7 @@ extension AppModel {
         clip.offset = project.tempoMap.tick(atFrame: Frame(skip), sampleRate: sr)
         clip.loop = false
         clip.warpMode = .off
-        placeTake(.audio(clip), on: id)
+        placeAudioTake(clip)
         status = String(format: "Recorded %.1f s", Double(result.frames) / sr)
         if result.droppedFrames > 0 {
             status += String(format: ". Warning: %.2f s were lost (the disk was too slow)", Double(result.droppedFrames) / sr)
@@ -97,8 +120,7 @@ extension AppModel {
     func finishAudioRecording() {
         recordingAudio = false
         if let writer = resampleWriter { finishResampling(writer); return }
-        guard let take = audioRecorder.stop(), let id = recordTrackID else { status = "Nothing recorded"; return }
-        recordTrackID = nil
+        guard let take = audioRecorder.stop(), !recordAudioTracks.isEmpty else { recordAudioTracks = []; status = "Nothing recorded"; return }
 
         // The sound that belongs at the start of the timeline reached the file this many frames after it began.
         // No start stamp, or an offset of more than 10 s: the clocks do not match, so do not shift the take.
@@ -141,7 +163,7 @@ extension AppModel {
         var clip = project.makeAudioClip(asset: asset.id, start: recordStartTick, length: Tick(max(1, endTick.rawValue - recordStartTick.rawValue)))
         clip.loop = false
         clip.warpMode = .off
-        placeTake(.audio(clip), on: id)
+        placeAudioTake(clip)
         status = String(format: "Recorded %.1f s", Double(trimmed.frames) / take.sampleRate)
         if take.droppedFrames > 0 {
             status += String(format: ". Warning: %.2f s of input were lost (the disk was too slow)", Double(take.droppedFrames) / take.sampleRate)
@@ -158,8 +180,8 @@ extension AppModel {
     /// Puts a finished take where the recording was aimed: a Session slot (it loops and starts to play,
     /// like Live), or the arrangement at the place it was played.
     func placeTake(_ take: Clip, on id: TrackID) {
-        defer { recordSlot = nil }
-        guard let row = recordSlot else {
+        defer { recordSlots[id] = nil }
+        guard let row = recordSlots[id] else {
             // The take replaces what was under it, like Live: clips there are cut or removed, in one undo step.
             apply(.batch(commands: project.clearing(track: id, from: take.start, to: take.start + take.length)
                          + [.insertClip(track: id, clip: take)]))

@@ -29,7 +29,9 @@ extension AppModel {
         case .undo: canUndo
         case .redo: canRedo
         case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil) || !selectedNotes.isEmpty
-        case .cut, .copy, .duplicate: !selectedClips.isEmpty || selectedClip != nil
+            || selectedScene != nil
+        case .cut, .copy: !selectedClips.isEmpty || selectedClip != nil
+        case .duplicate: !selectedClips.isEmpty || selectedClip != nil || !selectedNotes.isEmpty || selectedScene != nil
         case .paste: !clipboard.isEmpty || !noteClipboard.isEmpty
         case .backToArrangement, .captureSession: arrangementOverridden
         case .renameTrack: selectedTrack != nil || selectedClip != nil
@@ -139,6 +141,13 @@ extension AppModel {
     }
 
     /// The selection sits on the row of stop buttons.
+    /// The scene whose button is selected (master column, Session view). Delete and ⌘D act on it.
+    var selectedScene: Int? {
+        guard viewMode == .session, selectedTrack == project.master.id, selectedClip == nil,
+              let row = selectedSceneRow, row < sessionRows else { return nil }
+        return row
+    }
+
     var stopRowSelected: Bool { viewMode == .session && selectedClip == nil && selectedSceneRow == sessionRows }
 
     /// Return: launches the selected session clip, or the selected scene when the slot is empty or on the
@@ -302,6 +311,7 @@ extension AppModel {
             }
         }
         if commands.isEmpty {
+            if let scene = selectedScene { duplicateScene(scene); return }
             if let id = selectedClip, let (tid, _) = project.findClip(id), let t = project.track(tid),
                let row = t.slots.firstIndex(where: { $0?.clip.id == id }) { duplicateSlot(track: tid, row: row) }
             return

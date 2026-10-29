@@ -124,8 +124,8 @@ struct MixerStrip: View {
                         model.apply(.setMute(id: track.id, mute: !track.mute))
                     }
                     if track.kind == .audio || track.kind == .midi {
-                        toggle("●", on: model.armedTrack == track.id, tint: .red) { model.toggleArm(track.id) }
-                            .hint("Arm: this track records and plays the MIDI keyboard, whatever is selected")
+                        toggle("●", on: model.armedTracks.contains(track.id), tint: .red) { model.toggleArm(track.id) }
+                            .hint("Arm this track only: it records and plays the MIDI keyboard. ⌘-click adds it to the armed tracks.")
                     }
                 }
             }

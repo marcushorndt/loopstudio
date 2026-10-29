@@ -284,6 +284,15 @@ public final class Renderer {
         for k in 0..<frames { l[k] += scratchOut[k]; r[k] += scratchOut[maxBlock + k] }
     }
 
+    /// Moves the peaks since the last call into `meters` (keeping the larger value) and starts them again.
+    /// Realtime safe. The engine calls it at the end of each callback.
+    public func movePeaks(into meters: UnsafeMutablePointer<Float>, capacity: Int) {
+        for i in 0..<min(nodeCount, capacity) {
+            meters[i] = max(meters[i], peaks[i])
+            peaks[i] = 0
+        }
+    }
+
     /// The largest absolute sample of a node (after its fader) since the last call. For meters.
     public func takePeak(node: Int) -> Float {
         guard node >= 0, node < nodeCount else { return 0 }

@@ -22,7 +22,23 @@ let package = Package(
         .target(name: "LoopStudioCore", swiftSettings: audioThreadSettings),
         // Package format, migrations, command journal.
         .target(name: "LoopStudioProject", dependencies: ["LoopStudioCore"]),
-        .target(name: "LoopStudioEngine", dependencies: ["LoopStudioCore"], swiftSettings: audioThreadSettings),
+        // Ableton Link (GPL v2 or later, see Sources/LinkBridge/README.md): the C API over the header-only library.
+        .target(
+            name: "LinkBridge",
+            path: "Sources/LinkBridge",
+            sources: ["link/extensions/abl_link/src/abl_link.cpp"],
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("link/include"),
+                .headerSearchPath("link/extensions/abl_link/include"),
+                .headerSearchPath("link/modules/asio-standalone/include"),
+                .define("LINK_PLATFORM_UNIX", to: "1"),
+                .define("LINK_PLATFORM_MACOSX", to: "1"),
+                .define("ASIO_STANDALONE", to: "1"),
+                .define("ASIO_NO_TYPEID", to: "1"),
+                .define("ASIO_VERSION_NAMESPACE", to: "link_asio_1_38_2"),
+            ]),
+        .target(name: "LoopStudioEngine", dependencies: ["LoopStudioCore", "LinkBridge"], swiftSettings: audioThreadSettings),
         // Tool registry and MCP server: the one way for scripts and agents to drive the app.
         .target(name: "LoopStudioControl", dependencies: ["LoopStudioCore", "LoopStudioProject", "LoopStudioEngine"]),
         .executableTarget(name: "loopstudio", dependencies: ["LoopStudioEngine", "LoopStudioProject", "LoopStudioCore", "LoopStudioControl"]),
@@ -32,5 +48,6 @@ let package = Package(
         .testTarget(name: "LoopStudioProjectTests", dependencies: ["LoopStudioProject", "LoopStudioCore"]),
         .testTarget(name: "LoopStudioEngineTests", dependencies: ["LoopStudioEngine", "LoopStudioCore"]),
         .testTarget(name: "LoopStudioControlTests", dependencies: ["LoopStudioControl", "LoopStudioCore", "LoopStudioProject"]),
-    ]
+    ],
+    cxxLanguageStandard: .cxx17
 )

@@ -65,6 +65,10 @@ public final class LiveEngine: @unchecked Sendable {
     private var graphChannels = 2
     private var countInRemaining: Int64 = 0
     private var countInDone: Int64 = 0
+    /// A count-in clicks; a timed start (Link) waits in silence.
+    private var countInClick = true
+    /// A start asked for at a host time: the audio thread turns it into a silent wait when it sees it.
+    private var startAtHost: UInt64 = 0
     private var stampPending = false
     private var startHost: UInt64 = 0
     /// The session frame that sounds at host time `anchorHost`. Updated every block, for MIDI timestamps.
@@ -286,7 +290,12 @@ public final class LiveEngine: @unchecked Sendable {
 
     public func play() {
         // The session clock is not reset here: a resume after a pause continues it. A jump while stopped syncs it.
-        locked { playing = true; countInRemaining = 0; stampPending = true; stateGeneration &+= 1 }
+        locked { playing = true; countInRemaining = 0; startAtHost = 0; stampPending = true; stateGeneration &+= 1 }
+    }
+
+    /// Starts the transport at host time `host` (Link's grid), sample exact. A time already past starts now.
+    public func play(atHost host: UInt64) {
+        locked { playing = false; countInRemaining = 0; startAtHost = max(1, host); stateGeneration &+= 1 }
     }
 
     /// Host time at which the transport last began to play. For lining up a recording with the timeline.
@@ -316,14 +325,17 @@ public final class LiveEngine: @unchecked Sendable {
     public func playAfterCountIn(beats: Int) {
         locked {
             stateGeneration &+= 1
+            startAtHost = 0
             guard beats > 0 else { playing = true; stampPending = true; return }
             countInRemaining = Int64(beats) * click.beatFrames
             countInDone = 0
+            countInClick = true
         }
     }
 
-    public var isCountingIn: Bool { locked { countInRemaining > 0 } }
-    public func pause() { locked { playing = false; countInRemaining = 0; silencePending = true; stateGeneration &+= 1 } }
+    /// True during a count-in and during the wait for a timed start.
+    public var isCountingIn: Bool { locked { countInRemaining > 0 || startAtHost != 0 } }
+    public func pause() { locked { playing = false; countInRemaining = 0; startAtHost = 0; silencePending = true; stateGeneration &+= 1 } }
     /// A jump moves the timeline. While playing, the session clock runs on, so session clips keep their place.
     public func seek(to frame: Int64) {
         locked {
@@ -405,6 +417,14 @@ public final class LiveEngine: @unchecked Sendable {
         // 1. Take the control state. Plain copies and reference counts only; nothing is allocated or freed.
         os_unfair_lock_lock(lock)
         callbacks &+= 1
+        // A timed start: wait in silence for the frames up to that host time, then play. `host` is when
+        // this buffer sounds, so the wait is exact to the frame.
+        if startAtHost != 0 {
+            let wait = HostClock.frames(from: host, to: startAtHost, rate: sampleRate)
+            if wait > 0 { countInRemaining = wait; countInDone = 0; countInClick = false }
+            else { playing = true; stampPending = true }
+            startAtHost = 0
+        }
         let renderer = self.renderer
         let previous = handover
         handover = nil
@@ -422,6 +442,7 @@ public final class LiveEngine: @unchecked Sendable {
         let click = self.click
         var countInRemaining = self.countInRemaining
         var countInDone = self.countInDone
+        let countInClick = self.countInClick
         var stampPending = self.stampPending
         var startHost = self.startHost
         let clockGeneration = self.clockGeneration
@@ -470,7 +491,7 @@ public final class LiveEngine: @unchecked Sendable {
             renderer.process(startFrame: position, frames: n, transport: false, outLeft: left + done, outRight: right + done)
             addPorts(renderer, offset: done, frames: n)
             if countInRemaining > 0 {
-                Self.addClick(left + done, right + done, n, clock: countInDone, click, sampleRate)
+                if countInClick { Self.addClick(left + done, right + done, n, clock: countInDone, click, sampleRate) }
                 countInDone += Int64(n)
                 countInRemaining -= Int64(n)
                 if countInRemaining <= 0 {

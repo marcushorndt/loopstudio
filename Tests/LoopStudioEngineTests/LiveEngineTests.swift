@@ -64,6 +64,28 @@ private func plan(direct: Bool = false) -> RenderPlan {
     #expect(h.engine.positionFrame == 512, "paused: the clock stands")
 }
 
+@Test func aTimedStartWaitsInSilenceUntilItsHostTimeThenPlays() {
+    let h = Harness()
+    h.engine.setRenderer(Renderer(plan: plan()))
+    // The callback's `host` is when its buffer sounds: start three blocks and a half after the first one.
+    let t0 = mach_absolute_time()
+    func host(_ block: Int) -> UInt64 { t0 &+ HostClock.ticks(fromSeconds: Double(block * 512) / rate) }
+    h.engine.play(atHost: t0 &+ HostClock.ticks(fromSeconds: 3.5 * 512 / rate))
+    #expect(h.engine.isCountingIn && !h.engine.isPlaying)
+    for block in 0..<3 {
+        h.engine.render(frameCount: 512, bufferList: h.list.unsafeMutablePointer, host: host(block))
+        #expect(h.peak(0) == 0, "block \(block) waits in silence, with no click")
+    }
+    h.engine.render(frameCount: 512, bufferList: h.list.unsafeMutablePointer, host: host(3))
+    #expect(h.left[255] == 0 && abs(h.left[256] - 0.5) < 0.01, "the sound begins at the frame of the host time")
+    #expect(h.engine.isPlaying && h.engine.positionFrame == 256)
+    // A time already past starts at once.
+    h.engine.pause()
+    h.engine.play(atHost: t0)
+    h.engine.render(frameCount: 512, bufferList: h.list.unsafeMutablePointer, host: host(10))
+    #expect(abs(h.left[0] - 0.5) < 0.01)
+}
+
 @Test func aSeekBetweenCallbacksWinsAndMetersReachTheControlThread() {
     let h = Harness()
     h.engine.setRenderer(Renderer(plan: plan()))

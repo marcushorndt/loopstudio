@@ -1,0 +1,4 @@
+module LinkBridge {
+    header "abl_link.h"
+    export *
+}

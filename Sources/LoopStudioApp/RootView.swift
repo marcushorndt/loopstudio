@@ -116,6 +116,17 @@ struct TransportBar: View {
                 .buttonStyle(.plain)
                 .hint(model.midiLearn ? "MIDI Learn is on: click a control in the app, then move a control on your device (⌘⇧M ends it)."
                       : "MIDI Learn (⌘⇧M): map knobs, faders and buttons to your MIDI device.\(model.midiMappings.isEmpty ? "" : " \(model.midiMappings.count) mapped.")")
+                Button { model.linkEnabled.toggle() } label: {
+                    Text(model.linkEnabled && model.linkPeers > 0 ? "Link \(model.linkPeers)" : "Link").font(.system(size: 10, weight: .bold))
+                        .frame(width: model.linkEnabled && model.linkPeers > 0 ? 48 : 36, height: 28)
+                        .foregroundStyle(model.linkEnabled ? Theme.play : Theme.text.opacity(0.85))
+                        .background(model.linkEnabled ? Theme.play.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(model.linkEnabled ? Theme.play.opacity(0.5) : Theme.line, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .hint(model.linkEnabled
+                      ? "Ableton Link is on: \(model.linkPeers == 0 ? "no other app yet" : "\(model.linkPeers) other app\(model.linkPeers == 1 ? "" : "s")") on the network share the tempo and the beat grid. Play starts on the shared bar. Start/stop sync is in Settings > Audio."
+                      : "Ableton Link: share the tempo and the beat grid with Live, Push and other Link apps on the network.")
                 Menu {
                     ForEach([0, 1, 2, 4], id: \.self) { n in
                         Button(n == 0 ? "No count-in" : "\(n) bar\(n == 1 ? "" : "s") count-in") { model.countInBars = n }

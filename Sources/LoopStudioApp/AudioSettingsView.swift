@@ -106,6 +106,14 @@ struct AudioSettingsView: View {
                         .font(.caption).foregroundStyle(Theme.dim)
                 }
             }
+            Section("Ableton Link") {
+                Toggle("Link", isOn: Binding(get: { model.linkEnabled }, set: { model.linkEnabled = $0 }))
+                Toggle("Start/stop sync", isOn: Binding(get: { model.linkStartStop }, set: { model.linkStartStop = $0 }))
+                Text(model.linkEnabled
+                     ? "Sharing the tempo and the beat grid with \(model.linkPeers) other app\(model.linkPeers == 1 ? "" : "s") on the network. A tempo change here reaches them, theirs reaches the project. Play starts on the shared bar. With start/stop sync, play and stop are shared too."
+                     : "Link shares the tempo and the beat grid with Live, Push and other Link apps on the same network. The Link button in the transport bar turns it on.")
+                    .font(.caption).foregroundStyle(Theme.dim)
+            }
             Section("Plugins") {
                 Toggle("Run plugins in a separate process", isOn: Binding(
                     get: { model.host.outOfProcess },

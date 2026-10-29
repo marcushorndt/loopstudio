@@ -365,6 +365,26 @@ final class AppModel {
         return receiver
     }()
 
+    // MARK: Ableton Link (per Mac; the logic is in AppModel+Link.swift)
+
+    /// On: the app shares the tempo and the beat grid with every Link app on the network.
+    var linkEnabled = UserDefaults.standard.bool(forKey: "linkEnabled") {
+        didSet { UserDefaults.standard.set(linkEnabled, forKey: "linkEnabled"); applyLinkSettings() }
+    }
+    /// On: play and stop are shared with the peers that share them too.
+    var linkStartStop = UserDefaults.standard.object(forKey: "linkStartStop") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(linkStartStop, forKey: "linkStartStop"); link.startStopSync = linkStartStop }
+    }
+    /// Other Link apps in the session now.
+    private(set) var linkPeers = 0
+    @ObservationIgnored private(set) lazy var link = LinkSession(bpm: bpm)
+    @ObservationIgnored var linkTask: Task<Void, Never>?
+    /// The session tempo as this app last saw or set it. The project may differ by a drift nudge.
+    @ObservationIgnored var linkTempoKnown = 0.0
+    /// A play or pause that came from a peer: do not send it back to the session.
+    @ObservationIgnored var linkFollowing = false
+    func setLinkPeers(_ n: Int) { if linkPeers != n { linkPeers = n } }
+
     /// The transport and the tempo follow the external MIDI clock, like Live with "EXT" on.
     /// Start and Continue play, Stop pauses, the song position jumps. Every quarter note the measured tempo
     /// goes into the project, bent by up to two percent to make up the drift against the clock; a drift of
@@ -409,8 +429,8 @@ final class AppModel {
         }
     }
 
-    /// Sets the tempo as the external clock has it: no undo entry, so the clock does not fill the undo history.
-    private func followTempo(_ value: Double) {
+    /// Sets the tempo as an external clock or Link has it: no undo entry, so a clock does not fill the undo history.
+    func followTempo(_ value: Double) {
         let v = min(max(value, 20), 999)
         let points = project.tempoMap.points
         let factor = v / max(points[0].bpm, 1)
@@ -729,9 +749,10 @@ final class AppModel {
 
     func play() {
         resumeSession()
-        engine.play()
+        // With Link on, the song starts on the shared grid: the engine waits for that host time.
+        if !playOnLinkGrid() { engine.play() }
         transportPlaying = true
-        if midiClock.isOn { midiClock.start(atFrame: engine.sessionFrame, tick: currentTick.rawValue) }
+        startClockAfterCountIn()
     }
 
     func pause() {
@@ -740,6 +761,7 @@ final class AppModel {
         engine.pause()
         transportPlaying = false
         midiClock.stop()
+        if linkEnabled, linkStartStop, !linkFollowing { link.setIsPlaying(false, atMicros: link.nowMicros) }
     }
 
     /// The transport stops: the Session keeps only what plays now (see `SessionPerformance.stop`).
@@ -750,7 +772,7 @@ final class AppModel {
     }
 
     /// Play after a stop: the kept clips start again (see `SessionPerformance.resume`).
-    private func resumeSession() {
+    func resumeSession() {
         if session.resume(at: currentTick, in: project) { rebuild() }
     }
 
@@ -1025,6 +1047,7 @@ final class AppModel {
         let points = project.tempoMap.points
         let factor = v / max(points[0].bpm, 1)
         apply(.setTempoPoints(points: points.map { TempoPoint(tick: $0.tick, bpm: $0.bpm * factor, ramp: $0.ramp) }), key: "bpm")
+        if linkEnabled { linkTempoKnown = v; link.setTempo(v, atMicros: link.nowMicros) }
     }
 
     // MARK: Session launching
@@ -1423,6 +1446,7 @@ final class AppModel {
         midiMonitor = monitor
         refreshDeviceLists()
         if midiClockInUID != nil { _ = midiClockIn }
+        if linkEnabled { applyLinkSettings() }
     }
 
     /// The hardware destinations of the MIDI tracks that are online now, with the latency in frames.

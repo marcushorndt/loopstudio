@@ -16,6 +16,7 @@ struct SampleEditor: View {
 
     @State private var zoom: Double = 1
     @State private var pinchStart: Double?
+    @State private var wheel = WheelZoom()
     /// A loop being marked or changed, before it is committed.
     @State private var draft: (offset: Tick, length: Tick)?
     @State private var dragMode: LoopDrag?
@@ -65,7 +66,12 @@ struct SampleEditor: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
         .background(Theme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.radius))
-        .onAppear { zoom = 1 }
+        .onHover { wheel.inside = $0 }
+        .onAppear {
+            zoom = 1
+            wheel.install { dy, _ in setZoom(zoom * pow(1.01, Double(dy))) }
+        }
+        .onDisappear { wheel.remove() }
     }
 
     // MARK: Grid and zoom

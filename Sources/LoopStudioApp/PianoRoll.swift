@@ -223,7 +223,7 @@ struct PianoRoll: View {
 /// Catches a scroll with Option or Command held over the piano roll and turns it into zoom.
 /// A plain scroll still scrolls the roll.
 @MainActor
-private final class WheelZoom {
+final class WheelZoom {
     var inside = false
     private var token: Any?
 

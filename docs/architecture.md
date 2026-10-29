@@ -128,7 +128,7 @@ How we enforce it:
 - Input: CoreMIDI with the UMP protocol (`MIDIEventList`), so MIDI 2.0 messages and per-note data work from day one. Events get a host timestamp. The renderer maps it to a frame offset inside the next block.
 - MIDI clips: notes as `(tick, length, pitch, velocity, channel)` plus CC and pitch-bend lanes. MPE is a channel convention; the model allows it.
 - Output to instruments: `AUAudioUnit.scheduleMIDIEventListBlock` with sample offsets. The player sends note-offs for all sounding notes when playback stops or a clip ends (no stuck notes; this has a test).
-- External MIDI out ("MIDI To" per track), MIDI clock out, MIDI clock in and Ableton Link are done; see 11b.
+- External MIDI out ("MIDI To" per track), MIDI clock out, MIDI clock in and Ableton Link are done; see 11b. The how-to, including Network MIDI to another Mac and the audio-over-network options, is `docs/midi.md`.
 
 ## 10. Plugins
 

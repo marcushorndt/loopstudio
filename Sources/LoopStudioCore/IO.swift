@@ -81,15 +81,28 @@ public struct MIDIEndpointInfo: Hashable, Codable, Sendable, Identifiable {
     public var manufacturer: String
     public var model: String
     public var isOffline: Bool
+    /// A Network MIDI session (macOS's built-in RTP-MIDI, set up in Audio MIDI Setup), not a cable.
+    public var isNetwork: Bool
 
     public var id: Int32 { uniqueID }
 
-    public init(uniqueID: Int32, name: String, manufacturer: String = "", model: String = "", isOffline: Bool = false) {
+    public init(uniqueID: Int32, name: String, manufacturer: String = "", model: String = "", isOffline: Bool = false, isNetwork: Bool = false) {
         self.uniqueID = uniqueID
         self.name = name
         self.manufacturer = manufacturer
         self.model = model
         self.isOffline = isOffline
+        self.isNetwork = isNetwork
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        uniqueID = try c.decode(Int32.self, forKey: .uniqueID)
+        name = try c.decode(String.self, forKey: .name)
+        manufacturer = try c.decodeIfPresent(String.self, forKey: .manufacturer) ?? ""
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
+        isOffline = try c.decodeIfPresent(Bool.self, forKey: .isOffline) ?? false
+        isNetwork = try c.decodeIfPresent(Bool.self, forKey: .isNetwork) ?? false
     }
 }
 

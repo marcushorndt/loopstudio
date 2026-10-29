@@ -157,7 +157,8 @@ public enum MIDIEndpointCatalog {
         }
         return MIDIEndpointInfo(uniqueID: integer(kMIDIPropertyUniqueID), name: string(kMIDIPropertyDisplayName),
                                 manufacturer: string(kMIDIPropertyManufacturer), model: string(kMIDIPropertyModel),
-                                isOffline: integer(kMIDIPropertyOffline) != 0)
+                                isOffline: integer(kMIDIPropertyOffline) != 0,
+                                isNetwork: string(kMIDIPropertyDriverOwner).contains("AppleMIDIRTPDriver"))
     }
 }
 

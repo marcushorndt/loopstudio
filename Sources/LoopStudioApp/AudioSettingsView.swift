@@ -83,6 +83,23 @@ struct AudioSettingsView: View {
                 ForEach(midi, id: \.uniqueID) { Text("\($0.name)\($0.isOffline ? " (offline)" : "")") }
                 Text("Each MIDI track chooses its device and channel in the mixer (MIDI From). Armed tracks get the notes.").font(.caption).foregroundStyle(Theme.dim)
             }
+            Section("Network MIDI") {
+                let network = (midi + MIDIEndpointCatalog.destinations()).filter(\.isNetwork)
+                let names = Array(Set(network.map(\.name))).sorted()
+                if names.isEmpty {
+                    Text("No Network MIDI session is on. macOS has one built in: notes and clock travel over the network to another Mac, to Live for example, with a few milliseconds of latency on a wired network.")
+                        .font(.caption).foregroundStyle(Theme.dim)
+                } else {
+                    ForEach(names, id: \.self) { Text("\($0) (network session)") }
+                    Text("The session is a MIDI device like any other: choose it under MIDI From or MIDI To on a track, or as the clock port above.")
+                        .font(.caption).foregroundStyle(Theme.dim)
+                }
+                Button("Open Audio MIDI Setup") {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Audio MIDI Setup.app"))
+                }
+                Text("In Audio MIDI Setup: Window > Show MIDI Studio, then the Network button. Turn on a session, set \"Who may connect to me\" to Anyone, and connect the other Mac from the Directory. The steps are in docs/midi.md.")
+                    .font(.caption).foregroundStyle(Theme.dim)
+            }
             Section("MIDI clock out") {
                 let outs = MIDIEndpointCatalog.destinations()
                 Picker("Send clock to", selection: Binding(get: { model.midiClockUID ?? Int32.min }, set: { model.midiClockUID = $0 == Int32.min ? nil : $0 })) {

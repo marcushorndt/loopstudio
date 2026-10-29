@@ -43,6 +43,23 @@ final class LiveTarget: Sendable {
     func set(_ new: State) { state.withLock { $0 = new } }
 }
 
+/// When a live note from a device is due. Notes from a Network MIDI session get a fixed delay, so the
+/// network's jitter is hidden: every note sounds exactly that long after it was sent. Cables get none.
+final class MIDIInputTiming: Sendable {
+    private struct State { var networkSources: Set<Int32> = []; var delayTicks: UInt64 = 0 }
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    func set(networkSources: Set<Int32>, delayMs: Int) {
+        state.withLock { $0.networkSources = networkSources; $0.delayTicks = HostClock.ticks(fromSeconds: Double(max(0, delayMs)) / 1000) }
+    }
+    /// The host time a note from `source` stamped `time` is due; 0 for "now".
+    func due(source: Int32, time: UInt64) -> UInt64 {
+        state.withLock { s in
+            guard time != 0, s.delayTicks > 0, s.networkSources.contains(source) else { return 0 }
+            return time &+ s.delayTicks
+        }
+    }
+}
+
 enum ViewMode: String { case session, arrangement }
 enum DetailTab { case clip, devices }
 /// What the main area of the clip inspector shows.
@@ -284,9 +301,19 @@ final class AppModel {
     /// The MIDI destinations online now, for "MIDI To" on MIDI tracks.
     private(set) var midiDestinations: [MIDIEndpointInfo] = []
 
+    /// Milliseconds a note from a Network MIDI session waits, so the network's jitter is hidden (per Mac).
+    var networkMIDIDelayMs = UserDefaults.standard.object(forKey: "networkMIDIDelayMs") as? Int ?? 30 {
+        didSet { UserDefaults.standard.set(networkMIDIDelayMs, forKey: "networkMIDIDelayMs"); applyMIDIInputTiming() }
+    }
+    @ObservationIgnored let midiInputTiming = MIDIInputTiming()
+    private func applyMIDIInputTiming() {
+        midiInputTiming.set(networkSources: Set(midiDevices.filter(\.isNetwork).map(\.uniqueID)), delayMs: networkMIDIDelayMs)
+    }
+
     func refreshDeviceLists() {
         midiDevices = MIDIEndpointCatalog.sources()
         midiDestinations = MIDIEndpointCatalog.destinations()
+        applyMIDIInputTiming()
         let devices = AudioDeviceCatalog.devices()
         inputChannelNames = devices.first { $0.uid == (inputUID ?? AudioDeviceCatalog.defaultInputUID()) }?.inputs.map(\.name) ?? []
         outputChannelNames = devices.first { $0.uid == (outputUID ?? AudioDeviceCatalog.defaultOutputUID()) }?.outputs.map(\.name) ?? []
@@ -1422,7 +1449,7 @@ final class AppModel {
 
     private func startMIDI() {
         let monitor = MIDIInputMonitor()
-        let target = liveTarget, engine = engine, recorder = recorder, learn = midiLearnBox
+        let target = liveTarget, engine = engine, recorder = recorder, learn = midiLearnBox, timing = midiInputTiming
         let held = HeldNotes()
         monitor.handler = { [weak self] status, a, b, src, time in
             // A mapped knob or button, or the control being learned, never reaches the instruments.
@@ -1431,19 +1458,23 @@ final class AppModel {
             case let outcome: Task { @MainActor in self?.midiLearnEvent(outcome) }; return
             }
             let t = target.current
+            // A note from a network session is due a fixed delay after it was sent; the take records it
+            // where it sounds.
+            let due = timing.due(source: src, time: time)
+            let heard = due == 0 ? time : due
             // A release goes where its note went, even after the selection changed.
             let kind = status & 0xF0, key = UInt16(status & 0x0F) << 8 | UInt16(a)
             if kind == 0x80 || (kind == 0x90 && b == 0), let noted = held.tracks.removeValue(forKey: key) {
-                for track in noted { engine.sendLiveMIDI(track: track, status, a, b) }
-                if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: time), status, a, b) }
+                for track in noted { engine.sendLiveMIDI(track: track, status, a, b, atHost: due) }
+                if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: heard), status, a, b) }
                 return
             }
             // Every listening track whose input matches plays the note; the take records it once.
             let tracks = t.listeners.filter { $0.accepts(source: src, status: status) }.map(\.track)
             guard !tracks.isEmpty else { return }
             if kind == 0x90 && b > 0 { held.tracks[key] = tracks }
-            for track in tracks { engine.sendLiveMIDI(track: track, status, a, b) }
-            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: time), status, a, b) }
+            for track in tracks { engine.sendLiveMIDI(track: track, status, a, b, atHost: due) }
+            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: heard), status, a, b) }
         }
         midiMonitor = monitor
         refreshDeviceLists()

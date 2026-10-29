@@ -32,12 +32,16 @@ public final class LiveEngine: @unchecked Sendable {
     private var inputMonitor: InputMonitor?
     /// The renderer that played last, until the audio thread takes over its held notes.
     private var handover: Renderer?
-    private struct LiveMIDI { var track: TrackID; var status: UInt8; var data1: UInt8; var data2: UInt8 }
+    /// A live note. `host` is when it is due (a host time stamp), 0 for "at the top of the next block".
+    private struct LiveMIDI { var track: TrackID; var status: UInt8; var data1: UInt8; var data2: UInt8; var host: UInt64 = 0 }
     private let liveCapacity = 512
     /// Live notes from other threads, and the audio thread's own copy of them.
     private let live: UnsafeMutablePointer<LiveMIDI>
     private let liveTaken: UnsafeMutablePointer<LiveMIDI>
     private var liveCount = 0
+    /// Live notes due in a later block. Owned by the audio thread.
+    private let livePending: UnsafeMutablePointer<LiveMIDI>
+    private var livePendingCount = 0
     /// Metronome and count-in.
     private struct Click {
         var enabled = false
@@ -98,9 +102,11 @@ public final class LiveEngine: @unchecked Sendable {
         lock.initialize(to: os_unfair_lock())
         live = .allocate(capacity: liveCapacity)
         liveTaken = .allocate(capacity: liveCapacity)
+        livePending = .allocate(capacity: liveCapacity)
         meters = .allocate(capacity: meterCapacity)
         meters.initialize(repeating: 0, count: meterCapacity)
         midiOut.hostTime = { [weak self] frame in self?.hostTime(forSessionFrame: frame) ?? 0 }
+        midiOut.ticksPerFrame = Double(HostClock.ticks(fromSeconds: 1)) / sampleRate
     }
 
     deinit {
@@ -108,6 +114,7 @@ public final class LiveEngine: @unchecked Sendable {
         lock.deallocate()
         live.deallocate()
         liveTaken.deallocate()
+        livePending.deallocate()
         meters.deallocate()
     }
 
@@ -162,6 +169,7 @@ public final class LiveEngine: @unchecked Sendable {
             position = 0; sessionPosition = 0; playing = false; countInRemaining = 0; anchorHost = 0; sampleRate = rate
             clockGeneration &+= 1; stateGeneration &+= 1
         }
+        midiOut.ticksPerFrame = Double(HostClock.ticks(fromSeconds: 1)) / rate
         if wasRunning { try start() }
     }
 
@@ -348,12 +356,28 @@ public final class LiveEngine: @unchecked Sendable {
 
     /// Queues a live MIDI message for the instrument of `track`. The track, not a node index, is the
     /// address, so a message sent while the graph changes still reaches the right instrument. Safe from any thread.
-    public func sendLiveMIDI(track: TrackID, _ status: UInt8, _ data1: UInt8, _ data2: UInt8) {
+    /// A live note for `track`. With `atHost` it sounds at that host time, to the sample, also when that
+    /// is a few blocks away; a time already past sounds at once. Without it, at the top of the next block.
+    public func sendLiveMIDI(track: TrackID, _ status: UInt8, _ data1: UInt8, _ data2: UInt8, atHost host: UInt64 = 0) {
         locked {
             guard liveCount < liveCapacity else { return }
-            live[liveCount] = LiveMIDI(track: track, status: status, data1: data1, data2: data2)
+            live[liveCount] = LiveMIDI(track: track, status: status, data1: data1, data2: data2, host: host)
             liveCount += 1
         }
+    }
+
+    /// Plays a live note in this block, or keeps it for a later one. Audio thread only.
+    private func placeLive(_ e: LiveMIDI, renderer: Renderer, host: UInt64, frameCount: Int, sessionPosition: Int64, keep: inout Int) {
+        var offset = 0
+        if e.host != 0 {
+            let frames = HostClock.frames(from: host, to: e.host, rate: sampleRate)
+            if frames >= Int64(frameCount) {
+                if keep < liveCapacity { livePending[keep] = e; keep += 1 }
+                return
+            }
+            offset = Int(max(0, frames))
+        }
+        renderer.sendLive(track: e.track, e.status, e.data1, e.data2, sampleOffset: offset, host: offset > 0 ? e.host : 0)
     }
     public func setLoop(_ range: Range<Int64>?) { locked { loop = range } }
 
@@ -480,7 +504,13 @@ public final class LiveEngine: @unchecked Sendable {
         if reset { renderer.reset() } else if silence { renderer.silenceNotes() }
         renderer.captures = captures
         renderer.inputMonitor = monitor
-        for i in 0..<liveTakenCount { renderer.sendLive(track: liveTaken[i].track, liveTaken[i].status, liveTaken[i].data1, liveTaken[i].data2) }
+        // Live notes: the ones that waited first, then the new ones, each at its sample. `keep` compacts
+        // the waiting ones in place; it never passes the read index.
+        var keep = 0
+        let waiting = livePendingCount
+        for i in 0..<waiting { placeLive(livePending[i], renderer: renderer, host: host, frameCount: frameCount, sessionPosition: sessionPosition, keep: &keep) }
+        for i in 0..<liveTakenCount { placeLive(liveTaken[i], renderer: renderer, host: host, frameCount: frameCount, sessionPosition: sessionPosition, keep: &keep) }
+        livePendingCount = keep
 
         // Stopped: no clips, but instruments and effects keep running, so live notes sound and tails ring out.
         // A count-in is the same, with a click, and it starts the transport when it ends.

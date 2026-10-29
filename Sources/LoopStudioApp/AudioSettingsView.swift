@@ -94,6 +94,9 @@ struct AudioSettingsView: View {
                     Text("The session is a MIDI device like any other: choose it under MIDI From or MIDI To on a track, or as the clock port above.")
                         .font(.caption).foregroundStyle(Theme.dim)
                 }
+                Stepper("Input delay: \(model.networkMIDIDelayMs) ms", value: Binding(get: { model.networkMIDIDelayMs }, set: { model.networkMIDIDelayMs = $0 }), in: 0...200, step: 5)
+                Text("Notes from a network session sound exactly this long after they were sent, so the network's jitter is hidden. Wi-Fi needs 20 to 50 ms, a cable between the Macs 5 ms. Cables and USB devices get no delay.")
+                    .font(.caption).foregroundStyle(Theme.dim)
                 Button("Open Audio MIDI Setup") {
                     NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Audio MIDI Setup.app"))
                 }

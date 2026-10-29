@@ -33,13 +33,21 @@ public struct MIDIOutTarget: Sendable, Equatable {
 /// copies into it and moves one counter, so it never allocates or waits. The audio thread wakes the
 /// sender once per callback with a semaphore. A message that does not fit is dropped and counted.
 public final class MIDIOutQueue: @unchecked Sendable {
-    /// `frame == Int64.min` means "now" (a live note).
+    /// `frame == Int64.min` means "now" (a live note). `host != 0` is a host time stamp of its own
+    /// (a live note with a due time), which goes out as it is.
     struct Entry {
         var endpoint: MIDIEndpointRef
         var frame: Int64
         var status: UInt8, data1: UInt8, data2: UInt8
+        var host: UInt64 = 0
     }
     public static let now = Int64.min
+    /// Host ticks per frame, for the latency shift of a host-stamped note. The engine sets it with the rate.
+    public var ticksPerFrame: Double {
+        get { clockLock.lock(); defer { clockLock.unlock() }; return _ticksPerFrame }
+        set { clockLock.lock(); _ticksPerFrame = newValue; clockLock.unlock() }
+    }
+    private var _ticksPerFrame = Double(HostClock.ticks(fromSeconds: 1)) / 48_000
 
     private let capacity: Int
     private let entries: UnsafeMutablePointer<Entry>
@@ -115,6 +123,19 @@ public final class MIDIOutQueue: @unchecked Sendable {
         pendingWake.store(true, ordering: .relaxed)
     }
 
+    /// Audio thread. A live note due at host time `host`, which goes out with that stamp. The target's
+    /// channel is applied here; its latency shift is applied by the sender, in host ticks.
+    @inline(__always)
+    func push(_ target: MIDIOutTarget, host: UInt64, _ status: UInt8, _ data1: UInt8, _ data2: UInt8) {
+        let w = written.load(ordering: .relaxed), r = read.load(ordering: .acquiring)
+        guard w - r < capacity else { droppedCount.wrappingAdd(1, ordering: .relaxed); return }
+        var s = status
+        if target.channel >= 0, status < 0xF0 { s = (status & 0xF0) | UInt8(target.channel) }
+        entries[w % capacity] = Entry(endpoint: target.endpoint, frame: target.latencyFrames, status: s, data1: data1, data2: data2, host: max(1, host))
+        written.store(w + 1, ordering: .releasing)
+        pendingWake.store(true, ordering: .relaxed)
+    }
+
     /// Audio thread, once per callback: wakes the sender when something was pushed.
     func flush() {
         if pendingWake.exchange(false, ordering: .relaxed) { wake.signal() }
@@ -123,7 +144,7 @@ public final class MIDIOutQueue: @unchecked Sendable {
     /// Sender thread: takes everything in the ring and puts it on the wire with its time stamp.
     @discardableResult
     func drain() -> Int {
-        let clock = hostTime
+        let clock = hostTime, perFrame = ticksPerFrame
         var bytes: [UInt8] = [0, 0, 0]
         var count = 0
         while true {
@@ -131,7 +152,14 @@ public final class MIDIOutQueue: @unchecked Sendable {
             guard r < w else { break }
             let e = entries[r % capacity]
             read.store(r + 1, ordering: .releasing)
-            let time: UInt64 = e.frame == Self.now ? 0 : (clock?(e.frame) ?? 0)
+            let time: UInt64
+            if e.host != 0 {
+                // A host-stamped note: `frame` holds the latency shift in frames.
+                let shift = Double(e.frame) * perFrame
+                time = shift >= 0 ? e.host &+ UInt64(shift) : e.host &- min(e.host, UInt64(-shift))
+            } else {
+                time = e.frame == Self.now ? 0 : (clock?(e.frame) ?? 0)
+            }
             bytes[0] = e.status; bytes[1] = e.data1; bytes[2] = e.data2
             let kind = e.status & 0xF0
             let length = (kind == 0xC0 || kind == 0xD0) ? 2 : 3

@@ -77,6 +77,18 @@ and Live uses the classic ports.
 Verified on 2026-10-29: Live on another MacBook sends notes to a LoopStudio track over the RTP
 session "Netzwerk RTP-Sitzung 1", with Link keeping both on one grid.
 
+**Steady timing.** A network, Wi-Fi above all, delivers packets early and late by a few to some
+tens of milliseconds. Settings > Audio > Network MIDI has "Input delay" (default 30 ms): every
+note from a network session sounds exactly that long after it was sent, to the sample, so the
+jitter is hidden. The app reads the time stamp of each packet, which the RTP driver sets from the
+sender's clock, and schedules the note at stamp plus delay, also when that is a few audio blocks
+away. A note that arrives after its due time sounds at once. Wi-Fi needs 20 to 50 ms; a
+Thunderbolt or Ethernet cable between the Macs 5 ms. Cables and USB devices get no delay. A take
+records the note where it sounds.
+
+For the least jitter, connect the two Macs with a Thunderbolt or USB4 cable: macOS makes a
+"Thunderbolt Bridge" network out of it, and both Link and the RTP session use it on their own.
+
 ## 4. Audio over the network
 
 macOS has no network audio device out of the box. What works today, all as a sound card the

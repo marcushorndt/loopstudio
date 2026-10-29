@@ -190,14 +190,16 @@ public final class Renderer {
         silenceNotes()
     }
 
-    /// Sends a MIDI message to the instrument and the hardware destination of a track right now.
-    /// No allocation: a linear search.
-    public func sendLive(track: TrackID, _ status: UInt8, _ data1: UInt8, _ data2: UInt8) {
+    /// Sends a MIDI message to the instrument and the hardware destination of a track, `sampleOffset`
+    /// frames into the block (0: right now). `host` is that moment as a host time stamp, for the
+    /// hardware (0: right now). No allocation: a linear search.
+    public func sendLive(track: TrackID, _ status: UInt8, _ data1: UInt8, _ data2: UInt8, sampleOffset: Int = 0, host: UInt64 = 0) {
         let order = plan.trackOrder
         for i in 0..<min(order.count, nodeCount) where order[i] == track {
-            nodes[i].instrument?.sendMIDI(status, data1, data2)
+            nodes[i].instrument?.sendMIDI(status, data1, data2, sampleOffset: sampleOffset)
             if let target = nodes[i].midiOut, let out = midiOut {
-                out.push(target, frame: MIDIOutQueue.now, status, data1, data2)
+                if host != 0 { out.push(target, host: host, status, data1, data2) }
+                else { out.push(target, frame: MIDIOutQueue.now, status, data1, data2) }
                 let kind = status & 0xF0
                 if kind == 0x90 || kind == 0x80 {
                     let k = Int(status & 0x0F) << 7 | Int(data1 & 127), live = hwLive + i * 2048

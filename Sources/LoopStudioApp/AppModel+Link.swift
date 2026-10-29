@@ -126,6 +126,7 @@ extension AppModel {
         var drift = (linkBeat - ourBeat).truncatingRemainder(dividingBy: q)
         if drift > q / 2 { drift -= q } else if drift < -q / 2 { drift += q }
         if abs(drift) > 0.5 {
+            linkLog.notice("drift \(drift, privacy: .public) beats: jump onto the grid")
             seek(to: Tick(max(0, Int64(((ourBeat + drift) * Double(Tick.perQuarter)).rounded()))))
             return
         }
@@ -133,8 +134,12 @@ extension AppModel {
         if abs(drift) > 1.0 / 64 {
             let factor = max(0.995, min(1.005, 1 + drift * 0.25))
             let target = ((linkTempo * factor) * 100).rounded() / 100
-            if abs(target - current) >= 0.01 { followTempo(target) }
+            if abs(target - current) >= 0.01 {
+                linkLog.notice("drift \(Int(drift * 1000), privacy: .public) mbeat: nudge \(current, privacy: .public) -> \(target, privacy: .public)")
+                followTempo(target)
+            }
         } else if abs(drift) < 1.0 / 256, abs(current - linkTempo) >= 0.005 {
+            linkLog.notice("drift gone: tempo back to \(linkTempo, privacy: .public)")
             followTempo(linkTempo)
         }
     }

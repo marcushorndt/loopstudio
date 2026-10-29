@@ -19,6 +19,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>LoopStudio records audio from your sound card input.</string>
+<key>NSLocalNetworkUsageDescription</key><string>Ableton Link shares the tempo and the beat grid with other apps on your network.</string>
 </dict></plist>
 PLIST
 # A development certificate gives every build the same identity, so macOS keeps the microphone permission.

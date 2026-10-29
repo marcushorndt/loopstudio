@@ -172,8 +172,6 @@ struct TransportBar: View {
                 tile("rectangle.bottomthird.inset.filled", on: model.detailOpen, tint: Theme.accent) { model.detailOpen.toggle() }
                     .hint("Clip and device panel")
             }
-
-            MasterMeter()
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Theme.panel)
@@ -241,17 +239,6 @@ struct TransportBar: View {
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.5) : Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
-    }
-}
-
-struct MasterMeter: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
-            StereoMeter(levels: model.meterLevels(track: nil), horizontal: true)
-                .frame(width: 110, height: 12)
-        }
     }
 }
 

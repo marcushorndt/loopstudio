@@ -149,8 +149,12 @@ private func audioUnitSlot(_ id: String, _ name: String) -> DeviceSlot {
     _ = await host.sync(project: project)
     let unit = try #require(host.units[slot.id])
     let params = unit.automatableParameters()
-    let volume = try #require(params.first { $0.name.localizedCaseInsensitiveContains("volume") && !$0.name.localizedCaseInsensitiveContains("reverb") },
-                              "\(params.map(\.name))")
+    // Out of process, the system synth names its parameters in the Mac's language ("Lautstärke").
+    func isVolume(_ name: String) -> Bool {
+        (name.localizedCaseInsensitiveContains("volume") || name.localizedCaseInsensitiveContains("lautst"))
+            && !name.localizedCaseInsensitiveContains("reverb") && !name.localizedCaseInsensitiveContains("hall")
+    }
+    let volume = try #require(params.first { isVolume($0.name) }, "\(params.map(\.name))")
     try Command.setPluginParams(track: track.id, device: slot.id, params: params).apply(to: &project)
     let loud = Bounce.render(RenderPlan.compile(project, bank: AudioBank(), units: host.units), endFrame: Int64(rate)).peak
 

@@ -137,7 +137,7 @@ How we enforce it:
 - **Scanning:** a separate helper process validates each plugin (load, open, render a few blocks). Results go to a cache. A plugin that crashes is on a block list and shown in the UI.
 - **State:** `fullState` of the AU is stored as a blob in the project, plus a name and version for a clear error when the plugin is missing. A missing plugin keeps its slot, its state and its automation; the track plays with the device bypassed.
 - **VST3:** Apple has no VST host. VST3 comes through a bridge that wraps a VST3 module as an `AUAudioUnit` subclass, so the rest of the engine stays unchanged. The VST3 SDK moved to the MIT license in 2025; I will confirm the current terms before we add it. VST2 is out: its SDK license no longer allows new hosts. CLAP can use the same bridge later.
-- **Crash isolation for non-AUv3 plugins:** later option, a helper process with shared-memory audio buffers. The `PluginInstance` protocol is designed so this swap changes nothing above it.
+- **Crash isolation:** plugins load with `.loadOutOfProcess` by default (Settings > Audio > Plugins). macOS then runs the plugin in its own hosting process, for AUv3 and for AUv2 alike, and a crash there cannot take the app down. A plugin that refuses to load that way is loaded in the app process. The cost is a little latency and CPU per plugin. Our own helper process with shared-memory buffers is therefore not needed.
 - **Latency:** each plugin reports `latency`. The graph compiler uses it for PDC.
 
 ## 11. Automation ("settings animation")

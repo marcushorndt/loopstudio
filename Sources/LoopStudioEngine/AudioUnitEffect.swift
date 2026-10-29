@@ -40,21 +40,33 @@ public final class AudioUnitEffect: @unchecked Sendable {
     public let sampleRate: Double
 
     /// `identifier` is "type/subtype/manufacturer", each four characters (as `AudioUnitInfo.identifier`).
-    public static func instantiate(identifier: String, sampleRate: Double) async throws -> AudioUnitEffect {
+    public static func instantiate(identifier: String, sampleRate: Double, outOfProcess: Bool = false) async throws -> AudioUnitEffect {
         let parts = identifier.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         guard parts.count == 3 else { throw HostError.notFound }
-        return try await instantiate(type: parts[0], subtype: parts[1], manufacturer: parts[2], sampleRate: sampleRate)
+        return try await instantiate(type: parts[0], subtype: parts[1], manufacturer: parts[2], sampleRate: sampleRate, outOfProcess: outOfProcess)
     }
 
+    /// `outOfProcess`: the plugin runs in a separate process that macOS provides, so a crash in the plugin
+    /// cannot take the app down. It costs a little latency and CPU. A plugin that cannot run that way
+    /// (a few old ones) is loaded in the app process instead.
     public static func instantiate(type: String, subtype: String, manufacturer: String,
-                                   sampleRate: Double, channels: Int = 2, maxFrames: Int = 4096) async throws -> AudioUnitEffect {
+                                   sampleRate: Double, channels: Int = 2, maxFrames: Int = 4096,
+                                   outOfProcess: Bool = false) async throws -> AudioUnitEffect {
         var description = AudioComponentDescription(
             componentType: fourCC(type), componentSubType: fourCC(subtype),
             componentManufacturer: fourCC(manufacturer), componentFlags: 0, componentFlagsMask: 0)
         guard AudioComponentFindNext(nil, &description) != nil else { throw HostError.notFound }
-        let unit = try await AUAudioUnit.instantiate(with: description, options: [])
+        let unit: AUAudioUnit
+        if outOfProcess, let isolated = try? await AUAudioUnit.instantiate(with: description, options: .loadOutOfProcess) {
+            unit = isolated
+        } else {
+            unit = try await AUAudioUnit.instantiate(with: description, options: [])
+        }
         return try AudioUnitEffect(unit: unit, sampleRate: sampleRate, channels: channels, maxFrames: maxFrames)
     }
+
+    /// The plugin runs outside the app process.
+    public var isOutOfProcess: Bool { unit.isLoadedInProcess == false }
 
     init(unit: AUAudioUnit, sampleRate: Double, channels: Int, maxFrames: Int) throws {
         self.unit = unit

@@ -54,6 +54,9 @@ struct LoopStudioApp: App {
                 AppAction.loopToggle.button(model)
                 AppAction.backToArrangement.button(model)
                 AppAction.captureSession.button(model)
+                Divider()
+                AppAction.toggleKeyboardMIDI.button(model)
+                AppAction.midiLearn.button(model)
             }
             CommandMenu("Track") {
                 AppAction.insertAudioTrack.button(model)

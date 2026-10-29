@@ -45,6 +45,8 @@ struct WarpEditor: View {
     let asset: Asset
     let peaks: [Float]
     let tint: Color
+    /// Points per beat from an enclosing editor that zooms; `nil` fits the whole sample.
+    var ppb: CGFloat? = nil
 
     @State private var dragIndex: Int?
     @State private var dragTick: Tick?
@@ -75,7 +77,7 @@ struct WarpEditor: View {
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
-            let ppb = w / totalBeats
+            let ppb = self.ppb ?? w / totalBeats
             let g = geometry
             ZStack(alignment: .topLeading) {
                 Canvas { ctx, size in
@@ -139,9 +141,6 @@ struct WarpEditor: View {
                 Button("Clear All Markers") { commit([]) }.disabled(markers.isEmpty)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
-        .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
-        .background(Theme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.radius))
     }
 
     private func nearest(x: CGFloat, ppb: Double) -> Int? {

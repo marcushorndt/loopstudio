@@ -83,6 +83,13 @@ struct AudioSettingsView: View {
                 ForEach(midi, id: \.uniqueID) { Text("\($0.name)\($0.isOffline ? " (offline)" : "")") }
                 Text("Each MIDI track chooses its device and channel in the mixer (MIDI From). Armed tracks get the notes.").font(.caption).foregroundStyle(Theme.dim)
             }
+            Section("Plugins") {
+                Toggle("Run plugins in a separate process", isOn: Binding(
+                    get: { model.host.outOfProcess },
+                    set: { model.host.outOfProcess = $0; UserDefaults.standard.set($0, forKey: "pluginsOutOfProcess") }))
+                Text("A plugin that crashes then cannot take LoopStudio down. It costs a little latency and CPU. Applies to plugins loaded from now on; reopen the project for the ones already loaded.")
+                    .font(.caption).foregroundStyle(Theme.dim)
+            }
             Section {
                 Button("Rescan Devices") { rescan() }
             }

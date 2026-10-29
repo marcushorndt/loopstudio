@@ -312,7 +312,11 @@ final class AppModel {
     @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var meterHold: [Int: Float] = [:]
-    @ObservationIgnored let host = PluginHost()
+    @ObservationIgnored let host: PluginHost = {
+        let host = PluginHost()
+        host.outOfProcess = UserDefaults.standard.object(forKey: "pluginsOutOfProcess") as? Bool ?? true
+        return host
+    }()
     @ObservationIgnored private var midiMonitor: MIDIInputMonitor?
     /// MIDI Learn: the mode, the control waiting for a device message, and the mappings of this project
     /// (saved next to it in `midi-map.json`, not as an edit).

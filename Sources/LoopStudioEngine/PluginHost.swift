@@ -15,6 +15,9 @@ public final class PluginHost {
 
     public init() {}
 
+    /// Plugins load in a separate process (crash isolation). Changes apply to plugins loaded from then on.
+    public var outOfProcess = true
+
     /// True while a plugin is loading.
     public var isLoading: Bool { !loading.isEmpty }
 
@@ -33,7 +36,8 @@ public final class PluginHost {
 
         for device in wanted where units[device.id] == nil && failures[device.id] == nil && !loading.contains(device.id) {
             loading.insert(device.id)
-            let result = await Result { try await AudioUnitEffect.instantiate(identifier: device.identifier, sampleRate: project.sampleRate) }
+            let isolated = outOfProcess
+            let result = await Result { try await AudioUnitEffect.instantiate(identifier: device.identifier, sampleRate: project.sampleRate, outOfProcess: isolated) }
             // Another project was opened, or the device was removed or changed, while the plugin loaded.
             guard generation == started else { return changed }
             loading.remove(device.id)

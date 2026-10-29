@@ -188,13 +188,8 @@ private struct ClipPanel: View {
                 if page == .gain {
                     ClipEnvelopeView(clip: a, peaks: peaks, assetTicks: assetTicks, tint: tint)
                         .overlay { clipLengthPlayhead(clip) }
-                } else if a.warpMode != .off {
-                    WarpEditor(clip: a, asset: asset, peaks: peaks, tint: tint)
                 } else {
-                    WaveformView(peaks: peaks, color: tint, fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop,
-                                 start: Double(a.offset.rawValue) / max(1, assetTicks))
-                        .background(Theme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.radius))
-                        .overlay { clipLengthPlayhead(clip) }
+                    SampleEditor(clip: a, asset: asset, peaks: peaks, tint: tint)
                 }
             } else {
                 Spacer()

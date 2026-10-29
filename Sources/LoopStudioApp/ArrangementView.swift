@@ -230,9 +230,24 @@ private struct ArrangementClip: View {
     let trackIndex: Int
     let trackCount: Int
     @State private var drag: CGSize = .zero
-    @State private var resize: CGFloat = 0
-    /// A drag of the left edge, in points: it trims or extends the start, the content stays in place.
-    @State private var trim: CGFloat = 0
+    /// While the left edge is dragged: the new start, snapped and kept within the file. The content stays in place.
+    @State private var trimStart: Tick?
+    /// While the right edge is dragged: the new end, snapped.
+    @State private var resizeEnd: Tick?
+
+    /// The earliest start of the left edge: the first sample of an audio file, else the timeline start.
+    private var earliestStart: Tick {
+        if case .audio(let a) = clip { return max(0, clip.start - a.offset) }
+        return 0
+    }
+
+    /// The left edge position for a drag of `dx` points: snapped, and stopped at the file start and one grid step before the end.
+    private func trimTarget(_ dx: CGFloat) -> Tick {
+        let end = clip.start + clip.length
+        let wanted = model.snap(xTick(tickX(clip.start, model) + dx, model))
+        let latest = end - Tick(max(1, min(clip.length.rawValue - 1, Int64(Tick.perQuarter / 4))))
+        return min(max(wanted, earliestStart), latest)
+    }
 
     /// The clip being dragged follows its own gesture; the rest of a marked group follows it.
     private var shown: CGSize { drag != .zero ? drag : (model.selectedClips.contains(clip.id) ? model.groupDrag : .zero) }
@@ -240,14 +255,20 @@ private struct ArrangementClip: View {
     var body: some View {
         let tint = Theme.track(clip.colorIndex ?? track.colorIndex)
         let x = tickX(clip.start, model)
-        let w = max(6, tickX(clip.length, model) + resize - trim)
+        // While an edge is dragged, the clip shows its new range: the start, the length and the file offset move together.
+        let shownStart = trimStart ?? clip.start
+        let shownEnd = resizeEnd ?? (clip.start + clip.length)
+        let shownLength = max(Tick(1), shownEnd - shownStart)
+        let trim = tickX(shownStart, model) - x
+        let w = max(6, tickX(shownLength, model))
         let selected = model.selectedClips.contains(clip.id) || model.selectedClip == clip.id
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.clipBody(clip.colorIndex ?? track.colorIndex))
             if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                 let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
-                WaveformView(peaks: peaks, color: tint.opacity(0.9), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop,
-                             start: Double(a.offset.rawValue) / max(1, assetTicks))
+                let offset = a.offset.rawValue + (shownStart - clip.start).rawValue
+                WaveformView(peaks: peaks, color: tint.opacity(0.9), fraction: Double(shownLength.rawValue) / max(1, assetTicks), loop: a.loop,
+                             start: Double(max(0, offset)) / max(1, assetTicks))
                     .padding(.top, 16).padding(.bottom, 3)
             }
             if case .audio(let a) = clip, let env = a.gainEnvelope, !env.isEmpty {
@@ -262,13 +283,14 @@ private struct ArrangementClip: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : tint.opacity(0.55), lineWidth: selected ? 1.5 : 1))
         .overlay(alignment: .leading) {
             Rectangle().fill(.clear).frame(width: 8).contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 1)
-                    .onChanged { trim = $0.translation.width }
+                // Measured in the window, not in the edge itself: the edge moves with the drag, which made it flicker.
+                .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { trimStart = trimTarget($0.translation.width) }
                     .onEnded { g in
-                        var start = model.snap(xTick(tickX(clip.start, model) + g.translation.width, model))
-                        trim = 0
                         // A clip only shows part of its file. Dragged out past the file start, it stops there.
-                        if case .audio(let a) = clip { start = max(start, clip.start - a.offset) }
+                        let start = trimTarget(g.translation.width)
+                        trimStart = nil
+                        guard start != clip.start else { return }
                         if let trimmed = clip.trimmingStart(to: start) { model.apply(.setClip(clip: trimmed)) }
                         else { model.status = "The clip cannot start there" }
                     })
@@ -277,11 +299,14 @@ private struct ArrangementClip: View {
         }
         .overlay(alignment: .trailing) {
             Rectangle().fill(.clear).frame(width: 8).contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 1)
-                    .onChanged { resize = $0.translation.width }
+                .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { g in
+                        let end = model.snap(xTick(tickX(clip.start + clip.length, model) + g.translation.width, model))
+                        resizeEnd = max(end, clip.start + Tick(1))
+                    }
                     .onEnded { g in
                         let end = model.snap(xTick(tickX(clip.start + clip.length, model) + g.translation.width, model))
-                        resize = 0
+                        resizeEnd = nil
                         if end > clip.start { model.apply(.setClipRange(clip: clip.id, start: clip.start, length: end - clip.start)) }
                     })
                 .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }

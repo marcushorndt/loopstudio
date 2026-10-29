@@ -59,6 +59,19 @@ struct TrackMenuItems: View {
         }
         Button(track.mute ? "Unmute" : "Mute") { model.toggleMute(track) }
         if !isMaster { Button(track.solo ? "Unsolo" : "Solo") { model.toggleSolo(track) } }
+        if track.kind == .audio || track.kind == .midi {
+            Button(model.armedTracks.contains(track.id) ? "Disarm" : "Arm for Recording") { model.toggleArm(track.id, additive: true) }
+        }
+        if track.kind == .audio {
+            Menu("Monitor") {
+                ForEach([(MonitorMode.input, "In"), (.auto, "Auto"), (.off, "Off")], id: \.1) { mode, name in
+                    Toggle(name, isOn: Binding(get: { track.monitorMode == mode }, set: { _ in model.apply(.setMonitor(id: track.id, mode: mode)) }))
+                }
+            }
+        }
+        if !isMaster, !track.slots.allSatisfy({ $0 == nil }) {
+            Button("Stop Track Clips") { model.stopClips(of: track) }.disabled(!model.transportPlaying)
+        }
         if !isMaster {
             Menu("Add Effect") {
                 ForEach(BuiltInEffects.all, id: \.id) { spec in Button(spec.name) { model.addEffect(spec.id, to: track.id) } }
@@ -109,9 +122,11 @@ struct ArrangementClipMenu: View {
         }
         Button("Select All Clips on Track") { model.selectedClips = Set(track.clips.map(\.id)); model.selectedTrack = track.id }
         Divider()
+        AppAction.renameTrack.button(model, title: "Rename Clip") { model.clipRenameRequest = clip.id }
         switch clip {
         case .audio(let a):
             Button(a.loop ? "Loop Off" : "Loop On") { model.apply(.setClipLoop(clip: a.id, loop: !a.loop)) }
+            Button(a.warpMode == .off ? "Warp On" : "Warp Off") { model.apply(.setClipWarp(clip: a.id, mode: a.warpMode == .off ? .beats : .off, markers: a.warpMarkers)) }
             Button(a.muted ? "Activate Clip" : "Deactivate Clip") { model.toggleClipMute(a) }
             Menu("Fade In") {
                 ForEach([0.0, 2, 10, 50, 200], id: \.self) { ms in Button(ms == 0 ? "None" : "\(Int(ms)) ms") { model.setClipFades(a, fadeInMs: ms, fadeOutMs: a.fadeOutMs) } }
@@ -207,6 +222,11 @@ struct SlotMenu: View {
         } else {
             if track.kind == .midi { Button("New MIDI Clip") { model.createMIDIClip(track: track.id, row: row) } }
             Button("New Dummy Clip") { model.createDummyClip(track: track.id, row: row) }
+            if track.kind == .audio || track.kind == .midi {
+                AppAction.record.button(model, title: "Record into This Slot") { model.recordIntoSlot(track: track.id, row: row) }
+                    .disabled(model.recording)
+            }
+            if track.kind != .master { Button("Stop Track") { model.stopClips(of: track) }.disabled(!model.transportPlaying) }
             Divider()
             Button("Launch Scene \(row + 1)") { model.launchScene(row) }
         }
@@ -243,8 +263,18 @@ struct DeviceMenu: View {
         if device.format == "audiounit", let unit = model.host.units[device.id] {
             Button("Open Plugin Window") { PluginWindow.show(unit, title: device.name) }
         }
+        if device.format == "builtin", !device.params.isEmpty {
+            Button("Reset All Parameters") {
+                model.apply(.batch(commands: device.params.keys.sorted().map { .setDeviceParam(track: track.id, device: device.id, key: $0, value: nil) }))
+            }
+        }
+        let automated = track.automation.filter { $0.target.node == device.id.rawValue && !$0.points.isEmpty }
+        Button("Clear Automation of This Device") {
+            model.apply(.batch(commands: automated.map { .setAutomation(track: track.id, target: $0.target, points: []) }))
+        }
+        .disabled(automated.isEmpty)
         Divider()
-        Button("Delete", role: .destructive) { model.apply(.removeDevice(track: track.id, device: device.id)) }
+        AppAction.deleteSelection.button(model, title: "Delete") { model.apply(.removeDevice(track: track.id, device: device.id)) }
     }
 }
 

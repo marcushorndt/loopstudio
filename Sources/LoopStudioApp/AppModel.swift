@@ -165,7 +165,7 @@ final class AppModel {
     var recordStartTick: Tick = 0
     /// Audio input for recording. Like the output, it belongs to this Mac.
     var inputUID: String? = UserDefaults.standard.string(forKey: "inputUID") {
-        didSet { UserDefaults.standard.set(inputUID, forKey: "inputUID") }
+        didSet { UserDefaults.standard.set(inputUID, forKey: "inputUID"); refreshDeviceLists() }
     }
     var inputLeft: Int = UserDefaults.standard.object(forKey: "inputLeft") as? Int ?? 0 {
         didSet { UserDefaults.standard.set(inputLeft, forKey: "inputLeft") }
@@ -182,6 +182,8 @@ final class AppModel {
     /// The tracks a running take goes to, by kind. MIDI and audio tracks record at the same time.
     @ObservationIgnored var recordMIDITracks: [TrackID] = []
     @ObservationIgnored var recordAudioTracks: [TrackID] = []
+    /// Per sound card file of a running take: the tracks that recorded those channels.
+    @ObservationIgnored var recordLaneTracks: [[TrackID]] = []
     /// Timeline frame minus session frame when a MIDI take began. Turns its session-clock stamps into timeline frames.
     @ObservationIgnored var recordFrameOffset: Int64 = 0
     /// The recording started while the transport already played (R during playback): no count-in,
@@ -246,7 +248,17 @@ final class AppModel {
     }
     /// Bumped when a plugin finished loading, so the device cards refresh.
     private(set) var pluginRevision = 0
-    private(set) var midiSources = 0
+    /// The MIDI sources online now. Refreshed when a device is plugged in or out.
+    private(set) var midiDevices: [MIDIEndpointInfo] = []
+    var midiSources: Int { midiDevices.count }
+    /// The channel names of the recording input device. Refreshed when devices or the input choice change.
+    private(set) var inputChannelNames: [String] = []
+
+    func refreshDeviceLists() {
+        midiDevices = MIDIEndpointCatalog.sources()
+        inputChannelNames = AudioDeviceCatalog.devices()
+            .first { $0.uid == (inputUID ?? AudioDeviceCatalog.defaultInputUID()) }?.inputs.map(\.name) ?? []
+    }
     var pixelsPerBar: Double = 90
     var transportPlaying = false
     private(set) var canUndo = false
@@ -1127,7 +1139,7 @@ final class AppModel {
 
     /// A sound card or MIDI device was plugged in or out, or the system default changed.
     func devicesChanged() {
-        midiSources = MIDIEndpointCatalog.sources().count
+        refreshDeviceLists()
         let present = Set(AudioDeviceCatalog.devices().map(\.uid))
         let defaultOutput = AudioDeviceCatalog.defaultOutputUID()
         defer { lastDefaultOutput = defaultOutput }
@@ -1173,7 +1185,7 @@ final class AppModel {
             if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: time), status, a, b) }
         }
         midiMonitor = monitor
-        midiSources = monitor.sourceCount
+        refreshDeviceLists()
     }
 
     /// Points live notes (keyboard, MIDI devices, piano roll clicks) at the armed MIDI tracks, else the selected one.

@@ -86,6 +86,8 @@ public enum Command: Codable, Sendable {
     case setHardwareOutput(id: TrackID, port: PortID?)
     case setAudioInput(id: TrackID, port: PortID?)
     case setMIDIInput(id: TrackID, selection: MIDIInputSelection?)
+    /// The sound card channels an audio track records. `nil` uses the channels of the audio settings.
+    case setInputChannels(id: TrackID, channels: InputChannels?)
 
     /// Device chain of a track. `index` nil means the end.
     case insertDevice(track: TrackID, device: DeviceSlot, index: Int?)
@@ -596,6 +598,14 @@ extension Project {
                 return t.midiInput
             }
             return .setMIDIInput(id: id, selection: old)
+
+        case .setInputChannels(let id, let channels):
+            let old = try withTrack(id) { t -> InputChannels? in
+                guard channels == nil || t.kind == .audio else { throw CommandError.invalidValue("only audio tracks take input channels") }
+                defer { t.inputChannels = channels }
+                return t.inputChannels
+            }
+            return .setInputChannels(id: id, channels: old)
         }
     }
 

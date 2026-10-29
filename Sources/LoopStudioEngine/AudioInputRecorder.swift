@@ -2,14 +2,22 @@ import AVFoundation
 import CoreAudio
 import Foundation
 
-/// Records one or two channels of a sound card input into a file.
+/// Records channels of a sound card input into files: one file per lane, each lane one or two channels.
 ///
 /// It runs its own `AVAudioEngine`, so playback is not touched. The first buffer's host time is kept,
-/// so the take can be lined up with the transport afterwards.
+/// so a take can be lined up with the transport afterwards. All lanes share that buffer, so their takes
+/// start on the same frame.
 ///
-/// The capture callback only copies into a `CaptureRing`. A writer queue empties the ring into the file
-/// every 20 ms, so slow storage cannot hold up capture. Lost frames and write errors come back in the `Take`.
+/// The capture callback only copies into one `CaptureRing` per lane. A writer queue empties each ring into
+/// its file every 20 ms, so slow storage cannot hold up capture. Lost frames and write errors come back in the `Take`.
 public final class AudioInputRecorder: @unchecked Sendable {
+    /// The channels of one file: `left` alone, or `left` and `right`. Indexes count from 0.
+    public struct Lane: Hashable, Sendable {
+        public var left: Int
+        public var right: Int?
+        public init(left: Int, right: Int?) { self.left = left; self.right = right }
+    }
+
     public struct Take: Sendable {
         public var url: URL
         public var sampleRate: Double
@@ -37,18 +45,28 @@ public final class AudioInputRecorder: @unchecked Sendable {
 
     private let engine = AVAudioEngine()
     private let lock = NSLock()
-    private var url: URL?
+    private var urls: [URL] = []
     private var rate = 48_000.0
     private var inputLatency = 0
-    private var writer: CaptureWriter?
+    private var writers: [CaptureWriter] = []
 
     public init() {}
 
-    public var isRecording: Bool { lock.lock(); defer { lock.unlock() }; return writer != nil }
+    public var isRecording: Bool { lock.lock(); defer { lock.unlock() }; return !writers.isEmpty }
 
-    /// `left` and `right` are channel indexes (from 0) of the device. `right` nil records mono.
+    /// The number of input channels of a device, or of the default input with `nil`.
+    public static func channelCount(deviceUID: String?) -> Int {
+        AudioDeviceCatalog.devices().first { $0.uid == (deviceUID ?? AudioDeviceCatalog.defaultInputUID()) }?.inputs.count ?? 0
+    }
+
+    /// One lane, `left` alone or with `right`.
     public func start(deviceUID: String?, left: Int, right: Int?, to url: URL) throws {
-        guard !isRecording else { return }
+        try start(deviceUID: deviceUID, lanes: [Lane(left: left, right: right)], to: [url])
+    }
+
+    /// Records each lane into the URL at the same index. A channel past the device's last one uses the last one.
+    public func start(deviceUID: String?, lanes: [Lane], to urls: [URL]) throws {
+        guard !isRecording, !lanes.isEmpty, lanes.count == urls.count else { return }
         let input = engine.inputNode
         var deviceLatency = 0
         if let uid = deviceUID {
@@ -68,41 +86,50 @@ public final class AudioInputRecorder: @unchecked Sendable {
         let format = input.inputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else { throw RecordError.noPermission }
         let channels = Int(format.channelCount)
-        let l = min(max(0, left), channels - 1)
-        let r = right.map { min(max(0, $0), channels - 1) }
-        let outChannels = r == nil ? 1 : 2
-
-        let writer = try CaptureWriter(url: url, sampleRate: format.sampleRate, channels: outChannels)
-        let ring = writer.ring
+        let picks = lanes.map { lane in
+            (min(max(0, lane.left), channels - 1), lane.right.map { min(max(0, $0), channels - 1) })
+        }
+        let writers = try zip(picks, urls).map { pick, url in
+            try CaptureWriter(url: url, sampleRate: format.sampleRate, channels: pick.1 == nil ? 1 : 2)
+        }
+        let rings = writers.map(\.ring)
         lock.lock()
-        self.writer = writer; self.url = url; rate = format.sampleRate; inputLatency = deviceLatency
+        self.writers = writers; self.urls = urls; rate = format.sampleRate; inputLatency = deviceLatency
         lock.unlock()
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, time in
             guard let src = buffer.floatChannelData else { return }
-            ring.noteStart(hostTime: time.hostTime)
-            ring.write(src[l], r.map { UnsafePointer(src[$0]) }, frames: Int(buffer.frameLength))
+            for (ring, pick) in zip(rings, picks) {
+                ring.noteStart(hostTime: time.hostTime)
+                ring.write(src[pick.0], pick.1.map { UnsafePointer(src[$0]) }, frames: Int(buffer.frameLength))
+            }
         }
         engine.prepare()
         do { try engine.start() } catch {
             input.removeTap(onBus: 0)
-            _ = writer.finish()
-            lock.lock(); self.writer = nil; lock.unlock()
+            for writer in writers { _ = writer.finish() }
+            lock.lock(); self.writers = []; lock.unlock()
             throw error
         }
     }
 
-    /// Stops and closes the file.
-    public func stop() -> Take? {
-        guard isRecording else { return nil }
+    /// Stops and closes the file of a single lane.
+    public func stop() -> Take? { stopAll().first ?? nil }
+
+    /// Stops and closes every file. One entry per lane, in the order of `start`; `nil` where nothing was recorded.
+    public func stopAll() -> [Take?] {
+        guard isRecording else { return [] }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         lock.lock()
-        let writer = writer
-        self.writer = nil
+        let writers = writers, urls = urls
+        self.writers = []
         lock.unlock()
-        guard let result = writer?.finish(), let url, result.frames > 0 else { return nil }
-        return Take(url: url, sampleRate: rate, frames: result.frames, firstHostTime: result.firstHostTime,
-                    inputLatencyFrames: inputLatency, droppedFrames: result.droppedFrames, writeError: result.writeError)
+        return zip(writers, urls).map { writer, url in
+            let result = writer.finish()
+            guard result.frames > 0 else { return nil }
+            return Take(url: url, sampleRate: rate, frames: result.frames, firstHostTime: result.firstHostTime,
+                        inputLatencyFrames: inputLatency, droppedFrames: result.droppedFrames, writeError: result.writeError)
+        }
     }
 
     private static func latency(of device: AudioObjectID) -> Int {

@@ -168,6 +168,7 @@ private let asleep = MIDIEndpointInfo(uniqueID: 300, name: "Old Synth", isOfflin
         .setHardwareOutput(id: audio.id, port: extra.id),
         .setAudioInput(id: audio.id, port: p.ports[2].id),
         .setMIDIInput(id: midi.id, selection: MIDIInputSelection(sourceUID: 5, sourceName: "Keys", channel: 2)),
+        .setInputChannels(id: audio.id, channels: InputChannels(first: 2, stereo: true)),
     ]
     for command in commands {
         let before = p
@@ -191,6 +192,7 @@ private let asleep = MIDIEndpointInfo(uniqueID: 300, name: "Old Synth", isOfflin
     #expect(throws: CommandError.self) { try Command.setAudioInput(id: audio.id, port: out.id).apply(to: &p) }
     #expect(throws: CommandError.self) { try Command.setAudioInput(id: midi.id, port: input.id).apply(to: &p) }
     #expect(throws: CommandError.self) { try Command.setMIDIInput(id: audio.id, selection: MIDIInputSelection()).apply(to: &p) }
+    #expect(throws: CommandError.self) { try Command.setInputChannels(id: midi.id, channels: InputChannels(first: 0, stereo: true)).apply(to: &p) }
     #expect(throws: CommandError.self) { try Command.setHardwareOutput(id: audio.id, port: PortID()).apply(to: &p) }
 
     // A track cannot have both a track output and a hardware output.

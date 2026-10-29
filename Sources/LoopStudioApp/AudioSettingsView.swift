@@ -57,6 +57,8 @@ struct AudioSettingsView: View {
                 }
             }
             Section("Audio input (recording)") {
+                Text("The channels below are the default. Each audio track can choose its own under Audio From.")
+                    .font(.caption).foregroundStyle(Theme.dim)
                 let inputs = devices.filter { !$0.inputs.isEmpty }
                 Picker("Device", selection: Binding(get: { model.inputUID ?? "" }, set: { model.inputUID = $0.isEmpty ? nil : $0; model.inputLeft = 0 })) {
                     Text("System default").tag("")
@@ -79,7 +81,7 @@ struct AudioSettingsView: View {
             Section("MIDI inputs") {
                 if midi.isEmpty { Text("No MIDI device found").foregroundStyle(Theme.dim) }
                 ForEach(midi, id: \.uniqueID) { Text("\($0.name)\($0.isOffline ? " (offline)" : "")") }
-                Text("Every MIDI input plays the selected MIDI track.").font(.caption).foregroundStyle(Theme.dim)
+                Text("Each MIDI track chooses its device and channel in the mixer (MIDI From). Armed tracks get the notes.").font(.caption).foregroundStyle(Theme.dim)
             }
             Section {
                 Button("Rescan Devices") { rescan() }

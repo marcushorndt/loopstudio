@@ -242,12 +242,16 @@ struct TrackIOSection: View {
 
     @ViewBuilder private var audioFrom: some View {
         label("Audio From")
-        Picker("", selection: Binding(get: { track.inputTrack }, set: { model.apply(.setInputTrack(id: track.id, source: $0)) })) {
-            Text("Ext. In").tag(TrackID?.none)
-            Divider()
-            ForEach(model.project.tracks.filter { $0.id != track.id && $0.kind != .returnTrack }, id: \.id) { Text($0.name).tag(Optional($0.id)) }
+        // Live puts the channel chooser beside the source: "Ext. In" and "1/2" on one line.
+        HStack(spacing: 3) {
+            Picker("", selection: Binding(get: { track.inputTrack }, set: { model.apply(.setInputTrack(id: track.id, source: $0)) })) {
+                Text("Ext. In").tag(TrackID?.none)
+                Divider()
+                ForEach(model.project.tracks.filter { $0.id != track.id && $0.kind != .returnTrack }, id: \.id) { Text($0.name).tag(Optional($0.id)) }
+            }
+            .labelsHidden().controlSize(.mini).hint("Ext. In records the sound card input. A track records that track's sound.")
+            if track.inputTrack == nil { inputChannelPicker.fixedSize() }
         }
-        .labelsHidden().controlSize(.mini).hint("Ext. In records the sound card input (Settings). A track records that track's sound.")
         if track.inputTrack != nil {
             HStack(spacing: 2) {
                 ForEach([(MonitorMode.input, "In"), (.auto, "Auto"), (.off, "Off")], id: \.1) { mode, name in
@@ -263,9 +267,30 @@ struct TrackIOSection: View {
         }
     }
 
+    /// The sound card channels of "Ext. In": one channel, or a pair. The device is chosen in the audio settings.
+    @ViewBuilder private var inputChannelPicker: some View {
+        let names = model.inputChannelNames
+        let current = model.inputChannels(of: track.id)
+        Picker("", selection: Binding(get: { current }, set: { model.apply(.setInputChannels(id: track.id, channels: $0)) })) {
+            if names.isEmpty { Text(current.label).tag(current) }
+            ForEach(Array(stride(from: 0, to: max(0, names.count - 1), by: 2)), id: \.self) {
+                Text(InputChannels(first: $0, stereo: true).label).tag(InputChannels(first: $0, stereo: true))
+            }
+            if names.count > 1 { Divider() }
+            ForEach(names.indices, id: \.self) { Text(InputChannels(first: $0, stereo: false).label).tag(InputChannels(first: $0, stereo: false)) }
+            // A choice the present device does not have (another sound card was used before) stays visible.
+            if !names.isEmpty, current.first + (current.stereo ? 1 : 0) >= names.count {
+                Text("\(current.label) (not on this device)").tag(current)
+            }
+        }
+        .labelsHidden().controlSize(.mini)
+        .hint(names.isEmpty ? "No audio input found. Choose the input device in Settings > Audio."
+              : "Input channels to record: a pair (1/2) or one channel (1). Armed tracks on different channels record at the same time.")
+    }
+
     @ViewBuilder private var midiFrom: some View {
         label("MIDI From")
-        let sources = MIDIEndpointCatalog.sources()
+        let sources = model.midiDevices
         Picker("", selection: Binding(
             get: { track.midiInput?.sourceUID.map { Optional($0) } ?? (track.midiInput == nil ? Int32?.none : Int32?.some(Int32.min)) },
             set: { choice in
@@ -280,10 +305,15 @@ struct TrackIOSection: View {
             })) {
             Text("All Ins").tag(Optional(Int32.min))
             ForEach(sources, id: \.uniqueID) { Text($0.name).tag(Optional($0.uniqueID)) }
+            // The chosen device is unplugged: keep its name, so the choice is not lost.
+            if let uid = track.midiInput?.sourceUID, !sources.contains(where: { $0.uniqueID == uid }) {
+                Text("\(track.midiInput?.sourceName ?? "Device") (offline)").tag(Optional(uid))
+            }
             Divider()
             Text("No Input").tag(Int32?.none)
         }
         .labelsHidden().controlSize(.mini)
+        .hint(sources.isEmpty ? "No MIDI device found. Plug one in; it shows here at once." : "The MIDI device this track listens to, when armed or selected.")
         if let input = track.midiInput {
             Picker("", selection: Binding(get: { input.channel.map { Int($0) } ?? -1 },
                                           set: { model.apply(.setMIDIInput(id: track.id, selection: MIDIInputSelection(sourceUID: input.sourceUID, sourceName: input.sourceName, channel: $0 < 0 ? nil : UInt8($0)))) })) {

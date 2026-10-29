@@ -509,6 +509,8 @@ public struct Track: Hashable, Codable, Sendable, Identifiable {
     /// Audio tracks: take the sound of another track (after its fader) as input. Live: "Audio From" a track.
     /// Optional, so older project files still load.
     public var inputTrack: TrackID?
+    /// Audio tracks: the sound card channels to record. `nil` uses the channels of the audio settings.
+    public var inputChannels: InputChannels?
     public var monitor: MonitorMode?
     /// No direct output; the track is heard only through its sends. Live: "Audio To: Sends Only".
     public var sendsOnly: Bool?

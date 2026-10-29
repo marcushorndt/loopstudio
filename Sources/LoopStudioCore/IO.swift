@@ -95,6 +95,22 @@ public struct MIDIEndpointInfo: Hashable, Codable, Sendable, Identifiable {
 
 // MARK: MIDI input selection
 
+/// The sound card channels an audio track records from. Live: the second "Audio From" chooser ("1/2", "3").
+public struct InputChannels: Hashable, Codable, Sendable {
+    /// The first channel, from 0.
+    public var first: Int
+    /// `true` records `first` and the next channel as a pair; `false` records `first` alone.
+    public var stereo: Bool
+
+    public init(first: Int, stereo: Bool) {
+        self.first = max(0, first)
+        self.stereo = stereo
+    }
+
+    /// "1/2" for a pair, "3" for one channel.
+    public var label: String { stereo ? "\(first + 1)/\(first + 2)" : "\(first + 1)" }
+}
+
 public struct MIDIInputSelection: Hashable, Codable, Sendable {
     /// CoreMIDI unique ID of the source. `nil` listens to every online source.
     public var sourceUID: Int32?

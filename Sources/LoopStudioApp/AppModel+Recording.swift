@@ -54,10 +54,11 @@ extension AppModel {
         recordStartTick = currentTick
         recordTrackID = id
         recordSlot = sessionRecordSlot(id)
+        recordFrameOffset = engine.clockOffset
         recording = true
         recordingAudio = true
         updateMetronome()
-        engine.playAfterCountIn(beats: countInBars * meter.beats)
+        if !recordPunch { engine.playAfterCountIn(beats: countInBars * meter.beats) }
         transportPlaying = true
         status = recordSlot.map { "\(text) into slot \($0 + 1)" } ?? text
     }
@@ -103,6 +104,13 @@ extension AppModel {
         // No start stamp, or an offset of more than 10 s: the clocks do not match, so do not shift the take.
         let start = engine.playStartHostTime
         var lead = start == 0 ? 0 : HostClock.frames(from: take.firstHostTime, to: start, rate: take.sampleRate)
+        if recordPunch {
+            // A punch-in: the take began while the song played. Where the song stood when the file began,
+            // against where the take goes.
+            let fileBegan = engine.sessionFrame(atHost: take.firstHostTime) + recordFrameOffset
+            let target = project.tempoMap.frame(at: recordStartTick, sampleRate: sampleRate).rawValue
+            lead = Int64(Double(target - fileBegan) * take.sampleRate / sampleRate)
+        }
         if abs(lead) > Int64(take.sampleRate * 10) { lead = 0 }
         let outputLatency = AudioDeviceCatalog.devices()
             .first { $0.uid == (outputUID ?? AudioDeviceCatalog.defaultOutputUID()) }?.outputLatencyFrames ?? 0

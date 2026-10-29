@@ -155,6 +155,9 @@ final class AppModel {
     var recordTrackID: TrackID?
     /// Timeline frame minus session frame when a MIDI take began. Turns its session-clock stamps into timeline frames.
     @ObservationIgnored var recordFrameOffset: Int64 = 0
+    /// The recording started while the transport already played (R during playback): no count-in,
+    /// and the take lines up with the moment R was pressed.
+    @ObservationIgnored var recordPunch = false
     /// Session recording: the empty slot the take goes into. `nil` records into the arrangement.
     @ObservationIgnored var recordSlot: Int?
     /// Sound card choice. It belongs to this Mac, not to a project. `nil` means the system default.
@@ -345,6 +348,13 @@ final class AppModel {
     /// R: get ready to record. Space starts it.
     func toggleRecordArm() {
         if recording { finishRecording(); return }
+        // While playing, R records at once, like a punch-in. Stopped, it only arms; Space starts it.
+        if transportPlaying && !engine.isCountingIn {
+            guard recordTargetOK() else { return }
+            recordArmed = true
+            startRecording()
+            return
+        }
         if !recordArmed {
             guard recordTargetOK() else { return }
             status = countInBars > 0 ? "Record armed. Space starts it after \(countInBars) bar\(countInBars == 1 ? "" : "s") of count-in." : "Record armed. Space starts it."
@@ -362,6 +372,7 @@ final class AppModel {
 
     private func startRecording() {
         guard recordTargetOK() else { recordArmed = false; play(); return }
+        recordPunch = transportPlaying
         if let id = selectedTrack, project.track(id)?.kind == .audio {
             Task { @MainActor in await startAudioRecording() }
             return
@@ -375,7 +386,7 @@ final class AppModel {
         recorder.begin()
         recording = true
         updateMetronome()
-        engine.playAfterCountIn(beats: countInBars * meter.beats)
+        if !recordPunch { engine.playAfterCountIn(beats: countInBars * meter.beats) }
         transportPlaying = true
         status = recordSlot.map { "Recording into slot \($0 + 1)" } ?? "Recording"
     }

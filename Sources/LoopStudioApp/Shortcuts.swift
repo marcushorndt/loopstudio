@@ -9,7 +9,7 @@ enum AppAction: String, CaseIterable, Identifiable {
     case record, toggleMetronome, play, pause, stopRewind, stopAllClips, loopSelection, loopToggle, backToArrangement, captureSession
     case insertAudioTrack, insertMIDITrack, insertReturnTrack, insertGroupTrack, groupTracks, renameTrack, duplicateTrack
     case insertScene, deleteScene, duplicateScene
-    case toggleKeyboardMIDI
+    case toggleKeyboardMIDI, midiLearn
     case moveUp, moveDown, moveLeft, moveRight, launchSelected
     case sessionView, arrangementView, switchView, toggleDetail, toggleAutomation, showShortcuts
 
@@ -24,7 +24,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .record, .toggleMetronome, .play, .pause, .stopRewind, .stopAllClips, .loopSelection, .loopToggle, .backToArrangement, .captureSession: .transport
         case .insertAudioTrack, .insertMIDITrack, .insertReturnTrack, .insertGroupTrack, .groupTracks, .renameTrack, .duplicateTrack: .track
         case .insertScene, .deleteScene, .duplicateScene: .scene
-        case .toggleKeyboardMIDI: .transport
+        case .toggleKeyboardMIDI, .midiLearn: .transport
         case .moveUp, .moveDown, .moveLeft, .moveRight, .launchSelected: .navigate
         case .sessionView, .arrangementView, .switchView, .toggleDetail, .toggleAutomation, .showShortcuts: .view
         }
@@ -66,6 +66,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .duplicateTrack: "Duplicate Track"
         case .insertScene: "Insert Scene"
         case .deleteScene: "Delete Scene"
+        case .midiLearn: "MIDI Learn"
         case .duplicateScene: "Duplicate Scene"
         case .toggleKeyboardMIDI: "Computer Keyboard as MIDI Keys"
         case .moveUp: "Select Up"
@@ -114,6 +115,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .renameTrack: KeyBinding("r", .command)
         case .insertScene: KeyBinding("i", [.command, .shift])
         case .toggleKeyboardMIDI: KeyBinding("m", [])
+        case .midiLearn: KeyBinding("m", [.command, .shift])
         case .moveUp: KeyBinding("\u{F700}", [])
         case .moveDown: KeyBinding("\u{F701}", [])
         case .moveLeft: KeyBinding("\u{F702}", [])

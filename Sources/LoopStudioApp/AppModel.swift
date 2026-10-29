@@ -311,6 +311,12 @@ final class AppModel {
     @ObservationIgnored private var meterHold: [Int: Float] = [:]
     @ObservationIgnored let host = PluginHost()
     @ObservationIgnored private var midiMonitor: MIDIInputMonitor?
+    /// MIDI Learn: the mode, the control waiting for a device message, and the mappings of this project
+    /// (saved next to it in `midi-map.json`, not as an edit).
+    var midiLearn = false
+    var learnTarget: MIDIMapTarget?
+    var midiMappings: [MIDIMapping] = []
+    @ObservationIgnored let midiLearnBox = MIDILearnBox()
     @ObservationIgnored private var deviceMonitor: DeviceChangeMonitor?
     /// The chosen output is gone, so the default plays. It switches back when the device returns.
     @ObservationIgnored private var outputFallback = false
@@ -1270,9 +1276,14 @@ final class AppModel {
 
     private func startMIDI() {
         let monitor = MIDIInputMonitor()
-        let target = liveTarget, engine = engine, recorder = recorder
+        let target = liveTarget, engine = engine, recorder = recorder, learn = midiLearnBox
         let held = HeldNotes()
-        monitor.handler = { status, a, b, src, time in
+        monitor.handler = { [weak self] status, a, b, src, time in
+            // A mapped knob or button, or the control being learned, never reaches the instruments.
+            switch learn.handle(status: status, a, b) {
+            case .none: break
+            case let outcome: Task { @MainActor in self?.midiLearnEvent(outcome) }; return
+            }
             let t = target.current
             // A release goes where its note went, even after the selection changed.
             let kind = status & 0xF0, key = UInt16(status & 0x0F) << 8 | UInt16(a)
@@ -1833,8 +1844,10 @@ final class AppModel {
         undoStack = []; redoStack = []
         canUndo = false; canRedo = false
         selectedClip = nil; selectedTrack = nil
-        // The arms come back as they were saved.
+        // The arms come back as they were saved, and so do the MIDI mappings.
         armedTracks = Set(new.tracks.filter { $0.armed == true }.map(\.id))
+        midiLearn = false; learnTarget = nil
+        loadMIDIMappings()
         saveTask?.cancel()
         dirty = false
         rebuild()

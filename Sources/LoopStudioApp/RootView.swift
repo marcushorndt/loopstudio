@@ -92,16 +92,30 @@ struct TransportBar: View {
             HStack(spacing: 4) {
                 tile(model.transportPlaying ? "pause.fill" : "play.fill", on: model.transportPlaying, tint: Theme.play) { model.togglePlay() }
                     .hint("Play / pause (Space)")
+                    .midiLearnable(.play)
                 tile("stop.fill", on: false, tint: Theme.dim) { model.stop() }
                     .hint("Stop; press again to go to the start (⌘.)")
+                    .midiLearnable(.stop)
                 // During the count-in the record button blinks with the beat, like everything that waits.
                 TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !(model.recording && model.engine.isCountingIn))) { _ in
                     let dim = model.recording && model.engine.isCountingIn && !model.waitBlink()
                     tile(model.recordArmed ? "record.circle.fill" : "record.circle", on: model.recordArmed && !dim, tint: .red) { model.toggleRecordArm() }
                 }
                 .hint("Arm recording (R). Space starts it.")
+                .midiLearnable(.record)
                 tile("metronome", on: model.metronomeOn, tint: Theme.accent) { model.toggleMetronome() }
                     .hint("Metronome (⌘K)")
+                    .midiLearnable(.metronome)
+                Button { model.toggleMIDILearn() } label: {
+                    Text("MIDI").font(.system(size: 10, weight: .bold))
+                        .frame(width: 36, height: 28)
+                        .foregroundStyle(model.midiLearn ? Theme.accent : Theme.text.opacity(0.85))
+                        .background(model.midiLearn ? Theme.accent.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(model.midiLearn ? Theme.accent.opacity(0.5) : Theme.line, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .hint(model.midiLearn ? "MIDI Learn is on: click a control in the app, then move a control on your device (⌘⇧M ends it)."
+                      : "MIDI Learn (⌘⇧M): map knobs, faders and buttons to your MIDI device.\(model.midiMappings.isEmpty ? "" : " \(model.midiMappings.count) mapped.")")
                 Menu {
                     ForEach([0, 1, 2, 4], id: \.self) { n in
                         Button(n == 0 ? "No count-in" : "\(n) bar\(n == 1 ? "" : "s") count-in") { model.countInBars = n }

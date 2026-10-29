@@ -74,6 +74,7 @@ struct MixerStrip: View {
     var body: some View {
         VStack(spacing: 5) {
             Slider(value: Binding(get: { track.pan }, set: { model.apply(.setPan(id: track.id, pan: $0), key: "pan\(track.id)") }), in: -1...1)
+                .midiLearnable(.pan(track.id))
                 .controlSize(.mini)
                 .contextMenu { Button("Center") { model.apply(.setPan(id: track.id, pan: 0)) } }
                 .hint("Pan")
@@ -106,6 +107,7 @@ struct MixerStrip: View {
                 Fader(db: track.volumeDb) { model.apply(.setVolume(id: track.id, db: $0), key: "vol\(track.id)") }
                     .frame(width: 44, height: 100)
                     .hint("\(track.name) volume: \(track.volumeDb <= -90 ? "-inf" : String(format: "%.1f dB", track.volumeDb)). Drag; double-click sets 0 dB.")
+                    .midiLearnable(.volume(track.id))
                 TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
                     LevelBar(level: model.meterLevel(track: isMaster ? nil : track.id)).frame(width: 9, height: 100)
                 }
@@ -120,12 +122,15 @@ struct MixerStrip: View {
                         model.toggleSolo(track)
                     }
                     .hint("Solo this track only. ⌘-click adds it to the soloed tracks.")
+                    .midiLearnable(.solo(track.id))
                     toggle("M", on: track.mute, tint: Theme.accent) {
                         model.apply(.setMute(id: track.id, mute: !track.mute))
                     }
+                    .midiLearnable(.mute(track.id))
                     if track.kind == .audio || track.kind == .midi {
                         toggle("●", on: model.armedTracks.contains(track.id), tint: .red) { model.toggleArm(track.id) }
                             .hint("Arm this track only: it records and plays the MIDI keyboard. ⌘-click adds it to the armed tracks.")
+                            .midiLearnable(.arm(track.id))
                     }
                 }
             }
@@ -198,6 +203,7 @@ struct SendKnob: View {
                     }
                     .onEnded { _ in start = nil })
                 .simultaneousGesture(TapGesture(count: 2).onEnded { set(0) })
+                .midiLearnable(.send(track.id, ret.id))
             Text(start != nil ? (db <= -47.5 ? "-inf" : String(format: "%.0f", db)) : String(ret.name.prefix(1)))
                 .font(.system(size: 9, weight: .bold, design: start != nil ? .monospaced : .default))
                 .foregroundStyle(start != nil ? Theme.text : Theme.track(ret.colorIndex))

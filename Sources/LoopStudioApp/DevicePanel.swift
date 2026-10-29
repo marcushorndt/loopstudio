@@ -276,6 +276,7 @@ private struct DeviceCard: View {
                              sync: free.syncable ? KnobSync(synced: synced, unit: free.unit) {
                                  model.setDeviceParam(track.id, device.id, free.syncKey, synced ? 0 : 1)
                              } : nil)
+                        .midiLearnable(.deviceParam(track.id, device.id, param.key))
                     }
                 }
                 .opacity(device.bypassed ? 0.4 : 1)

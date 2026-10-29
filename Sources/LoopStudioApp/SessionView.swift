@@ -398,6 +398,7 @@ private struct SceneColumn: View {
                 }
                 .buttonStyle(.plain)
                 .overlay(RoundedRectangle(cornerRadius: 3).stroke(sceneSelected(row) ? Theme.text : Color.clear, lineWidth: 1.5))
+                .midiLearnable(.scene(row))
                 .contextMenu { SceneMenu(row: row) }
             }
         }

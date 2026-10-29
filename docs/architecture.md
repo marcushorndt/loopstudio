@@ -224,7 +224,8 @@ A project made on a studio interface therefore opens on a laptop: the ports stay
 - Sources and destinations come from CoreMIDI with their **unique ID**, which stays the same across restarts. `MIDIEndpointCatalog` lists them; the `DeviceChangeMonitor` reports hot-plug.
 - A MIDI track has a `MIDIInputSelection`: one source (by unique ID, with its name kept for display) or all online sources, and one channel or all.
 - A chosen source that is gone gives **no input and a visible issue**. It never falls back to "all sources", because that would let the wrong keyboard play the wrong instrument. When the device returns, the selection works again.
-- Later: MIDI learn (a machine-level map from controller messages to parameters and actions), MIDI output to hardware destinations with a latency offset, and MIDI clock in and out.
+- **MIDI Learn** (`MIDILearn.swift`): the MIDI button in the transport bar (⌘⇧M) covers every mappable control with a tint: faders, pan, sends, device knobs, mute, solo, arm, the transport buttons, the metronome and the scene buttons. A click picks one; the next controller change or note on any device binds it (one control per target, one target per control). A mapping is a channel and a controller or note number, not a device ID, so a controller that comes back with another unique ID still works. Knobs take the value over the control's range; buttons act on a press (a value of 64 or more, or a note-on). The mappings live in `midi-map.json` inside the project package: they belong to the project, like in Live, but they are not an edit and have no undo. A mapped control never reaches the instruments. The MIDI thread looks the control up under a lock and hands the outcome to the main actor.
+- Later: MIDI output to hardware destinations with a latency offset, and MIDI clock in and out.
 
 ## 11c. Control layer and MCP
 

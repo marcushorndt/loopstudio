@@ -21,12 +21,15 @@ public final class Renderer {
     /// The block being rendered: its first timeline frame, and whether the transport plays.
     private var blockStart: Int64 = 0
     private var blockPlaying = false
+    /// Effects that run on the clock (a free LFO) go on while the transport is stopped, as in Live. The clock
+    /// then counts on from where the song stopped: `idleFrame` is what the effects see as the frame.
+    private var idleFrame: Int64 = 0
+    private var idleShift: Int64 = 0
     /// Per node, 16 channels x 128 pitches: how many arrangement notes are on. The loop wrap releases them.
     private let held: UnsafeMutablePointer<UInt8>
-    /// A track whose sound after its fader is recorded (resampling), and the ring it goes to.
-    /// The engine sets both before every block, under its lock; it owns the ring, so this does not retain it.
-    var captureTrack: TrackID?
-    unowned(unsafe) var captureRing: CaptureRing?
+    /// Tracks whose sound after the fader is recorded (resampling), each with the ring it goes to.
+    /// The engine sets it before every block, under its lock; it owns the set, so this does not retain it.
+    unowned(unsafe) var captures: CaptureSet?
     /// The sound card input, for nodes with `NodePlan.input`. The engine owns it and sets it before every block.
     unowned(unsafe) var inputMonitor: InputMonitor?
 
@@ -327,6 +330,14 @@ public final class Renderer {
                         outLeft: UnsafeMutablePointer<Float>, outRight: UnsafeMutablePointer<Float>) {
         precondition(frames <= maxBlock)
         sessionOffset = (sessionFrame ?? startFrame) - startFrame
+        if transport {
+            idleShift = 0
+        } else {
+            // The first stopped block starts the idle clock where the song stands; it then runs on.
+            if blockPlaying || idleFrame < startFrame { idleFrame = startFrame }
+            idleShift = idleFrame - startFrame
+            idleFrame += Int64(frames)
+        }
         blockStart = startFrame; blockPlaying = transport
         buffers.update(repeating: 0, count: nodeCount * 2 * maxBlock)
         if portCount > 0 { portBuffers.update(repeating: 0, count: portCount * 2 * maxBlock) }
@@ -372,12 +383,15 @@ public final class Renderer {
                 peak = fader(node, l, r, l, r, startFrame: startFrame, frames: frames)
             }
             peaks[i] = max(peaks[i], peak)
-            if node.isMaster { continue }
-
-            if transport, let ring = captureRing, let track = captureTrack, i < plan.trackOrder.count, plan.trackOrder[i] == track {
-                ring.noteStart(frame: startFrame)
-                ring.write(l, r, frames: frames)
+            if transport, let captures, i < plan.trackOrder.count {
+                // The master is `nil` in the track order, and in a set that records it.
+                let track = plan.trackOrder[i]
+                for k in 0..<captures.count where captures.tracks[k] == track {
+                    captures.rings[k].noteStart(frame: startFrame)
+                    captures.rings[k].write(node.isMaster ? outLeft : l, node.isMaster ? outRight : r, frames: frames)
+                }
             }
+            if node.isMaster { continue }
             for (k, send) in node.sends.enumerated() where !send.preFader { sendOut(send, sendLines[i][k], l, r, startFrame: startFrame, frames: frames) }
             if let target = node.output { addDelayed(l, r, to: target, line: outputLines[i], frames: frames) }
             if let port = node.port {
@@ -484,8 +498,9 @@ public final class Renderer {
             }
             if changed { effect.configure(slot.live) }
             if effect.followsTempo {
-                let (beat, quarter) = songPosition(grid)
-                effect.clock(frame: grid, beat: beat, quarterSeconds: quarter)
+                // Stopped, the clock runs on from the song position (`idleShift`), so a free LFO keeps moving.
+                let (beat, quarter) = songPosition(grid + idleShift)
+                effect.clock(frame: grid + idleShift, beat: beat, quarterSeconds: quarter)
             }
             effect.process(l + offset, r + offset, frames: count)
         }

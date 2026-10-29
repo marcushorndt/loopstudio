@@ -268,3 +268,29 @@ private func division(_ name: String) -> Double { Double(NoteDivision.index(name
     #expect(delay.params.contains { $0.key == "timeMsSync" && $0.isSwitch })
     #expect(BuiltInEffects.makeSlot("delay")!.params["timeMsSync"] == 1, "a new delay follows the tempo")
 }
+
+@Test func aFreeLFOKeepsMovingWhileTheTransportIsStopped() {
+    var project = Project(name: "L", sampleRate: rate)
+    var track = Track(name: "A", kind: .audio)
+    var filter = BuiltInEffects.makeSlot("filter")!
+    filter.params = ["cutoff": 800, "lfoAmount": 0.8, "lfoRate": 3]
+    track.devices = [filter]
+    try! Command.insertTrack(track: track, index: 0).apply(to: &project)
+    let renderer = Renderer(plan: RenderPlan.compile(project, bank: AudioBank()), maxBlock: 512)
+    let fx = renderer.instancesForTesting[filter.id]!
+    var outL = [Float](repeating: 0, count: 512), outR = outL
+    func block(_ start: Int64, transport: Bool) {
+        outL.withUnsafeMutableBufferPointer { lp in outR.withUnsafeMutableBufferPointer { rp in
+            renderer.process(startFrame: start, frames: 512, transport: transport, outLeft: lp.baseAddress!, outRight: rp.baseAddress!)
+        } }
+    }
+    block(96_000, transport: true)
+    #expect(fx.lastClockFrame == 96_000 + 480, "playing: the clock is the song position")
+    // Stopped at 96_512: the engine renders the same position again and again; the effect clock runs on.
+    block(96_512, transport: false)
+    let first = fx.lastClockFrame
+    block(96_512, transport: false)
+    #expect(fx.lastClockFrame == first + 512, "stopped: one block later, the LFO is one block further")
+    block(96_512, transport: true)
+    #expect(fx.lastClockFrame == 96_512 + 480, "playing again: back on the song position")
+}

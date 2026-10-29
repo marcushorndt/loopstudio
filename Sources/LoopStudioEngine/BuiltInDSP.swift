@@ -35,9 +35,12 @@ public class DSPEffect: @unchecked Sendable {
     /// Only the audio thread calls it, before `process`. An effect that follows the tempo overrides `tempoChanged`
     /// or `step`.
     func clock(frame: Int64, beat: Double, quarterSeconds q: Double) {
+        lastClockFrame = frame
         if q != quarterSeconds { quarterSeconds = q; tempoChanged() }
         step(frame: frame, beat: beat)
     }
+    /// The frame of the last clock step, for tests.
+    private(set) var lastClockFrame = Int64.min
 
     func tempoChanged() {}
     func step(frame: Int64, beat: Double) {}

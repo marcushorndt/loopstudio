@@ -465,25 +465,35 @@ private func raw(_ plan: RenderPlan, frames: Int, block: Int = 4096) -> [Float] 
     let source = rig.track("Source", volume: -6)
     rig.clip(a, on: source)
     let renderer = Renderer(plan: rig.plan, maxBlock: 256)
-    let ring = CaptureRing(channels: 2, capacity: 10_000)
     var l = [Float](repeating: 0, count: 256), r = l
     func block(_ start: Int64, transport: Bool) {
         l.withUnsafeMutableBufferPointer { lb in r.withUnsafeMutableBufferPointer { rb in
             renderer.process(startFrame: start, frames: 256, transport: transport, outLeft: lb.baseAddress!, outRight: rb.baseAddress!)
         } }
     }
-    renderer.captureTrack = source
-    renderer.captureRing = ring
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("LoopStudio-capture-\(UUID().uuidString)", isDirectory: true)
+    try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let writer = try! CaptureWriter(url: dir.appendingPathComponent("s.caf"), sampleRate: rate, channels: 2)
+    let master = try! CaptureWriter(url: dir.appendingPathComponent("m.caf"), sampleRate: rate, channels: 2)
+    let set = CaptureSet([(source, writer), (nil, master)])
+    let ring = writer.ring, masterRing = master.ring
+    renderer.captures = set
     block(0, transport: false)            // a count-in records nothing
     block(512, transport: true)
     block(768, transport: true)
-    renderer.captureRing = nil
+    renderer.captures = nil
     block(1024, transport: true)          // after the stop, nothing more
-    #expect(ring.startFrame == 512)
+    #expect(ring.startFrame == 512 && masterRing.startFrame == 512)
     var out = [Float](repeating: 0, count: 1_000), outR = out
     let n = out.withUnsafeMutableBufferPointer { o in outR.withUnsafeMutableBufferPointer { ro in ring.read(into: o.baseAddress!, ro.baseAddress!, max: 1_000) } }
     #expect(n == 512)
     #expect(abs(out[100] - l[100]) < 1e-6, "the recording is what the track sends to the master")
+    var m = [Float](repeating: 0, count: 1_000), mR = m
+    let mn = m.withUnsafeMutableBufferPointer { o in mR.withUnsafeMutableBufferPointer { ro in masterRing.read(into: o.baseAddress!, ro.baseAddress!, max: 1_000) } }
+    #expect(mn == 512)
+    #expect(abs(m[100] - l[100]) < 1e-6, "the master take is the mix after the master fader; here that is the one track")
+    _ = writer.finish(); _ = master.finish()
 }
 
 @Test func sessionTakeOverStopsTheArrangementClipAutomation() throws {

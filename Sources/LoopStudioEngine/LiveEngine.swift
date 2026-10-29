@@ -26,9 +26,8 @@ public final class LiveEngine: @unchecked Sendable {
     private var loop: Range<Int64>?
     private var resetPending = false
     private var silencePending = false
-    /// Resampling: the track whose sound is recorded, and the ring of the writer that records it.
-    private var captureTrack: TrackID?
-    private var captureRing: CaptureRing?
+    /// Resampling: the tracks whose sound is recorded, each with the ring of the writer that records it.
+    private var captures: CaptureSet?
     /// The sound card input, for tracks that monitor it.
     private var inputMonitor: InputMonitor?
     /// The renderer that played last, until the audio thread takes over its held notes.
@@ -336,17 +335,23 @@ public final class LiveEngine: @unchecked Sendable {
     /// Records the sound of `track` (after its fader) while the transport plays. The first recorded frame
     /// is in `CaptureWriter.Result.firstFrame`, on the timeline.
     public func startCapture(track: TrackID, into writer: CaptureWriter) {
-        locked { captureTrack = track; captureRing = writer.ring }
+        startCapture(CaptureSet([(track, writer)]))
     }
 
-    /// After this returns, the audio thread writes nothing more into the ring: it waits for the callback
-    /// that may still hold the ring to end (one buffer at most).
+    /// Records several tracks at once, each after its fader. `nil` as the track is the master.
+    public func startCapture(_ set: CaptureSet) {
+        let old: CaptureSet? = locked { let old = captures; captures = set; return old }
+        retire(old)
+    }
+
+    /// After this returns, the audio thread writes nothing more into the rings: it waits for the callback
+    /// that may still hold them to end (one buffer at most).
     public func stopCapture() {
-        let (old, started): (CaptureRing?, UInt64) = locked {
-            let r = captureRing; captureRing = nil; captureTrack = nil; return (r, callbacks)
+        let (old, started): (CaptureSet?, UInt64) = locked {
+            let c = captures; captures = nil; return (c, callbacks)
         }
         var waited = 0
-        // Two callbacks later, the renderer has also dropped its own reference to the ring.
+        // Two callbacks later, the renderer has also dropped its own reference to the rings.
         while engine.isRunning, locked({ callbacks }) <= started &+ 1, waited < 200 { usleep(1_000); waited += 1 }
         withExtendedLifetime(old) {}
     }
@@ -386,7 +391,7 @@ public final class LiveEngine: @unchecked Sendable {
         handover = nil
         let reset = resetPending, silence = silencePending
         resetPending = false; silencePending = false
-        let capture = (captureTrack, captureRing)
+        let captures = self.captures
         let monitor = inputMonitor
         let liveTakenCount = liveCount
         liveTaken.update(from: live, count: liveCount)
@@ -431,8 +436,7 @@ public final class LiveEngine: @unchecked Sendable {
         // 2. Render, with no lock held.
         if let previous, previous !== renderer { renderer.takeOverNotes(from: previous, at: position) }
         if reset { renderer.reset() } else if silence { renderer.silenceNotes() }
-        renderer.captureTrack = capture.0
-        renderer.captureRing = capture.1
+        renderer.captures = captures
         renderer.inputMonitor = monitor
         for i in 0..<liveTakenCount { renderer.sendLive(track: liveTaken[i].track, liveTaken[i].status, liveTaken[i].data1, liveTaken[i].data2) }
 

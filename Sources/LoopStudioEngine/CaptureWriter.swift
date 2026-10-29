@@ -1,5 +1,18 @@
 import AVFoundation
 import Foundation
+import LoopStudioCore
+
+/// The tracks a resampling take records, with the ring of each writer. Built on the control thread; the audio
+/// thread only reads it. `nil` as a track is the master.
+public final class CaptureSet: @unchecked Sendable {
+    let tracks: [TrackID?]
+    let rings: [CaptureRing]
+    var count: Int { tracks.count }
+    public init(_ entries: [(track: TrackID?, writer: CaptureWriter)]) {
+        tracks = entries.map(\.track)
+        rings = entries.map(\.writer.ring)
+    }
+}
 
 /// Moves captured audio from a `CaptureRing` into a file on a writer queue, every 20 ms.
 ///

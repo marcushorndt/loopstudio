@@ -289,6 +289,13 @@ private struct DeviceCard: View {
         // The card is as tall as the panel, like a device in Live.
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Theme.radius))
+        // A click on the card marks the device: Delete removes it, like a clip. Knobs and buttons keep their own clicks.
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : Color.clear, lineWidth: 1.5))
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { model.selectDevice(device.id) })
         .contextMenu { DeviceMenu(track: track, device: device) }
+        .hint(selected ? "\(device.name): marked. Delete removes it; right-click for more." : "\(device.name). Click to mark it, right-click for more.")
     }
+
+    private var selected: Bool { model.selectedDevice == device.id }
 }

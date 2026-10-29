@@ -29,7 +29,7 @@ extension AppModel {
         case .undo: canUndo
         case .redo: canRedo
         case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil) || !selectedNotes.isEmpty
-            || selectedScene != nil
+            || selectedScene != nil || selectedDevice != nil
         case .cut, .copy: !selectedClips.isEmpty || selectedClip != nil
         case .duplicate: !selectedClips.isEmpty || selectedClip != nil || !selectedNotes.isEmpty || selectedScene != nil
         case .paste: !clipboard.isEmpty || !noteClipboard.isEmpty

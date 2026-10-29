@@ -223,8 +223,9 @@ extension Project {
             guard id != master.id else { throw CommandError.cannotChangeMaster }
             if let source {
                 guard source != id else { throw CommandError.wouldCreateCycle }
-                guard let s = track(source) else { throw CommandError.trackNotFound(source) }
-                guard s.kind != .master else { throw CommandError.invalidRoute("resampling the master is not supported yet") }
+                // The master as the source records the whole mix (Live: "Resampling"). It is never monitored,
+                // because the track feeds the master: that would be a loop.
+                guard track(source) != nil else { throw CommandError.trackNotFound(source) }
             }
             let old = try withTrack(id) { t -> TrackID? in
                 guard source == nil || t.kind == .audio else { throw CommandError.invalidValue("only audio tracks take an input track") }

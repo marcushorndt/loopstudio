@@ -97,9 +97,12 @@ final class AppModel {
     var keyboardOctave = 3
     var keyboardVelocity = 100
     var detailTab: DetailTab = .clip
+    /// The device card last clicked. Delete removes it; a click on a clip or track lets it go.
+    var selectedDevice: DeviceID?
     var selectedClip: ClipID? {
         // One selection: no clip in focus means no marked clips either, so Delete cannot hit a clip out of view.
         didSet {
+            if selectedClip != oldValue { selectedDevice = nil }
             if let c = selectedClip { if !selectedClips.contains(c) { selectedClips = [c] } } else if oldValue != nil { selectedClips = [] }
             // Like Live: selecting a clip shows it (its waveform or its notes) in the panel.
             if let c = selectedClip, c != oldValue { detailTab = .clip }
@@ -156,10 +159,9 @@ final class AppModel {
         didSet { UserDefaults.standard.set(inputStereo, forKey: "inputStereo") }
     }
     @ObservationIgnored let audioRecorder = AudioInputRecorder()
-    /// Records another track's sound (the track's "Audio From"), straight from the renderer.
-    @ObservationIgnored var resampleWriter: CaptureWriter?
-    /// Plugin latency of the track that a resampling take records, in frames.
-    @ObservationIgnored var resampleLatency = 0
+    /// Records other tracks' sound (the tracks' "Audio From"), straight from the renderer: one writer per
+    /// source, with the plugin latency of that source in frames, and the tracks the take goes to.
+    @ObservationIgnored var resamples: [(writer: CaptureWriter, latency: Int, tracks: [TrackID])] = []
     var recordingAudio = false
     /// The tracks a running take goes to, by kind. MIDI and audio tracks record at the same time.
     @ObservationIgnored var recordMIDITracks: [TrackID] = []
@@ -216,7 +218,13 @@ final class AppModel {
     /// While a clip of a marked group is dragged, the others follow by this offset.
     var groupDrag: CGSize = .zero
     var selectedTrack: TrackID? {
-        didSet { updateLiveTarget() }
+        didSet { updateLiveTarget(); if selectedTrack != oldValue { selectedDevice = nil } }
+    }
+
+    /// A click on a device card: Delete then removes that device, not the clip or track.
+    func selectDevice(_ id: DeviceID) {
+        selectedDevice = id
+        trackFocused = false
     }
     /// The tracks armed for recording (their arm buttons). They record and get the MIDI keyboard, whatever is
     /// selected. Empty: the selected track does.
@@ -1092,6 +1100,13 @@ final class AppModel {
             selectedNotes = []
             return
         }
+        if let device = selectedDevice {
+            selectedDevice = nil
+            if let track = project.allTracks.first(where: { $0.devices.contains { $0.id == device } }) {
+                apply(.removeDevice(track: track.id, device: device))
+                return
+            }
+        }
         if trackFocused { deleteFocusedTracks(); return }
         if let scene = selectedScene { deleteScene(scene); return }
         var commands: [Command] = []
@@ -1399,7 +1414,8 @@ final class AppModel {
     // MARK: Audio import and drop
 
     @discardableResult
-    func importAudio(_ url: URL) -> Asset? {
+    /// `name`: the asset's name, when it is not the file's (a take recorded into a file with a random name).
+    func importAudio(_ url: URL, name: String? = nil) -> Asset? {
         do {
             let imported = try AssetStore.importFile(url, into: packageURL)
             if let existing = project.assets.first(where: { $0.sha256 == imported.sha256 }) {
@@ -1407,7 +1423,7 @@ final class AppModel {
                 return existing
             }
             var asset = imported
-            asset.name = url.deletingPathExtension().lastPathComponent
+            asset.name = name ?? url.deletingPathExtension().lastPathComponent
             // The demo loops are made at 120 BPM.
             if url.path.contains("/LoopStudio/Demo Samples/") { asset.sourceTempo = 120 }
             try Command.addAsset(asset: asset).apply(to: &project) // not an undo step: the file stays in the project

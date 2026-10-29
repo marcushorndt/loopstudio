@@ -442,6 +442,10 @@ public enum StandardTools {
         var inputTrack: TrackID?
         var inputChannels: InputChannels?
         var midiInput: MIDIInputSelection?
+        /// Monitor In / Auto / Off.
+        var monitor: MonitorMode
+        /// Armed to record when the project was last saved.
+        var armed: Bool
         var clips: Int
         var slots: Int
         var devices: Int
@@ -450,6 +454,7 @@ public enum StandardTools {
             id = t.id; name = t.name; kind = t.kind; volumeDb = t.volumeDb; pan = t.pan; mute = t.mute; solo = t.solo
             output = t.output; hardwareOutput = t.hardwareOutput; audioInput = t.audioInput
             inputTrack = t.inputTrack; inputChannels = t.inputChannels; midiInput = t.midiInput
+            monitor = t.monitorMode; armed = t.armed ?? false
             clips = t.clips.count; slots = t.slots.compactMap { $0 }.count; devices = t.devices.count
         }
     }

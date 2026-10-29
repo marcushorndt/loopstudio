@@ -248,8 +248,11 @@ struct TrackIOSection: View {
                 Text("Ext. In").tag(TrackID?.none)
                 Divider()
                 ForEach(model.project.tracks.filter { $0.id != track.id && $0.kind != .returnTrack }, id: \.id) { Text($0.name).tag(Optional($0.id)) }
+                Divider()
+                Text("Resampling").tag(Optional(model.project.master.id))
             }
-            .labelsHidden().controlSize(.mini).hint("Ext. In records the sound card input. A track records that track's sound.")
+            .labelsHidden().controlSize(.mini)
+            .hint("Ext. In records the sound card input. A track records that track's sound. Resampling records the master mix; it is not monitored, because this track feeds the master.")
             if track.inputTrack == nil { inputChannelPicker.fixedSize() }
         }
         HStack(spacing: 2) {

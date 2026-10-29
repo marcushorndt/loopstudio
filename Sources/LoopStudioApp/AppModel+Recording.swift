@@ -52,36 +52,46 @@ extension AppModel {
     }
 
     /// Opens the audio input for the armed audio tracks, then starts the transport. Tracks that take another
-    /// track's sound ("Audio From" a track) record it from the renderer; one such track per take.
+    /// track's sound ("Audio From" a track, or the master) record it from the renderer, in the same take.
     func startAudioRecording() async {
-        guard let id = recordAudioTracks.first else { return }
-        // "Audio From" another track: record its sound after the fader, with no sound card involved.
-        if let source = project.track(id)?.inputTrack {
-            // One resampling track records per take; other armed audio tracks wait for the next one.
-            recordAudioTracks = [id]
+        guard !recordAudioTracks.isEmpty else { return }
+        // "Audio From" another track: its sound after the fader, with no sound card involved. Tracks with
+        // the same source share one file.
+        var sources: [TrackID] = [], sourceTracks: [[TrackID]] = []
+        for id in recordAudioTracks {
+            guard let source = project.track(id)?.inputTrack else { continue }
+            if let i = sources.firstIndex(of: source) { sourceTracks[i].append(id) } else { sources.append(source); sourceTracks.append([id]) }
+        }
+        if !sources.isEmpty {
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("LoopStudio-\(UUID().uuidString)", isDirectory: true)
             do {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                let writer = try CaptureWriter(url: folder.appendingPathComponent("\(nextTakeName()).caf"), sampleRate: sampleRate, channels: 2)
-                resampleWriter = writer
-                resampleLatency = plan?.arrival(of: source) ?? 0
-                engine.startCapture(track: source, into: writer)
+                resamples = try zip(sources, sourceTracks).map { source, tracks in
+                    let writer = try CaptureWriter(url: folder.appendingPathComponent("\(UUID().uuidString).caf"), sampleRate: sampleRate, channels: 2)
+                    let latency = source == project.master.id ? (plan?.latencyFrames ?? 0) : (plan?.arrival(of: source) ?? 0)
+                    return (writer, latency, tracks)
+                }
+                engine.startCapture(CaptureSet(zip(sources, resamples).map { ($0 == project.master.id ? nil : $0, $1.writer) }))
             } catch {
+                resamples = []
                 audioStartFailed("Cannot record: \(error.localizedDescription)")
                 return
             }
-            beginRecording(status: "Recording \(project.track(source)?.name ?? "the input track")")
+        }
+        // Each armed audio track on the sound card records its own input channels. Tracks on the same
+        // channels share one file.
+        let external = recordAudioTracks.filter { project.track($0)?.inputTrack == nil }
+        if external.isEmpty {
+            beginRecording(status: "Recording \(sources.map { project.track($0)?.name ?? "?" }.joined(separator: ", "))")
             return
         }
-        // Each armed audio track records its own input channels. Tracks on the same channels share one file.
-        recordAudioTracks = recordAudioTracks.filter { project.track($0)?.inputTrack == nil }
         guard await microphoneAllowed() else {
             audioStartFailed("Microphone access is off. Turn it on in System Settings > Privacy & Security > Microphone.")
             return
         }
         var lanes: [AudioInputRecorder.Lane] = []
         var groups: [[TrackID]] = []
-        for id in recordAudioTracks {
+        for id in external {
             let ch = inputChannels(of: id)
             let lane = AudioInputRecorder.Lane(left: ch.first, right: ch.stereo ? ch.first + 1 : nil)
             if let i = lanes.firstIndex(of: lane) { groups[i].append(id) } else { lanes.append(lane); groups.append([id]) }
@@ -104,10 +114,15 @@ extension AppModel {
         project.track(id)?.inputChannels ?? InputChannels(first: inputLeft, stereo: inputStereo)
     }
 
-    /// The audio input did not open. Armed MIDI tracks still record; with none, recording ends.
+    /// The audio input did not open. Resampling tracks and armed MIDI tracks still record; with none, recording ends.
     private func audioStartFailed(_ message: String) {
-        recordAudioTracks = []
         recordLaneTracks = []
+        if !resamples.isEmpty {
+            recordAudioTracks = resamples.flatMap(\.tracks)
+            beginRecording(status: message + ". The other tracks record.")
+            return
+        }
+        recordAudioTracks = []
         if recordMIDITracks.isEmpty {
             recording = false
             recordArmed = false
@@ -138,48 +153,55 @@ extension AppModel {
         }
     }
 
-    /// Ends a recording of another track's sound. It starts exactly where the renderer wrote its first frame.
-    private func finishResampling(_ writer: CaptureWriter) {
-        engine.stopCapture()
-        resampleWriter = nil
+    /// Ends a recording of another track's sound and puts it on `tracks`. It starts exactly where the renderer
+    /// wrote its first frame. Returns the length in seconds, and any problem.
+    private func finishResampling(_ writer: CaptureWriter, latency: Int, tracks: [TrackID]) -> (seconds: Double, notes: [String]) {
         let result = writer.finish()
         let url = writer.url
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        guard !recordAudioTracks.isEmpty, result.frames > 0, let first = result.firstFrame else { recordAudioTracks = []; status = "Nothing recorded"; return }
-        guard let asset = importAudio(url) else { status = "Could not import the recording"; return }
+        var notes: [String] = []
+        guard !tracks.isEmpty, result.frames > 0, let first = result.firstFrame else { return (0, []) }
+        guard let asset = importAudio(url, name: nextTakeName()) else { return (0, ["Could not import the recording"]) }
         let sr = sampleRate
         // The source's plugins made its sound late; the take moves back by as much. Before the song start,
         // the late head is skipped instead.
-        let at = first - Int64(resampleLatency)
+        let at = first - Int64(latency)
         let skip = max(0, -at)
         let start = project.tempoMap.tick(atFrame: Frame(max(0, at)), sampleRate: sr)
         let end = project.tempoMap.tick(atFrame: Frame(at + result.frames), sampleRate: sr)
-        guard end > start else { status = "Nothing recorded"; return }
+        guard end > start else { return (0, []) }
         var clip = project.makeAudioClip(asset: asset.id, start: start, length: Tick(max(1, end.rawValue - start.rawValue)))
         clip.offset = project.tempoMap.tick(atFrame: Frame(skip), sampleRate: sr)
         clip.loop = false
         clip.warpMode = .off
-        placeAudioTake(clip, on: recordAudioTracks)
-        recordAudioTracks = []
-        status = String(format: "Recorded %.1f s", Double(result.frames) / sr)
+        placeAudioTake(clip, on: tracks)
         if result.droppedFrames > 0 {
-            status += String(format: ". Warning: %.2f s were lost (the disk was too slow)", Double(result.droppedFrames) / sr)
+            notes.append(String(format: "Warning: %.2f s were lost (the disk was too slow)", Double(result.droppedFrames) / sr))
         }
-        if let error = result.writeError { status += ". Warning: writing the take failed: \(error)" }
+        if let error = result.writeError { notes.append("Warning: writing the take failed: \(error)") }
+        return (Double(result.frames) / sr, notes)
     }
 
     /// Cuts each take so it starts where the transport started, makes it an asset, and puts clips on its tracks.
     func finishAudioRecording() {
         recordingAudio = false
-        if let writer = resampleWriter { finishResampling(writer); return }
-        let takes = audioRecorder.stopAll()
+        var notes: [String] = []
+        var seconds = 0.0
+        if !resamples.isEmpty {
+            engine.stopCapture()
+            let done = resamples
+            resamples = []
+            for r in done {
+                let (s, n) = finishResampling(r.writer, latency: r.latency, tracks: r.tracks)
+                seconds = max(seconds, s); notes += n
+            }
+            if let folder = done.first?.writer.url.deletingLastPathComponent() { try? FileManager.default.removeItem(at: folder) }
+        }
+        let takes = audioRecorder.isRecording ? audioRecorder.stopAll() : []
         // The take may have closed the input (nothing monitors it): the engine must not read it any more.
         engine.setInputMonitor(audioRecorder.monitor)
         let groups = recordLaneTracks
         recordLaneTracks = []
         recordAudioTracks = []
-        var notes: [String] = []
-        var seconds = 0.0
         for (take, tracks) in zip(takes, groups) {
             guard let take else { continue }
             if let problem = placeInputTake(take, on: tracks) { notes.append(problem); continue }

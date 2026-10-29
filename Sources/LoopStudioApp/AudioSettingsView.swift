@@ -83,6 +83,16 @@ struct AudioSettingsView: View {
                 ForEach(midi, id: \.uniqueID) { Text("\($0.name)\($0.isOffline ? " (offline)" : "")") }
                 Text("Each MIDI track chooses its device and channel in the mixer (MIDI From). Armed tracks get the notes.").font(.caption).foregroundStyle(Theme.dim)
             }
+            Section("MIDI clock out") {
+                let outs = MIDIEndpointCatalog.destinations()
+                Picker("Send clock to", selection: Binding(get: { model.midiClockUID ?? Int32.min }, set: { model.midiClockUID = $0 == Int32.min ? nil : $0 })) {
+                    Text("Off").tag(Int32.min)
+                    ForEach(outs, id: \.uniqueID) { Text($0.name).tag($0.uniqueID) }
+                    if let uid = model.midiClockUID, !outs.contains(where: { $0.uniqueID == uid }) { Text("Device offline").tag(uid) }
+                }
+                Text("Hardware on this port follows the tempo and the transport: Start, Stop and the song position go with the clock.")
+                    .font(.caption).foregroundStyle(Theme.dim)
+            }
             Section("Plugins") {
                 Toggle("Run plugins in a separate process", isOn: Binding(
                     get: { model.host.outOfProcess },

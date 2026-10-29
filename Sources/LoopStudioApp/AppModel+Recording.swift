@@ -130,7 +130,7 @@ extension AppModel {
             return
         }
         updateMetronome()
-        if !recordPunch { engine.playAfterCountIn(beats: countInBars * meter.beats) }
+        if !recordPunch { engine.playAfterCountIn(beats: countInBars * meter.beats); startClockAfterCountIn() }
         transportPlaying = true
         status = message + ". The MIDI tracks record."
     }
@@ -141,7 +141,7 @@ extension AppModel {
         recording = true
         recordingAudio = true
         updateMetronome()
-        if !recordPunch { engine.playAfterCountIn(beats: countInBars * meter.beats) }
+        if !recordPunch { engine.playAfterCountIn(beats: countInBars * meter.beats); startClockAfterCountIn() }
         transportPlaying = true
         status = recordStatus(text)
     }

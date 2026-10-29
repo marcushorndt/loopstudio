@@ -271,6 +271,16 @@ public final class LiveEngine: @unchecked Sendable {
         }
     }
 
+    /// The host time at which session frame `frame` plays, from the last block's anchor. Before the first
+    /// block, now.
+    public func hostTime(forSessionFrame frame: Int64) -> UInt64 {
+        locked {
+            guard anchorHost != 0 else { return mach_absolute_time() }
+            let seconds = Double(frame - anchorFrame) / sampleRate
+            return seconds >= 0 ? anchorHost &+ HostClock.ticks(fromSeconds: seconds) : anchorHost &- HostClock.ticks(fromSeconds: -seconds)
+        }
+    }
+
     public func play() {
         // The session clock is not reset here: a resume after a pause continues it. A jump while stopped syncs it.
         locked { playing = true; countInRemaining = 0; stampPending = true; stateGeneration &+= 1 }

@@ -324,6 +324,31 @@ final class AppModel {
     var learnTarget: MIDIMapTarget?
     var midiMappings: [MIDIMapping] = []
     @ObservationIgnored let midiLearnBox = MIDILearnBox()
+    /// MIDI clock out: the destination (per Mac) and the sender that follows the transport.
+    var midiClockUID: Int32? = UserDefaults.standard.object(forKey: "midiClockUID") as? Int32 {
+        didSet {
+            UserDefaults.standard.set(midiClockUID, forKey: "midiClockUID")
+            midiClock.setDestination(uniqueID: midiClockUID)
+            if transportPlaying, !engine.isCountingIn { midiClock.start(atFrame: engine.sessionFrame, tick: currentTick.rawValue) }
+        }
+    }
+    @ObservationIgnored private(set) lazy var midiClock: MIDIClockSender = {
+        let engine = self.engine
+        let sender = MIDIClockSender(nowFrame: { engine.sessionFrame }, hostTime: { engine.hostTime(forSessionFrame: $0) })
+        sender.setDestination(uniqueID: midiClockUID)
+        return sender
+    }()
+
+    /// Starts the MIDI clock when the transport really starts: at once, or when the count-in ends.
+    func startClockAfterCountIn() {
+        guard midiClock.isOn else { return }
+        Task { @MainActor [weak self] in
+            var waited = 0
+            while let self, self.engine.isCountingIn, waited < 3_000 { try? await Task.sleep(for: .milliseconds(10)); waited += 1 }
+            guard let self, self.transportPlaying else { return }
+            self.midiClock.start(atFrame: self.engine.sessionFrame, tick: self.currentTick.rawValue)
+        }
+    }
     @ObservationIgnored private var deviceMonitor: DeviceChangeMonitor?
     /// The chosen output is gone, so the default plays. It switches back when the device returns.
     @ObservationIgnored private var outputFallback = false
@@ -496,7 +521,7 @@ final class AppModel {
             return
         }
         updateMetronome()
-        if !recordPunch { engine.playAfterCountIn(beats: countInBars * meter.beats) }
+        if !recordPunch { engine.playAfterCountIn(beats: countInBars * meter.beats); startClockAfterCountIn() }
         transportPlaying = true
         status = recordStatus("Recording")
     }
@@ -611,6 +636,7 @@ final class AppModel {
         let quarter = (60.0 / max(20, project.tempoMap.bpm(at: here))) * sampleRate
         let beat = Int64(quarter * Double(meter.beatTicks) / Double(Tick.perQuarter))
         engine.setMetronome(enabled: metronomeOn, beatFrames: beat, beatsPerBar: meter.beats)
+        midiClock.setTempo(bpm: project.tempoMap.bpm(at: here), sampleRate: sampleRate)
         guard metronomeOn else { engine.setClickGrid(frames: [], accents: []); return }
         let beats = project.clickBeats(upTo: max(planHorizon, here + Tick(barTicks * 300)))
         let map = project.tempoMap, sr = sampleRate
@@ -624,6 +650,7 @@ final class AppModel {
         resumeSession()
         engine.play()
         transportPlaying = true
+        if midiClock.isOn { midiClock.start(atFrame: engine.sessionFrame, tick: currentTick.rawValue) }
     }
 
     func pause() {
@@ -631,6 +658,7 @@ final class AppModel {
         keepSessionForResume()
         engine.pause()
         transportPlaying = false
+        midiClock.stop()
     }
 
     /// The transport stops: the Session keeps only what plays now (see `SessionPerformance.stop`).

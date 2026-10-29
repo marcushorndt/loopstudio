@@ -26,9 +26,16 @@ struct PianoRoll: View {
     /// Notes the pen draws during one drag. They become one edit when the drag ends.
     @State private var drawn: [MIDINote] = []
 
+    /// The loop bar above the notes, like Live's: its end is the clip length and can be dragged.
+    private static let loopBarHeight: CGFloat = 16
+    @State private var draftLength: Tick?
+    @State private var scrollY: CGFloat = 0
+
     private var beats: Double { max(1, Double(clip.length.rawValue) / Double(Tick.perQuarter)) }
+    /// Room past the end of the clip, so the loop can be made longer.
+    private var roomBeats: Double { beats + max(4, beats * 0.5) }
     private var pxPerBeat: CGFloat { max(8, (visibleWidth - keysWidth - 2) / CGFloat(beats)) * CGFloat(zoom) }
-    private var width: CGFloat { max(100, CGFloat(beats) * pxPerBeat) }
+    private var width: CGFloat { max(100, CGFloat(roomBeats) * pxPerBeat) }
     private var height: CGFloat { CGFloat(highPitch - lowPitch + 1) * rowHeight }
 
     var body: some View {
@@ -56,6 +63,13 @@ struct PianoRoll: View {
             }
             ScrollViewReader { proxy in
                 ScrollView([.horizontal, .vertical]) {
+                    VStack(spacing: 0) {
+                    // The loop bar is pinned to the top: it moves with the vertical scroll, against it.
+                    HStack(spacing: 0) {
+                        Rectangle().fill(Theme.panel).frame(width: keysWidth, height: Self.loopBarHeight)
+                        loopBar.frame(width: width, height: Self.loopBarHeight)
+                    }
+                    .offset(y: scrollY).zIndex(1)
                     HStack(alignment: .top, spacing: 0) {
                         Keys(rowHeight: rowHeight) { if model.previewNotes { model.auditionNote($0) } }.frame(width: keysWidth, height: height)
                         ZStack(alignment: .topLeading) {
@@ -80,8 +94,10 @@ struct PianoRoll: View {
                         .frame(width: width, height: height)
                     }
                     .id("roll")
+                    }
                 }
                 .onScrollGeometryChange(for: CGFloat.self, of: \.containerSize.width) { _, w in visibleWidth = w }
+                .onScrollGeometryChange(for: CGFloat.self, of: \.contentOffset.y) { _, y in scrollY = max(0, y) }
                 // A pinch zooms in time; with Option held it zooms the row height.
                 .simultaneousGesture(MagnifyGesture()
                     .onChanged { g in
@@ -109,6 +125,46 @@ struct PianoRoll: View {
             }
             .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: Theme.radius))
         }
+    }
+
+    /// The loop bar: a brace from the clip start to its length, with bar numbers. Drag the end to set the length.
+    private var loopBar: some View {
+        let shown = draftLength ?? clip.length
+        return Canvas { ctx, size in
+            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.panel))
+            let barBeats = Double(model.barTicks) / Double(Tick.perQuarter)
+            var b = 0.0, n = 1
+            while b <= roomBeats {
+                let x = CGFloat(b) * pxPerBeat
+                ctx.fill(Path(CGRect(x: x, y: size.height - 5, width: 1, height: 5)), with: .color(Theme.dim))
+                if pxPerBeat * CGFloat(barBeats) >= 24 {
+                    ctx.draw(Text("\(n)").font(.system(size: 8, design: .monospaced)).foregroundStyle(Theme.dim), at: CGPoint(x: x + 3, y: 6), anchor: .leading)
+                }
+                b += barBeats; n += 1
+            }
+            let x1 = CGFloat(shown.quarters) * pxPerBeat
+            let brace = CGRect(x: 0, y: 2, width: max(2, x1), height: size.height - 4)
+            ctx.fill(Path(roundedRect: brace, cornerRadius: 2), with: .color(tint.opacity(draftLength == nil ? 0.45 : 0.7)))
+            ctx.stroke(Path(roundedRect: brace, cornerRadius: 2), with: .color(tint), lineWidth: 1)
+            ctx.fill(Path(CGRect(x: x1 - 1.5, y: 2, width: 3, height: size.height - 4)), with: .color(tint))
+            ctx.fill(Path(CGRect(x: 0, y: size.height - 1, width: size.width, height: 1)), with: .color(Theme.line))
+        }
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 1)
+            .onChanged { v in
+                // The end of the brace moves; a beat is the smallest loop. Option drags free of the grid.
+                let free = NSEvent.modifierFlags.contains(.option)
+                var raw = Int64(Double(v.location.x / pxPerBeat) * Double(Tick.perQuarter))
+                if !free { raw = (raw + Tick.perQuarter / 2) / Tick.perQuarter * Tick.perQuarter }
+                draftLength = Tick(max(free ? grid : Tick.perQuarter, raw))
+            }
+            .onEnded { _ in
+                if let length = draftLength, length != clip.length {
+                    model.apply(.setClipRange(clip: clip.id, start: clip.start, length: length))
+                }
+                draftLength = nil
+            })
+        .hint("Loop bar. Drag the end to set the clip's loop length; notes past the end stay but do not play. Option drags free of the grid.")
     }
 
     private var marked: [MIDINote] { clip.notes.filter { model.selectedNotes.contains($0) } }
@@ -174,7 +230,7 @@ struct PianoRoll: View {
             ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: rowHeight)), with: .color(black ? .black.opacity(0.28) : .white.opacity(0.03)))
             if pitch % 12 == 0 { ctx.fill(Path(CGRect(x: 0, y: y + rowHeight - 1, width: size.width, height: 1)), with: .color(.white.opacity(0.12))) }
         }
-        let steps = Int(beats * 4) + 1
+        let steps = Int(roomBeats * 4) + 1
         for i in 0...steps {
             let x = CGFloat(i) * pxPerBeat / 4
             let strong = i % 16 == 0, beat = i % 4 == 0

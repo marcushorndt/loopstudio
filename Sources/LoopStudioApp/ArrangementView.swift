@@ -352,6 +352,8 @@ private struct Playhead: View {
     }
 }
 
+/// The loop brace in the ruler, like Live's: drag its ends to resize the loop, drag its middle to move it,
+/// click it to turn the loop on or off. It stays visible, dimmed, while the loop is off.
 private struct LoopBrace: View {
     @Environment(AppModel.self) private var model
     let width: CGFloat
@@ -359,26 +361,45 @@ private struct LoopBrace: View {
     @State private var dragEnd: CGFloat = 0
 
     var body: some View {
-        if let loop = model.project.loop, loop.enabled {
+        if let loop = model.project.loop {
+            let on = loop.enabled
+            let tint = on ? Theme.accent : Theme.dim
             let x0 = tickX(loop.start, model) + dragStart
             let x1 = tickX(loop.end, model) + dragEnd
+            let length = loop.end.rawValue - loop.start.rawValue
             ZStack(alignment: .topLeading) {
-                Rectangle().fill(Theme.accent.opacity(0.07)).frame(width: max(1, x1 - x0)).offset(x: x0)
-                Rectangle().fill(Theme.accent).frame(width: max(1, x1 - x0), height: 5).offset(x: x0, y: rulerHeight - 5)
-                handle(x: x0).gesture(DragGesture().onChanged { dragStart = $0.translation.width }.onEnded { g in
+                if on {
+                    Rectangle().fill(Theme.accent.opacity(0.07)).frame(width: max(1, x1 - x0)).offset(x: x0).allowsHitTesting(false)
+                }
+                // The brace itself. Its hit zone is the lower part of the ruler; the part above still scrubs.
+                Rectangle().fill(tint.opacity(on ? 1 : 0.5)).frame(width: max(1, x1 - x0), height: 5)
+                    .frame(width: max(1, x1 - x0), height: 10, alignment: .bottom)
+                    .contentShape(Rectangle())
+                    .offset(x: x0, y: rulerHeight - 10)
+                    .gesture(DragGesture().onChanged { dragStart = $0.translation.width; dragEnd = $0.translation.width }.onEnded { g in
+                        dragStart = 0; dragEnd = 0
+                        let start = model.snap(xTick(tickX(loop.start, model) + g.translation.width, model))
+                        model.setLoop(start: start, end: Tick(start.rawValue + length))
+                    })
+                    .onTapGesture { model.toggleLoop() }
+                    .hint(on ? "Loop brace: drag to move the loop, drag an end to resize it, click to turn the loop off (⇧⌘L)."
+                          : "Loop is off. Click the brace to turn it on (⇧⌘L); drag it or its ends to set the range first.")
+                handle(x: x0, tint: tint).gesture(DragGesture().onChanged { dragStart = $0.translation.width }.onEnded { g in
                     dragStart = 0
                     model.setLoop(start: model.snap(xTick(tickX(loop.start, model) + g.translation.width, model)), end: loop.end)
                 })
-                handle(x: x1 - 6).gesture(DragGesture().onChanged { dragEnd = $0.translation.width }.onEnded { g in
+                .hint("Loop start")
+                handle(x: x1 - 6, tint: tint).gesture(DragGesture().onChanged { dragEnd = $0.translation.width }.onEnded { g in
                     dragEnd = 0
                     model.setLoop(start: loop.start, end: model.snap(xTick(tickX(loop.end, model) + g.translation.width, model)))
                 })
+                .hint("Loop end")
             }
         }
     }
 
-    private func handle(x: CGFloat) -> some View {
-        Rectangle().fill(Theme.accent).frame(width: 6, height: 14).offset(x: x, y: rulerHeight - 14).contentShape(Rectangle())
+    private func handle(x: CGFloat, tint: Color) -> some View {
+        Rectangle().fill(tint).frame(width: 6, height: 14).offset(x: x, y: rulerHeight - 14).contentShape(Rectangle())
     }
 }
 

@@ -31,3 +31,14 @@ func setTheSessionTempoFromHere() async throws {
     try await Task.sleep(for: .seconds(2))
     #expect(s.peers >= 1, "no app on this Mac has Link on")
 }
+
+/// A hand tool: `LOOPSTUDIO_LINK_PEERS=1` joins the session for five seconds and prints who is there.
+@Test(.enabled(if: ProcessInfo.processInfo.environment["LOOPSTUDIO_LINK_PEERS"] == "1"))
+func printTheSessionPeers() async throws {
+    let s = LinkSession(bpm: 120)
+    s.isEnabled = true
+    for second in 1...5 {
+        try await Task.sleep(for: .seconds(1))
+        print("LINK after \(second) s: \(s.peers) peer(s), tempo \(s.snapshot().tempo), playing \(s.snapshot().isPlaying)")
+    }
+}

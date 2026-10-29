@@ -515,6 +515,8 @@ public enum StandardTools {
             ("insertClip (MIDI clip with two notes)", .insertClip(track: TrackID(uuid(7)), clip: .midi(MIDIClip(
                 id: ClipID(uuid(4)), start: 0, length: 3840, loop: true,
                 notes: [MIDINote(tick: 0, length: 480, pitch: 60), MIDINote(tick: 960, length: 480, pitch: 64, velocity: 90)])))),
+            ("setClip (replace a clip by its ID, here trimmed to start one bar later)", .setClip(clip: .midi(MIDIClip(
+                id: ClipID(uuid(4)), start: 3840, length: 3840, loop: false, notes: [MIDINote(tick: 0, length: 480, pitch: 67)])))),
             ("removeClip", .removeClip(clip: ClipID(uuid(4)))),
             ("moveClip", .moveClip(clip: ClipID(uuid(4)), toTrack: track.id, start: 3840)),
             ("setClipRange", .setClipRange(clip: ClipID(uuid(4)), start: 0, length: 7680)),

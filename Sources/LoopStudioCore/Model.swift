@@ -306,6 +306,53 @@ public enum Clip: Hashable, Sendable, Identifiable {
         }
     }
 
+    /// The clip with its start moved to `newStart` and its end kept: the left edge trimmed or extended.
+    /// The content stays where it was on the timeline: audio moves its offset, notes and clip automation
+    /// move the other way. Notes cut by the new start are shortened; notes and points before it are dropped.
+    /// `nil` when nothing would remain, or audio would start before its file.
+    public func trimmingStart(to newStart: Tick) -> Clip? {
+        let end = start.rawValue + length.rawValue
+        let d = newStart.rawValue - start.rawValue
+        guard newStart.rawValue >= 0, newStart.rawValue < end else { return nil }
+        func shift(_ lanes: [AutomationLane]) -> [AutomationLane] {
+            lanes.map { lane in
+                var l = lane
+                l.points = lane.points.compactMap { p in
+                    var p = p; p.tick = Tick(p.tick.rawValue - d); return p.tick.rawValue >= 0 ? p : nil
+                }
+                return l
+            }.filter { !$0.points.isEmpty }
+        }
+        var clip = with(start: newStart, length: Tick(end - newStart.rawValue))
+        switch clip {
+        case .audio(var c):
+            guard c.offset.rawValue + d >= 0 else { return nil }
+            c.offset = Tick(c.offset.rawValue + d)
+            c.lanes = c.lanes.map(shift)
+            if let env = c.gainEnvelope {
+                let moved = env.compactMap { p -> AutomationPoint? in
+                    var p = p; p.tick = Tick(p.tick.rawValue - d); return p.tick.rawValue >= 0 ? p : nil
+                }
+                c.gainEnvelope = moved.isEmpty ? nil : moved
+            }
+            clip = .audio(c)
+        case .midi(var c):
+            c.notes = c.notes.compactMap { n in
+                var n = n
+                let s = n.tick.rawValue - d, e = s + n.length.rawValue
+                guard e > 0 else { return nil }
+                n.tick = Tick(max(0, s)); n.length = Tick(e - max(0, s))
+                return n
+            }
+            c.lanes = c.lanes.map(shift)
+            clip = .midi(c)
+        case .dummy(var c):
+            c.lanes = shift(c.lanes)
+            clip = .dummy(c)
+        }
+        return clip
+    }
+
     public func with(start: Tick, length: Tick) -> Clip {
         switch self {
         case .audio(var c): c.start = start; c.length = length; return .audio(c)

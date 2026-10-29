@@ -231,6 +231,8 @@ private struct ArrangementClip: View {
     let trackCount: Int
     @State private var drag: CGSize = .zero
     @State private var resize: CGFloat = 0
+    /// A drag of the left edge, in points: it trims or extends the start, the content stays in place.
+    @State private var trim: CGFloat = 0
 
     /// The clip being dragged follows its own gesture; the rest of a marked group follows it.
     private var shown: CGSize { drag != .zero ? drag : (model.selectedClips.contains(clip.id) ? model.groupDrag : .zero) }
@@ -238,13 +240,14 @@ private struct ArrangementClip: View {
     var body: some View {
         let tint = Theme.track(clip.colorIndex ?? track.colorIndex)
         let x = tickX(clip.start, model)
-        let w = max(6, tickX(clip.length, model) + resize)
+        let w = max(6, tickX(clip.length, model) + resize - trim)
         let selected = model.selectedClips.contains(clip.id) || model.selectedClip == clip.id
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.clipBody(clip.colorIndex ?? track.colorIndex))
             if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                 let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
-                WaveformView(peaks: peaks, color: tint.opacity(0.9), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
+                WaveformView(peaks: peaks, color: tint.opacity(0.9), fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop,
+                             start: Double(a.offset.rawValue) / max(1, assetTicks))
                     .padding(.top, 16).padding(.bottom, 3)
             }
             if case .audio(let a) = clip, let env = a.gainEnvelope, !env.isEmpty {
@@ -257,6 +260,19 @@ private struct ArrangementClip: View {
         }
         .frame(width: w, height: laneHeight - 6)
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : tint.opacity(0.55), lineWidth: selected ? 1.5 : 1))
+        .overlay(alignment: .leading) {
+            Rectangle().fill(.clear).frame(width: 8).contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 1)
+                    .onChanged { trim = $0.translation.width }
+                    .onEnded { g in
+                        let start = model.snap(xTick(tickX(clip.start, model) + g.translation.width, model))
+                        trim = 0
+                        if let trimmed = clip.trimmingStart(to: start) { model.apply(.setClip(clip: trimmed)) }
+                        else { model.status = "The clip cannot start there: its audio begins later" }
+                    })
+                .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+                .hint("Drag to trim the start. The sound stays in place.")
+        }
         .overlay(alignment: .trailing) {
             Rectangle().fill(.clear).frame(width: 8).contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 1)
@@ -268,7 +284,7 @@ private struct ArrangementClip: View {
                     })
                 .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
         }
-        .offset(x: x + shown.width, y: 3 + shown.height)
+        .offset(x: x + trim + shown.width, y: 3 + shown.height)
         .zIndex(shown == .zero ? 0 : 10)
         .onTapGesture {
             model.select(clip: clip.id, extend: NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command))

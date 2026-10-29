@@ -37,3 +37,28 @@ private let lane = ParameterAddress(node: ParameterAddress.ownTrack, parameter: 
         #expect(abs(got - want) < 0.05, "tick \(offset): \(got) vs \(want)")
     }
 }
+
+@Test func trimmingTheStartKeepsTheContentInPlaceAndUndoes() throws {
+    var p = Project(name: "T")
+    let t = Track(name: "M", kind: .midi)
+    try Command.insertTrack(track: t, index: 0).apply(to: &p)
+    let clip = MIDIClip(start: 0, length: 3840, notes: [MIDINote(tick: 0, length: 480, pitch: 60),
+                                                         MIDINote(tick: 720, length: 480, pitch: 62),
+                                                         MIDINote(tick: 1920, length: 480, pitch: 64)])
+    try Command.insertClip(track: t.id, clip: .midi(clip)).apply(to: &p)
+    let before = p
+    let trimmed = try #require(Clip.midi(clip).trimmingStart(to: 960))
+    let undo = try Command.setClip(clip: trimmed).apply(to: &p)
+    guard case .midi(let m)? = p.findClip(clip.id)?.1 else { Issue.record("clip gone"); return }
+    #expect(m.start == 960 && m.length == 2880)
+    #expect(m.notes.map(\.tick) == [0, 960], "the cut note starts at the edge; the later note keeps its place")
+    #expect(m.notes.map(\.length) == [240, 480])
+    try undo.apply(to: &p)
+    #expect(p == before)
+
+    var audio = AudioClip(asset: AssetID(), start: 1920, length: 1920, offset: 0)
+    audio.loop = false
+    #expect(Clip.audio(audio).trimmingStart(to: 960) == nil, "audio cannot start before its file")
+    guard case .audio(let a)? = Clip.audio(audio).trimmingStart(to: 2400) else { Issue.record("no audio"); return }
+    #expect(a.offset == 480 && a.length == 1440)
+}

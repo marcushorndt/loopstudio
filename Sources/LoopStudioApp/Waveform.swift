@@ -6,6 +6,8 @@ struct WaveformView: View {
     let color: Color
     var fraction: Double = 1
     var loop = false
+    /// Where the clip starts in its file, as a fraction of the file (the clip offset).
+    var start: Double = 0
 
     var body: some View {
         Canvas { ctx, size in
@@ -14,7 +16,7 @@ struct WaveformView: View {
             var path = Path()
             var x: CGFloat = 0
             while x < size.width {
-                var src = Double(x / size.width) * fraction
+                var src = start + Double(x / size.width) * fraction
                 if loop { src = src.truncatingRemainder(dividingBy: 1) } else if src >= 1 { break }
                 let amp = CGFloat(peaks[min(peaks.count - 1, Int(src * Double(peaks.count)))]) * (size.height * 0.46)
                 path.addRect(CGRect(x: x, y: mid - max(0.5, amp), width: 1.2, height: max(1, amp * 2)))

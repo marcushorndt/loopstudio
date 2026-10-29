@@ -182,7 +182,8 @@ private struct ClipPanel: View {
                 } else if a.warpMode != .off {
                     WarpEditor(clip: a, asset: asset, peaks: peaks, tint: tint)
                 } else {
-                    WaveformView(peaks: peaks, color: tint, fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop)
+                    WaveformView(peaks: peaks, color: tint, fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: a.loop,
+                                 start: Double(a.offset.rawValue) / max(1, assetTicks))
                         .background(Theme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.radius))
                         .overlay { clipLengthPlayhead(clip) }
                 }
@@ -216,11 +217,16 @@ private struct ClipPanel: View {
                 warpControls(a)
                 Stepper("Length  \(beatsText(a.length))", onIncrement: { resize(a.id, a.start, a.length, by: 1) },
                         onDecrement: { resize(a.id, a.start, a.length, by: -1) })
+                // Where the clip starts in its file. The clip keeps its place; the sound slides under it.
+                Stepper("Start in file  \(MusicalLength.format(a.offset, ticksPerBar: model.barTicks))",
+                        onIncrement: { shiftOffset(a, by: Tick.perQuarter / 4) },
+                        onDecrement: { shiftOffset(a, by: -Tick.perQuarter / 4) })
+                    .hint("Moves the sound under the clip by a sixteenth. Drag the clip's left edge to trim the start instead.")
             case .midi(let m):
                 Toggle("Loop", isOn: Binding(get: { m.loop }, set: { model.apply(.setClipLoop(clip: m.id, loop: $0)) }))
                 Stepper("Length  \(beatsText(m.length))", onIncrement: { resize(m.id, m.start, m.length, by: 4) },
                         onDecrement: { resize(m.id, m.start, m.length, by: -4) })
-                Text("Click the grid to add notes. Drag to move. Drag the right edge to resize. Double-click deletes.")
+                Text("Double-click the grid to add a note. Drag to move, drag an edge to resize. B turns the pen on.")
                     .font(.caption).foregroundStyle(Theme.dim)
             case .dummy:
                 Stepper("Length  \(beatsText(clip.length))", onIncrement: { resize(clip.id, clip.start, clip.length, by: 4) },
@@ -290,6 +296,13 @@ private struct ClipPanel: View {
         let beats = Double(a.length.rawValue) / Double(Tick.perQuarter)
         guard seconds > 0, beats > 0 else { return }
         model.apply(.setAssetTempo(id: asset.id, bpm: min(400, max(20, beats * 60 / seconds))))
+    }
+
+    private func shiftOffset(_ a: AudioClip, by ticks: Int64) {
+        var c = a
+        c.offset = Tick(max(0, a.offset.rawValue + ticks))
+        guard c.offset != a.offset else { return }
+        model.apply(.setClip(clip: .audio(c)), key: "offset\(a.id)")
     }
 
     private func set(_ a: AudioClip, gain: Double? = nil, fadeIn: Double? = nil, fadeOut: Double? = nil, muted: Bool? = nil) {

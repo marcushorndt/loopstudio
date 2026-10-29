@@ -41,6 +41,9 @@ public enum Command: Codable, Sendable {
     case removeClip(clip: ClipID)
     case moveClip(clip: ClipID, toTrack: TrackID, start: Tick)
     case setClipRange(clip: ClipID, start: Tick, length: Tick)
+    /// Replaces a clip with a changed copy (same ID, same track or slot). For edits that change several
+    /// fields at once, like trimming the start.
+    case setClip(clip: Clip)
     case setClipLoop(clip: ClipID, loop: Bool)
     /// Own colour of a clip. `nil` goes back to the track colour.
     case setClipColor(clip: ClipID, colorIndex: Int?)
@@ -285,6 +288,13 @@ extension Project {
             let changed = clip.with(start: start, length: length)
             try withTrack(trackID) { t in try t.replaceClip(changed) }
             return .setClipRange(clip: id, start: clip.start, length: clip.length)
+
+        case .setClip(let clip):
+            guard clip.length.rawValue > 0, clip.start.rawValue >= 0 else { throw CommandError.invalidValue("clip range") }
+            if case .audio(let a) = clip, a.offset.rawValue < 0 { throw CommandError.invalidValue("clip offset") }
+            guard let (trackID, old) = findClip(clip.id) else { throw CommandError.clipNotFound(clip.id) }
+            try withTrack(trackID) { t in try t.replaceClip(clip) }
+            return .setClip(clip: old)
 
         case .setClipLoop(let id, let loop):
             guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }

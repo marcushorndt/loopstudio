@@ -28,4 +28,11 @@ identity="$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"App
 codesign --force --sign "${identity:--}" "$app" >/dev/null 2>&1 || codesign --force --sign - "$app" >/dev/null 2>&1 || true
 # A running copy would only be brought to the front, with the old code. Quit it first.
 pkill -x LoopStudioApp 2>/dev/null && sleep 1
+# Start the binary from this shell, not with `open`: an app that LaunchServices opens needs its own
+# Local Network grant, and on this Mac macOS never shows that prompt (its UserEventAgent cannot reach
+# nehelper: "not platform entitled"), so Link finds no peer on the LAN. A process started from a
+# terminal runs under the terminal's grant. `open` afterwards only brings the running app to the front.
+nohup "$app/Contents/MacOS/LoopStudioApp" >/dev/null 2>&1 &
+disown
+sleep 1
 open "$app"

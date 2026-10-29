@@ -139,6 +139,7 @@ extension Project {
             if track.hardwareOutput != nil, track.output != nil { issues.append(.outputConflict(track.id)) }
             if track.audioInput != nil, track.kind != .audio { issues.append(.inputWrongTrackKind(track.id)) }
             if track.midiInput != nil, track.kind != .midi { issues.append(.inputWrongTrackKind(track.id)) }
+            if track.midiOutput != nil, track.kind != .midi { issues.append(.inputWrongTrackKind(track.id)) }
         }
         return issues
     }

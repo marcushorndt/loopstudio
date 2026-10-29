@@ -442,6 +442,8 @@ public enum StandardTools {
         var inputTrack: TrackID?
         var inputChannels: InputChannels?
         var midiInput: MIDIInputSelection?
+        /// MIDI tracks: the hardware destination of the notes ("MIDI To").
+        var midiOutput: MIDIOutputSelection?
         /// Monitor In / Auto / Off.
         var monitor: MonitorMode
         /// Armed to record when the project was last saved.
@@ -453,7 +455,7 @@ public enum StandardTools {
         init(_ t: Track) {
             id = t.id; name = t.name; kind = t.kind; volumeDb = t.volumeDb; pan = t.pan; mute = t.mute; solo = t.solo
             output = t.output; hardwareOutput = t.hardwareOutput; audioInput = t.audioInput
-            inputTrack = t.inputTrack; inputChannels = t.inputChannels; midiInput = t.midiInput
+            inputTrack = t.inputTrack; inputChannels = t.inputChannels; midiInput = t.midiInput; midiOutput = t.midiOutput
             monitor = t.monitorMode; armed = t.armed ?? false
             clips = t.clips.count; slots = t.slots.compactMap { $0 }.count; devices = t.devices.count
         }
@@ -540,6 +542,8 @@ public enum StandardTools {
             ("setHardwareOutput", .setHardwareOutput(id: track.id, port: PortID(uuid(5)))),
             ("setAudioInput", .setAudioInput(id: track.id, port: PortID(uuid(6)))),
             ("setMIDIInput", .setMIDIInput(id: TrackID(uuid(7)), selection: MIDIInputSelection(sourceUID: 12345, sourceName: "Keys", channel: nil))),
+            ("setMIDIOutput (MIDI To a hardware destination by its CoreMIDI unique ID; channel null keeps the note channels; latencyMs shifts the notes)",
+             .setMIDIOutput(id: TrackID(uuid(7)), selection: MIDIOutputSelection(destinationUID: 54321, destinationName: "Synth", channel: 0, latencyMs: -3))),
             ("setInputChannels (sound card channels to record, from 0)", .setInputChannels(id: track.id, channels: InputChannels(first: 2, stereo: false))),
             ("setClipColor", .setClipColor(clip: ClipID(uuid(4)), colorIndex: 3)),
             ("setPluginParams", .setPluginParams(track: TrackID(uuid(1)), device: DeviceID(uuid(5)), params: [PluginParam(key: "au.0", name: "Cutoff", min: 20, max: 20000, def: 1000, unit: "Hz")])),

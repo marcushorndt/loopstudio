@@ -79,6 +79,8 @@ public final class LiveEngine: @unchecked Sendable {
     /// Meter peaks per node, handed over at the end of each callback.
     private let meterCapacity = 1024
     private let meters: UnsafeMutablePointer<Float>
+    /// Notes for hardware MIDI destinations. The renderer pushes, a sender thread puts them on the wire.
+    public let midiOut = MIDIOutQueue()
     /// The rate the plans render at. It follows the open project; the output converts to the device rate.
     public private(set) var sampleRate: Double
 
@@ -94,6 +96,7 @@ public final class LiveEngine: @unchecked Sendable {
         liveTaken = .allocate(capacity: liveCapacity)
         meters = .allocate(capacity: meterCapacity)
         meters.initialize(repeating: 0, count: meterCapacity)
+        midiOut.hostTime = { [weak self] frame in self?.hostTime(forSessionFrame: frame) ?? 0 }
     }
 
     deinit {
@@ -450,7 +453,9 @@ public final class LiveEngine: @unchecked Sendable {
         guard let renderer else { return }
 
         // 2. Render, with no lock held.
-        if let previous, previous !== renderer { renderer.takeOverNotes(from: previous, at: position) }
+        renderer.midiOut = midiOut
+        defer { midiOut.flush() }
+        if let previous, previous !== renderer { previous.midiOut = midiOut; renderer.takeOverNotes(from: previous, at: position, sessionFrame: sessionPosition) }
         if reset { renderer.reset() } else if silence { renderer.silenceNotes() }
         renderer.captures = captures
         renderer.inputMonitor = monitor

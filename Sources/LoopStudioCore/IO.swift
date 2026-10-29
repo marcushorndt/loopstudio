@@ -126,6 +126,28 @@ public struct MIDIInputSelection: Hashable, Codable, Sendable {
     }
 }
 
+/// A MIDI track's hardware output: its notes go to this CoreMIDI destination (a synth, a drum machine).
+/// Live: "MIDI To" on a MIDI track. The track can have an instrument as well; both get the notes.
+public struct MIDIOutputSelection: Hashable, Codable, Sendable {
+    /// CoreMIDI unique ID of the destination.
+    public var destinationUID: Int32
+    /// The device name when it was chosen. Shown when the device is not connected.
+    public var destinationName: String?
+    /// 0 to 15 sends every note on that channel. `nil` keeps the channel of each note.
+    public var channel: UInt8?
+    /// Notes are sent this much later (positive) or earlier (negative), to line a slow synth up
+    /// with the tracks in the app. Earlier is limited by the audio buffer: the engine cannot send
+    /// what it has not rendered yet.
+    public var latencyMs: Double
+
+    public init(destinationUID: Int32, destinationName: String? = nil, channel: UInt8? = nil, latencyMs: Double = 0) {
+        self.destinationUID = destinationUID
+        self.destinationName = destinationName
+        self.channel = channel.map { min($0, 15) }
+        self.latencyMs = max(-500, min(500, latencyMs))
+    }
+}
+
 public enum MIDIInputIssue: Hashable, Sendable {
     case sourceMissing(uniqueID: Int32, name: String?)
     case sourceOffline(uniqueID: Int32, name: String?)

@@ -111,6 +111,8 @@ struct NodePlan {
     var midi: [MIDIEvent] = []
     /// Notes of the session clips, in session frames.
     var sessionMidi: [MIDIEvent] = []
+    /// A hardware destination that gets the notes too (or instead of an instrument). Live: "MIDI To".
+    var midiOut: MIDIOutTarget? = nil
     /// Session frame from which this track's arrangement clips and notes are silent, because a session clip
     /// took the track over (or a session stop). `nil`: the arrangement plays.
     var arrangementEnd: Int64? = nil
@@ -172,7 +174,7 @@ public struct RenderPlan {
     /// `inputs`: the tracks that monitor the sound card now (armed, or Monitor In), with their channels.
     public static func compile(_ project: Project, bank: AudioBank, session: SessionSimulation? = nil,
                                units: [DeviceID: AudioUnitEffect] = [:], arrangementEnds: [TrackID: Int64] = [:],
-                               inputs: [TrackID: MonitorInput] = [:]) -> RenderPlan {
+                               inputs: [TrackID: MonitorInput] = [:], midiOutputs: [TrackID: MIDIOutTarget] = [:]) -> RenderPlan {
         var warnings: [String] = []
         var outputPorts: [PortID] = []
         let tracks = project.tracks
@@ -375,12 +377,17 @@ public struct RenderPlan {
             chain = chain.map { var e = $0; e.auto = autoParams(e.device, of: t); return e }
             let instrumentAuto = instrumentDevice.map { autoParams($0, of: t) } ?? [:]
             var midi: [MIDIEvent] = [], sessionMidi: [MIDIEvent] = []
-            if t.kind == .midi && !silent && instrument != nil {
+            let midiOut = t.kind == .midi ? midiOutputs[t.id] : nil
+            if t.kind == .midi && !silent && (instrument != nil || midiOut != nil) {
                 midi = midiEvents(of: t, session: nil, map: map, rate: rate, endFrame: &endFrame)
                 var ignored: Int64 = 0
                 sessionMidi = midiEvents(of: t, session: session, map: map, rate: rate, endFrame: &ignored, arrangement: false)
-            } else if t.kind == .midi && !t.clips.isEmpty && instrument == nil {
-                warnings.append("MIDI track \"\(t.name)\" has no instrument")
+            } else if t.kind == .midi && !t.clips.isEmpty && instrument == nil && midiOut == nil {
+                if let out = t.midiOutput {
+                    warnings.append("MIDI track \"\(t.name)\" sends to \(out.destinationName ?? "a MIDI device") that is not connected")
+                } else {
+                    warnings.append("MIDI track \"\(t.name)\" has no instrument")
+                }
             }
 
             let (pl, pr) = balance(t.pan)
@@ -391,7 +398,7 @@ public struct RenderPlan {
                     SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader,
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
                 effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, instrumentAuto: instrumentAuto, midi: midi, sessionMidi: sessionMidi,
-                arrangementEnd: arrangementEnds[t.id]))
+                midiOut: midiOut, arrangementEnd: arrangementEnds[t.id]))
             if let input {
                 nodes[nodes.count - 1].input = (input.channels.first, input.channels.stereo ? input.channels.first + 1 : nil)
             }

@@ -281,8 +281,12 @@ final class AppModel {
     /// The channel names of the recording input device. Refreshed when devices or the input choice change.
     private(set) var inputChannelNames: [String] = []
 
+    /// The MIDI destinations online now, for "MIDI To" on MIDI tracks.
+    private(set) var midiDestinations: [MIDIEndpointInfo] = []
+
     func refreshDeviceLists() {
         midiDevices = MIDIEndpointCatalog.sources()
+        midiDestinations = MIDIEndpointCatalog.destinations()
         let devices = AudioDeviceCatalog.devices()
         inputChannelNames = devices.first { $0.uid == (inputUID ?? AudioDeviceCatalog.defaultInputUID()) }?.inputs.map(\.name) ?? []
         outputChannelNames = devices.first { $0.uid == (outputUID ?? AudioDeviceCatalog.defaultOutputUID()) }?.outputs.map(\.name) ?? []
@@ -338,6 +342,83 @@ final class AppModel {
         sender.setDestination(uniqueID: midiClockUID)
         return sender
     }()
+
+    /// MIDI clock in: the source (per Mac). The transport and the tempo then follow that device.
+    var midiClockInUID: Int32? = UserDefaults.standard.object(forKey: "midiClockInUID") as? Int32 {
+        didSet {
+            UserDefaults.standard.set(midiClockInUID, forKey: "midiClockInUID")
+            midiClockIn.setSource(uniqueID: midiClockInUID)
+            externalClock = nil
+        }
+    }
+    /// What the external clock reported last: its tempo, when its last quarter note came, and whether it runs.
+    struct ExternalClock: Equatable {
+        var bpm: Double?
+        var lastBeat: Date
+        var running: Bool
+    }
+    private(set) var externalClock: ExternalClock?
+    @ObservationIgnored private(set) lazy var midiClockIn: MIDIClockReceiver = {
+        let receiver = MIDIClockReceiver()
+        receiver.onEvent = { [weak self] event in Task { @MainActor in self?.followExternalClock(event) } }
+        receiver.setSource(uniqueID: midiClockInUID)
+        return receiver
+    }()
+
+    /// The transport and the tempo follow the external MIDI clock, like Live with "EXT" on.
+    /// Start and Continue play, Stop pauses, the song position jumps. Every quarter note the measured tempo
+    /// goes into the project, bent by up to two percent to make up the drift against the clock; a drift of
+    /// more than one beat (the song was moved) jumps to the clock's position instead.
+    func followExternalClock(_ event: MIDIClockReceiver.Event) {
+        switch event {
+        case .start:
+            seek(to: 0)
+            if !transportPlaying { play() }
+            externalClock = ExternalClock(bpm: externalClock?.bpm, lastBeat: Date(), running: true)
+        case .continue:
+            if !transportPlaying { play() }
+            externalClock = ExternalClock(bpm: externalClock?.bpm, lastBeat: Date(), running: true)
+        case .stop:
+            if transportPlaying { pause() }
+            externalClock?.running = false
+        case .position(let sixteenths, _):
+            seek(to: Tick(Int64(sixteenths) * 240))
+        case .beat(let tick, let bpm, let host):
+            externalClock = ExternalClock(bpm: bpm, lastBeat: Date(), running: tick != nil)
+            guard let bpm else { return }
+            var target = bpm
+            if let tick, transportPlaying, !engine.isCountingIn {
+                // Where the song stood at that pulse, on the timeline.
+                let sessionAt = engine.sessionFrame(atHost: host)
+                let frameAt = engine.positionFrame + (sessionAt - engine.sessionFrame)
+                let here = project.tempoMap.tick(atFrame: Frame(frameAt), sampleRate: sampleRate).rawValue
+                var expected = tick
+                if let loop = project.loop, loop.enabled, loop.end > loop.start, expected >= loop.end.rawValue {
+                    let length = loop.end.rawValue - loop.start.rawValue
+                    expected = loop.start.rawValue + (expected - loop.start.rawValue) % length
+                }
+                let drift = expected - here
+                if abs(drift) > Tick.perQuarter {
+                    seek(to: Tick(expected))
+                } else {
+                    target = bpm * max(0.98, min(1.02, Double(Tick.perQuarter + drift) / Double(Tick.perQuarter)))
+                }
+            }
+            target = (target * 100).rounded() / 100
+            if abs(target - self.bpm) >= 0.05 { followTempo(target) }
+        }
+    }
+
+    /// Sets the tempo as the external clock has it: no undo entry, so the clock does not fill the undo history.
+    private func followTempo(_ value: Double) {
+        let v = min(max(value, 20), 999)
+        let points = project.tempoMap.points
+        let factor = v / max(points[0].bpm, 1)
+        let command = Command.setTempoPoints(points: points.map { TempoPoint(tick: $0.tick, bpm: $0.bpm * factor, ramp: $0.ramp) })
+        guard (try? command.apply(to: &project)) != nil else { return }
+        try? journal?.append(command)
+        changed()
+    }
 
     /// Starts the MIDI clock when the transport really starts: at once, or when the count-in ends.
     func startClockAfterCountIn() {
@@ -1288,6 +1369,8 @@ final class AppModel {
     /// A sound card or MIDI device was plugged in or out, or the system default changed.
     func devicesChanged() {
         refreshDeviceLists()
+        // A MIDI destination that came back (or went) changes which tracks reach their hardware.
+        if project.tracks.contains(where: { $0.midiOutput != nil }) { rebuild() }
         let present = Set(AudioDeviceCatalog.devices().map(\.uid))
         let defaultOutput = AudioDeviceCatalog.defaultOutputUID()
         defer { lastDefaultOutput = defaultOutput }
@@ -1339,6 +1422,20 @@ final class AppModel {
         }
         midiMonitor = monitor
         refreshDeviceLists()
+        if midiClockInUID != nil { _ = midiClockIn }
+    }
+
+    /// The hardware destinations of the MIDI tracks that are online now, with the latency in frames.
+    private func midiOutTargets() -> [TrackID: MIDIOutTarget] {
+        var targets: [TrackID: MIDIOutTarget] = [:]
+        for t in project.tracks where t.kind == .midi {
+            guard let out = t.midiOutput else { continue }
+            let latency = Int64((out.latencyMs * sampleRate / 1000).rounded())
+            if let target = MIDIOutTarget.resolve(uniqueID: out.destinationUID, channel: out.channel, latencyFrames: latency) {
+                targets[t.id] = target
+            }
+        }
+        return targets
     }
 
     /// Points live notes (keyboard, MIDI devices, piano roll clicks) at the armed MIDI tracks, else the selected one.
@@ -1670,7 +1767,8 @@ final class AppModel {
             if let first = (starts + stops).min() { ends[track] = frame(first) }
         }
         let inputs = monitoredInputs()
-        let compiled = RenderPlan.compile(p, bank: bank, session: simulation, units: host.units, arrangementEnds: ends, inputs: inputs)
+        let compiled = RenderPlan.compile(p, bank: bank, session: simulation, units: host.units, arrangementEnds: ends, inputs: inputs,
+                                          midiOutputs: midiOutTargets())
         plan = compiled
         updateInputMonitoring(inputs)
         warnings = simulation.warnings + compiled.warnings

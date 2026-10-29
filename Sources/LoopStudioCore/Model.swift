@@ -522,6 +522,8 @@ public struct Track: Hashable, Codable, Sendable, Identifiable {
     public var sendsOnly: Bool?
     /// Armed to record when the project was saved, so the arms come back with it. Not an edit: no undo.
     public var armed: Bool?
+    /// MIDI tracks: a hardware destination that gets the notes. `nil` means none.
+    public var midiOutput: MIDIOutputSelection?
     public var monitorMode: MonitorMode { monitor ?? .auto }
     public var isSendsOnly: Bool { sendsOnly ?? false }
 

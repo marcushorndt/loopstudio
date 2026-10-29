@@ -93,6 +93,19 @@ struct AudioSettingsView: View {
                 Text("Hardware on this port follows the tempo and the transport: Start, Stop and the song position go with the clock.")
                     .font(.caption).foregroundStyle(Theme.dim)
             }
+            Section("MIDI clock in") {
+                Picker("Follow clock from", selection: Binding(get: { model.midiClockInUID ?? Int32.min }, set: { model.midiClockInUID = $0 == Int32.min ? nil : $0 })) {
+                    Text("Off").tag(Int32.min)
+                    ForEach(midi, id: \.uniqueID) { Text($0.name).tag($0.uniqueID) }
+                    if let uid = model.midiClockInUID, !midi.contains(where: { $0.uniqueID == uid }) { Text("Device offline").tag(uid) }
+                }
+                Text("LoopStudio follows that device: Start plays from the top, Continue plays on, Stop pauses, and the tempo follows the clock every quarter note. The EXT light in the transport bar shows the clock coming in.")
+                    .font(.caption).foregroundStyle(Theme.dim)
+                if let clock = model.externalClock, let bpm = clock.bpm {
+                    Text("Clock now: \(String(format: "%.2f", bpm)) BPM, \(clock.running ? "running" : "stopped").")
+                        .font(.caption).foregroundStyle(Theme.dim)
+                }
+            }
             Section("Plugins") {
                 Toggle("Run plugins in a separate process", isOn: Binding(
                     get: { model.host.outOfProcess },

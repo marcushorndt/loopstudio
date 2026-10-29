@@ -27,11 +27,20 @@ public final class Renderer {
     private var idleShift: Int64 = 0
     /// Per node, 16 channels x 128 pitches: how many arrangement notes are on. The loop wrap releases them.
     private let held: UnsafeMutablePointer<UInt8>
+    /// The same for the session notes and the live notes that went to a hardware destination. A hosted
+    /// instrument releases its own notes; hardware gets an explicit note-off for each one on stop.
+    private let hwSession: UnsafeMutablePointer<UInt8>
+    private let hwLive: UnsafeMutablePointer<UInt8>
+    /// The session frame at which notes released after this block (a loop wrap) sound on hardware.
+    private var releaseFrame = MIDIOutQueue.now
     /// Tracks whose sound after the fader is recorded (resampling), each with the ring it goes to.
     /// The engine sets it before every block, under its lock; it owns the set, so this does not retain it.
     unowned(unsafe) var captures: CaptureSet?
     /// The sound card input, for nodes with `NodePlan.input`. The engine owns it and sets it before every block.
     unowned(unsafe) var inputMonitor: InputMonitor?
+    /// Notes for hardware destinations go here. The engine owns it and sets it before every callback.
+    /// Offline it stays `nil`: an export has no hardware.
+    unowned(unsafe) var midiOut: MIDIOutQueue?
 
     private final class Slot {
         let effect: DSPEffect?
@@ -149,6 +158,10 @@ public final class Renderer {
         peaks.initialize(repeating: 0, count: 2 * max(1, nodeCount))
         held = .allocate(capacity: max(1, nodeCount) * 2048)
         held.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
+        hwSession = .allocate(capacity: max(1, nodeCount) * 2048)
+        hwSession.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
+        hwLive = .allocate(capacity: max(1, nodeCount) * 2048)
+        hwLive.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
         portCount = plan.outputPorts.count
         portBuffers = .allocate(capacity: max(1, portCount) * 2 * maxBlock)
         portBuffers.initialize(repeating: 0, count: max(1, portCount) * 2 * maxBlock)
@@ -160,6 +173,8 @@ public final class Renderer {
         buffers.deallocate()
         peaks.deallocate()
         held.deallocate()
+        hwSession.deallocate()
+        hwLive.deallocate()
         portBuffers.deallocate()
         scratchIn.deallocate(); scratchOut.deallocate(); inPointers.deallocate(); outPointers.deallocate()
     }
@@ -175,44 +190,93 @@ public final class Renderer {
         silenceNotes()
     }
 
-    /// Sends a MIDI message to the instrument of a track right now. No allocation: a linear search.
+    /// Sends a MIDI message to the instrument and the hardware destination of a track right now.
+    /// No allocation: a linear search.
     public func sendLive(track: TrackID, _ status: UInt8, _ data1: UInt8, _ data2: UInt8) {
         let order = plan.trackOrder
         for i in 0..<min(order.count, nodeCount) where order[i] == track {
             nodes[i].instrument?.sendMIDI(status, data1, data2)
+            if let target = nodes[i].midiOut, let out = midiOut {
+                out.push(target, frame: MIDIOutQueue.now, status, data1, data2)
+                let kind = status & 0xF0
+                if kind == 0x90 || kind == 0x80 {
+                    let k = Int(status & 0x0F) << 7 | Int(data1 & 127), live = hwLive + i * 2048
+                    if kind == 0x90 && data2 > 0 { live[k] &+= 1 } else if live[k] > 0 { live[k] -= 1 }
+                }
+            }
             return
         }
     }
 
-    /// Releases every note of every hosted instrument. Called on stop and on a jump.
+    /// Releases every note of every hosted instrument and every note sent to hardware. Called on stop and on a jump.
     public func silenceNotes() {
-        for i in 0..<nodeCount { nodes[i].instrument?.silenceNotes() }
+        for i in 0..<nodeCount {
+            nodes[i].instrument?.silenceNotes()
+            if let target = nodes[i].midiOut, let out = midiOut {
+                releaseAll(held + i * 2048, target, out, frame: MIDIOutQueue.now)
+                releaseAll(hwSession + i * 2048, target, out, frame: MIDIOutQueue.now)
+                releaseAll(hwLive + i * 2048, target, out, frame: MIDIOutQueue.now)
+            }
+        }
         held.update(repeating: 0, count: max(1, nodeCount) * 2048)
+        hwSession.update(repeating: 0, count: max(1, nodeCount) * 2048)
+        hwLive.update(repeating: 0, count: max(1, nodeCount) * 2048)
+    }
+
+    /// Note-offs on hardware for every count in `base`, then zero.
+    @inline(__always)
+    private func releaseAll(_ base: UnsafeMutablePointer<UInt8>, _ target: MIDIOutTarget, _ out: MIDIOutQueue, frame: Int64) {
+        for k in 0..<2048 where base[k] > 0 {
+            out.push(target, frame: frame, 0x80 | UInt8(k >> 7), UInt8(k & 127), 0)
+            base[k] = 0
+        }
     }
 
     /// Releases only the arrangement notes that are still on. Called when the loop wraps,
     /// so session clips keep their held notes.
     public func releaseArrangementNotes() {
-        for i in 0..<nodeCount { releaseNotes(of: i) }
+        for i in 0..<nodeCount { releaseNotes(of: i, frame: releaseFrame) }
     }
 
-    /// Ends the arrangement notes that node `i` still holds.
-    /// Takes over the arrangement notes `old` still holds. Audio thread, once, before the first block.
+    /// Takes over the notes `old` still holds. Audio thread, once, before the first block.
     /// A note whose note-off is still ahead in this plan stays held here; any other note gets its note-off
-    /// now, so deleting or moving a playing clip cannot leave a note hanging.
-    func takeOverNotes(from old: Renderer, at frame: Int64) {
+    /// now, so deleting or moving a playing clip cannot leave a note hanging. A live note on hardware stays
+    /// held as long as its track keeps the destination: the player releases it.
+    func takeOverNotes(from old: Renderer, at frame: Int64, sessionFrame: Int64 = 0) {
         for i in 0..<old.nodeCount {
-            guard let unit = old.nodes[i].instrument else { continue }
+            let unit = old.nodes[i].instrument, hw = old.nodes[i].midiOut
+            guard unit != nil || hw != nil else { continue }
+            // The node of the same track in this plan, when it is still there.
+            var j = -1
+            if i < old.plan.trackOrder.count, let track = old.plan.trackOrder[i] {
+                for n in 0..<min(plan.trackOrder.count, nodeCount) where plan.trackOrder[n] == track { j = n; break }
+            }
+            let unitKept = j >= 0 && unit != nil && nodes[j].instrument === unit
+            let hwKept = j >= 0 && hw != nil && nodes[j].midiOut?.endpoint == hw?.endpoint
+            let out = midiOut
+            @inline(__always) func off(_ k: Int, unitToo: Bool, hwToo: Bool) {
+                if unitToo, let unit { unit.sendMIDI(0x80 | UInt8(k >> 7), UInt8(k & 127), 0) }
+                if hwToo, let hw, let out { out.push(hw, frame: MIDIOutQueue.now, 0x80 | UInt8(k >> 7), UInt8(k & 127), 0) }
+            }
             let base = old.held + i * 2048
-            var target = -1
-            for j in 0..<nodeCount where nodes[j].instrument === unit { target = j; break }
             for k in 0..<2048 where base[k] > 0 {
-                if target >= 0, Self.hasNoteOff(nodes[target].midi, key: k, from: frame) {
-                    held[target * 2048 + k] &+= base[k]
-                } else {
-                    unit.sendMIDI(0x80 | UInt8(k >> 7), UInt8(k & 127), 0)
-                }
+                let keep = (unitKept || hwKept) && Self.hasNoteOff(nodes[j].midi, key: k, from: frame)
+                if keep { held[j * 2048 + k] &+= base[k] }
+                off(k, unitToo: !(keep && unitKept), hwToo: !(keep && hwKept))
                 base[k] = 0
+            }
+            let session = old.hwSession + i * 2048
+            for k in 0..<2048 where session[k] > 0 {
+                let keep = hwKept && Self.hasNoteOff(nodes[j].sessionMidi, key: k, from: sessionFrame)
+                if keep { hwSession[j * 2048 + k] &+= session[k] }
+                off(k, unitToo: false, hwToo: !keep)
+                session[k] = 0
+            }
+            let live = old.hwLive + i * 2048
+            for k in 0..<2048 where live[k] > 0 {
+                if hwKept { hwLive[j * 2048 + k] &+= live[k] }
+                off(k, unitToo: false, hwToo: !hwKept)
+                live[k] = 0
             }
         }
     }
@@ -234,11 +298,15 @@ public final class Renderer {
         return false
     }
 
-    private func releaseNotes(of i: Int) {
+    /// Ends the arrangement notes that node `i` still holds. `frame`: the session frame of the note-offs on hardware.
+    private func releaseNotes(of i: Int, frame: Int64) {
         let base = held + i * 2048
-        guard let unit = nodes[i].instrument else { return }
+        let unit = nodes[i].instrument, target = nodes[i].midiOut
+        guard unit != nil || target != nil else { return }
+        let out = midiOut
         for k in 0..<2048 where base[k] > 0 {
-            unit.sendMIDI(0x80 | UInt8(k >> 7), UInt8(k & 127), 0)
+            unit?.sendMIDI(0x80 | UInt8(k >> 7), UInt8(k & 127), 0)
+            if let target, let out { out.push(target, frame: frame, 0x80 | UInt8(k >> 7), UInt8(k & 127), 0) }
             base[k] = 0
         }
     }
@@ -267,9 +335,10 @@ public final class Renderer {
         r.update(from: scratchOut + maxBlock, count: frames)
     }
 
-    /// Queues the notes of one block. `startFrame` is in the frames of `events`.
-    private func send(_ unit: AudioUnitEffect, _ events: [MIDIEvent], startFrame: Int64, frames: Int,
-                      held: UnsafeMutablePointer<UInt8>? = nil) {
+    /// Queues the notes of one block. `startFrame` is in the frames of `events`. Hardware gets each note at
+    /// its session frame: `sessionShift` is what to add to an event frame for that (0 for session events).
+    private func send(_ unit: AudioUnitEffect?, _ out: MIDIOutQueue?, _ target: MIDIOutTarget?, _ events: [MIDIEvent],
+                      startFrame: Int64, sessionShift: Int64, frames: Int, held: UnsafeMutablePointer<UInt8>? = nil) {
         // First event at or after the block start (events are sorted by frame).
         var lo = 0, hi = events.count
         while lo < hi {
@@ -279,7 +348,8 @@ public final class Renderer {
         let end = startFrame + Int64(frames)
         while lo < events.count, events[lo].frame < end {
             let e = events[lo]
-            unit.sendMIDI(e.status, e.data1, e.data2, sampleOffset: Int(e.frame - startFrame))
+            unit?.sendMIDI(e.status, e.data1, e.data2, sampleOffset: Int(e.frame - startFrame))
+            if let out, let target { out.push(target, frame: e.frame + sessionShift, e.status, e.data1, e.data2) }
             if let held {
                 let kind = e.status & 0xF0, k = Int(e.status & 0x0F) << 7 | Int(e.data1 & 127)
                 if kind == 0x90 && e.data2 > 0 { held[k] &+= 1 }
@@ -372,12 +442,17 @@ public final class Renderer {
                 monitor.add(channel: input.left, into: l, frames: frames)
                 monitor.add(channel: input.right ?? input.left, into: r, frames: frames)
             }
-            if let instrument = node.instrument {
-                if transport {
-                    if arrangement > 0 { send(instrument, node.midi, startFrame: startFrame, frames: arrangement, held: held + i * 2048) }
-                    if arrangement < frames { releaseNotes(of: i) }
-                    send(instrument, node.sessionMidi, startFrame: startFrame + sessionOffset, frames: frames)
+            let target = node.midiOut
+            let out = target != nil ? midiOut : nil
+            if transport, node.instrument != nil || out != nil {
+                if arrangement > 0 {
+                    send(node.instrument, out, target, node.midi, startFrame: startFrame, sessionShift: sessionOffset, frames: arrangement, held: held + i * 2048)
                 }
+                if arrangement < frames { releaseNotes(of: i, frame: startFrame + sessionOffset + Int64(arrangement)) }
+                send(node.instrument, out, target, node.sessionMidi, startFrame: startFrame + sessionOffset, sessionShift: 0, frames: frames,
+                     held: out != nil ? hwSession + i * 2048 : nil)
+            }
+            if let instrument = node.instrument {
                 if let slot = instrumentSlots[i] { scheduleAutomation(slot, startFrame: startFrame, frames: frames) }
                 play(instrument, into: l, r, frames: frames)
             }
@@ -410,6 +485,7 @@ public final class Renderer {
             }
             for (k, tap) in node.taps.enumerated() { addDelayed(l, r, to: tap, line: tapLines[i][k], frames: frames) }
         }
+        if transport { releaseFrame = startFrame + sessionOffset + Int64(frames) }
     }
 
     // MARK: Automation

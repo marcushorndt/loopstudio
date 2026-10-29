@@ -351,7 +351,7 @@ struct TrackIOSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             if track.kind == .audio { audioFrom }
-            if track.kind == .midi { midiFrom }
+            if track.kind == .midi { midiFrom; midiTo }
             label("Audio To")
             outputPicker
         }
@@ -448,6 +448,52 @@ struct TrackIOSection: View {
         }
     }
 
+    /// "MIDI To": a hardware destination for the notes, with the channel and a time shift in ms.
+    @ViewBuilder private var midiTo: some View {
+        label("MIDI To")
+        let outs = model.midiDestinations
+        let current = track.midiOutput
+        Picker("", selection: Binding(
+            get: { current?.destinationUID },
+            set: { choice in
+                if let choice {
+                    let name = outs.first { $0.uniqueID == choice }?.name
+                    model.apply(.setMIDIOutput(id: track.id, selection: MIDIOutputSelection(
+                        destinationUID: choice, destinationName: name, channel: current?.channel, latencyMs: current?.latencyMs ?? 0)))
+                } else {
+                    model.apply(.setMIDIOutput(id: track.id, selection: nil))
+                }
+            })) {
+            Text("No Output").tag(Int32?.none)
+            ForEach(outs, id: \.uniqueID) { Text($0.name).tag(Optional($0.uniqueID)) }
+            if let uid = current?.destinationUID, !outs.contains(where: { $0.uniqueID == uid }) {
+                Text("\(current?.destinationName ?? "Device") (offline)").tag(Optional(uid))
+            }
+        }
+        .labelsHidden().controlSize(.mini)
+        .hint(outs.isEmpty ? "No MIDI output found. Plug a device in; it shows here at once."
+              : "The hardware this track's notes go to: its clips, the live notes and the piano roll. An instrument on the track plays too.")
+        if let out = current {
+            HStack(spacing: 3) {
+                Picker("", selection: Binding(get: { out.channel.map { Int($0) } ?? -1 }, set: { ch in
+                    model.apply(.setMIDIOutput(id: track.id, selection: MIDIOutputSelection(
+                        destinationUID: out.destinationUID, destinationName: out.destinationName,
+                        channel: ch < 0 ? nil : UInt8(ch), latencyMs: out.latencyMs)))
+                })) {
+                    Text("Clip Ch").tag(-1)
+                    ForEach(0..<16, id: \.self) { Text("Ch \($0 + 1)").tag($0) }
+                }
+                .labelsHidden().controlSize(.mini)
+                .hint("The MIDI channel the notes go out on. \"Clip Ch\" keeps the channel of each note.")
+                MIDILatencyField(ms: out.latencyMs) { ms in
+                    model.apply(.setMIDIOutput(id: track.id, selection: MIDIOutputSelection(
+                        destinationUID: out.destinationUID, destinationName: out.destinationName, channel: out.channel, latencyMs: ms)), key: "midiLatency")
+                }
+                .hint("Time shift in ms: a positive value sends the notes later, a negative one earlier, so a slow synth lines up with the tracks.")
+            }
+        }
+    }
+
     private var outputPicker: some View {
         let options = model.project.tracks.filter { ($0.kind == .group || $0.kind == .returnTrack) && $0.id != track.id }
         let current: Out = track.isSendsOnly ? .sendsOnly
@@ -473,5 +519,38 @@ struct TrackIOSection: View {
             Text("Sends Only").tag(Out.sendsOnly)
         }
         .labelsHidden().controlSize(.mini).hint("Output routing")
+    }
+}
+
+/// A small "ms" field for the MIDI output time shift. It commits on Return or when the focus leaves.
+struct MIDILatencyField: View {
+    let ms: Double
+    let commit: (Double) -> Void
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 2) {
+            TextField("0", text: $text)
+                .textFieldStyle(.plain).font(.system(size: 9, design: .monospaced)).multilineTextAlignment(.trailing)
+                .frame(width: 30).padding(.horizontal, 3).padding(.vertical, 1)
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 3))
+                .overlay(RoundedRectangle(cornerRadius: 3).stroke(Theme.line, lineWidth: 1))
+                .focused($focused)
+                .onSubmit { apply() }
+                .onChange(of: focused) { _, now in if !now { apply() } }
+                .onAppear { text = Self.format(ms) }
+                .onChange(of: ms) { if !focused { text = Self.format(ms) } }
+            Text("ms").font(.system(size: 9)).foregroundStyle(Theme.dim)
+        }
+    }
+
+    private static func format(_ v: Double) -> String { v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v) }
+
+    private func apply() {
+        guard let v = Double(text.replacingOccurrences(of: ",", with: ".")) else { text = Self.format(ms); return }
+        let clamped = max(-500, min(500, v))
+        if clamped != ms { commit(clamped) }
+        text = Self.format(clamped)
     }
 }

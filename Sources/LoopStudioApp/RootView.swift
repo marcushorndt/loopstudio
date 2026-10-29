@@ -128,6 +128,8 @@ struct TransportBar: View {
 
             tempoField
 
+            if model.midiClockInUID != nil { externalClockLight }
+
             Text("4 / 4").font(.system(.body, design: .monospaced)).foregroundStyle(Theme.dim)
 
             TimelineView(.animation(minimumInterval: 1.0 / 20, paused: !model.transportPlaying)) { _ in
@@ -187,6 +189,22 @@ struct TransportBar: View {
 
     @ViewBuilder private func label(_ text: String, _ symbol: String, _ withText: Bool) -> some View {
         if withText { Text(text) } else { Image(systemName: symbol) }
+    }
+
+    /// "EXT": the transport follows a MIDI clock. Lit while the clock's beats come in, like Live's EXT button.
+    private var externalClockLight: some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { context in
+            let clock = model.externalClock
+            let live = clock.map { context.date.timeIntervalSince($0.lastBeat) < 1.5 } ?? false
+            let tint = live ? (clock?.running == true ? Theme.play : Theme.accent) : Theme.dim
+            Text("EXT").font(.system(size: 10, weight: .bold))
+                .frame(width: 36, height: 28)
+                .foregroundStyle(live ? tint : Theme.text.opacity(0.5))
+                .background(live ? tint.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(live ? tint.opacity(0.5) : Theme.line, lineWidth: 1))
+                .hint(live ? "External MIDI clock: \(clock?.bpm.map { String(format: "%.2f BPM", $0) } ?? "measuring"), \(clock?.running == true ? "running" : "stopped"). Turn it off in Settings > Audio."
+                      : "External MIDI clock chosen in Settings > Audio, but no clock comes in.")
+        }
     }
 
     private var tempoField: some View {

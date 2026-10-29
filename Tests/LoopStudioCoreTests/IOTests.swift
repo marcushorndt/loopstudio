@@ -168,6 +168,7 @@ private let asleep = MIDIEndpointInfo(uniqueID: 300, name: "Old Synth", isOfflin
         .setHardwareOutput(id: audio.id, port: extra.id),
         .setAudioInput(id: audio.id, port: p.ports[2].id),
         .setMIDIInput(id: midi.id, selection: MIDIInputSelection(sourceUID: 5, sourceName: "Keys", channel: 2)),
+        .setMIDIOutput(id: midi.id, selection: MIDIOutputSelection(destinationUID: 9, destinationName: "Synth", channel: 3, latencyMs: -5)),
         .setInputChannels(id: audio.id, channels: InputChannels(first: 2, stereo: true)),
     ]
     for command in commands {
@@ -192,6 +193,9 @@ private let asleep = MIDIEndpointInfo(uniqueID: 300, name: "Old Synth", isOfflin
     #expect(throws: CommandError.self) { try Command.setAudioInput(id: audio.id, port: out.id).apply(to: &p) }
     #expect(throws: CommandError.self) { try Command.setAudioInput(id: midi.id, port: input.id).apply(to: &p) }
     #expect(throws: CommandError.self) { try Command.setMIDIInput(id: audio.id, selection: MIDIInputSelection()).apply(to: &p) }
+    #expect(throws: CommandError.self) { try Command.setMIDIOutput(id: audio.id, selection: MIDIOutputSelection(destinationUID: 1)).apply(to: &p) }
+    #expect(MIDIOutputSelection(destinationUID: 1, channel: 40, latencyMs: 9_999).channel == 15)
+    #expect(MIDIOutputSelection(destinationUID: 1, latencyMs: 9_999).latencyMs == 500)
     #expect(throws: CommandError.self) { try Command.setInputChannels(id: midi.id, channels: InputChannels(first: 0, stereo: true)).apply(to: &p) }
     #expect(throws: CommandError.self) { try Command.setHardwareOutput(id: audio.id, port: PortID()).apply(to: &p) }
 

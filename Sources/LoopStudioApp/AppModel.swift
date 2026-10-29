@@ -191,7 +191,7 @@ final class AppModel {
     @ObservationIgnored var takeSerial = 0
     /// Sound card choice. It belongs to this Mac, not to a project. `nil` means the system default.
     var outputUID: String? = UserDefaults.standard.string(forKey: "outputUID") {
-        didSet { UserDefaults.standard.set(outputUID, forKey: "outputUID") }
+        didSet { UserDefaults.standard.set(outputUID, forKey: "outputUID"); refreshDeviceLists() }
     }
     var outputLeft: Int = UserDefaults.standard.object(forKey: "outputLeft") as? Int ?? 0 {
         didSet { UserDefaults.standard.set(outputLeft, forKey: "outputLeft") }
@@ -283,9 +283,12 @@ final class AppModel {
 
     func refreshDeviceLists() {
         midiDevices = MIDIEndpointCatalog.sources()
-        inputChannelNames = AudioDeviceCatalog.devices()
-            .first { $0.uid == (inputUID ?? AudioDeviceCatalog.defaultInputUID()) }?.inputs.map(\.name) ?? []
+        let devices = AudioDeviceCatalog.devices()
+        inputChannelNames = devices.first { $0.uid == (inputUID ?? AudioDeviceCatalog.defaultInputUID()) }?.inputs.map(\.name) ?? []
+        outputChannelNames = devices.first { $0.uid == (outputUID ?? AudioDeviceCatalog.defaultOutputUID()) }?.outputs.map(\.name) ?? []
     }
+    /// The channel names of the playback device. The master strip offers its pairs.
+    private(set) var outputChannelNames: [String] = []
     var pixelsPerBar: Double = 90
     var transportPlaying = false
     private(set) var canUndo = false
@@ -458,12 +461,14 @@ final class AppModel {
         recordPunch = transportPlaying
         recordStartTick = currentTick
         recordStartsAt = nil
-        if slot != nil, transportPlaying, !engine.isCountingIn {
-            // Into a slot while playing: the take starts on the next bar, as a launched clip would.
-            let now = currentTick
-            let bar = project.barBoundary(atOrAfter: now)
+        if slot != nil {
+            // A Session take counts on the session clock, which runs on when the arrangement loop jumps back.
+            // Stopped, both clocks stand at the same place; playing, the take starts on the next bar, as a
+            // launched clip would.
+            let now = sessionTick
+            let bar = transportPlaying && !engine.isCountingIn ? project.barBoundary(atOrAfter: now) : now
             recordStartTick = bar
-            recordStartsAt = sessionTick + (bar - now)
+            if transportPlaying && !engine.isCountingIn { recordStartsAt = bar }
         }
         // The take belongs to these tracks, even if the selection changes while it records.
         recordMIDITracks = targets.filter { project.track($0)?.kind == .midi }
@@ -475,8 +480,9 @@ final class AppModel {
         recordLaunchAt = nil
         recordLaunchTake = true
         if !recordMIDITracks.isEmpty {
-            // Notes are stamped on the session clock, which does not jump back at the loop end.
-            recordFrameOffset = engine.positionFrame - engine.sessionFrame
+            // Notes are stamped on the session clock, which does not jump back at the loop end. An arrangement
+            // take moves them to the timeline; a Session take stays on the session clock.
+            recordFrameOffset = slot == nil ? engine.positionFrame - engine.sessionFrame : 0
             recorder.begin()
         }
         recording = true
@@ -1574,12 +1580,19 @@ final class AppModel {
     // MARK: Meters
 
     /// Meter level for a track (or master with `nil`), 0 to about 2, with fast attack and slow release.
+    /// The meter of a track (`nil`: the master), left and right, with a short fall after each peak.
+    func meterLevels(track: TrackID?) -> (left: Float, right: Float) {
+        guard let plan, let index = plan.trackOrder.firstIndex(where: { $0 == track }) else { return (0, 0) }
+        let peak = engine.takePeaks(node: index)
+        let left = max(peak.left, (meterHold[2 * index] ?? 0) * 0.86)
+        let right = max(peak.right, (meterHold[2 * index + 1] ?? 0) * 0.86)
+        meterHold[2 * index] = left; meterHold[2 * index + 1] = right
+        return (left, right)
+    }
+
     func meterLevel(track: TrackID?) -> Float {
-        guard let plan, let index = plan.trackOrder.firstIndex(where: { $0 == track }) else { return 0 }
-        let peak = engine.takePeak(node: index)
-        let held = max(peak, (meterHold[index] ?? 0) * 0.86)
-        meterHold[index] = held
-        return held
+        let m = meterLevels(track: track)
+        return max(m.left, m.right)
     }
 
     // MARK: Engine plan

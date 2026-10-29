@@ -19,7 +19,7 @@ extension AppModel {
             let notes = MIDIRecorder.notes(from: recorder.snapshot(), endFrame: engine.sessionFrame) { frame in
                 max(0, map.tick(atFrame: Frame(frame + offset), sampleRate: sr).rawValue - start)
             }
-            return .notes(notes, length: max(0, currentTick.rawValue - start))
+            return .notes(notes, length: max(0, (recordSlots.isEmpty ? currentTick : sessionTick).rawValue - start))
         }
         guard let lane = recordLaneTracks.firstIndex(where: { $0.contains(id) }) else { return .resampling }
         return .audio(peaks: audioRecorder.livePeaks(lane: lane), secondsPerPeak: Double(audioRecorder.bufferFrames) / sampleRate)
@@ -63,7 +63,9 @@ struct RecordingPanel: View {
     private var lengthText: String {
         if model.engine.isCountingIn { return "Count-in" }
         if let start = model.recordStartsAt, model.recordWaitsForGrid { return "starts at bar \(barNumber(start))" }
-        let ticks = max(0, model.currentTick.rawValue - model.recordStartTick.rawValue)
+        // A Session take counts on the session clock, an arrangement take on the timeline.
+        let now = model.recordSlots.isEmpty ? model.currentTick : model.sessionTick
+        let ticks = max(0, now.rawValue - model.recordStartTick.rawValue)
         let beat = Int64(Tick.perQuarter)
         let bar = max(1, model.barTicks)
         return "\(ticks / bar) bars \((ticks % bar) / beat) beats"

@@ -113,3 +113,25 @@ private func plan(direct: Bool = false) -> RenderPlan {
     #expect(h.peak(0) == 0 && h.peak(1) == 0, "the master pair is silent")
     #expect(abs(h.peak(2) - 0.5) < 0.01 && abs(h.peak(3) - 0.5) < 0.01, "the port plays on channels 3 and 4")
 }
+
+@Test func metersKeepLeftAndRightApart() {
+    // A clip panned hard left: the left meter gets the signal, the right one stays near silent.
+    var project = Project(name: "M", sampleRate: rate)
+    let bank = AudioBank()
+    let n = Int(rate)
+    let asset = Asset(sha256: "pan", name: "dc", frames: Int64(n), sampleRate: rate, channels: 2)
+    try! Command.addAsset(asset: asset).apply(to: &project)
+    bank.insert(PCMBuffer(samples: [Array(repeating: 0.5, count: n), Array(repeating: 0.5, count: n)], sampleRate: rate), for: asset.id)
+    let t = Track(name: "A", kind: .audio, pan: -1)
+    try! Command.insertTrack(track: t, index: 0).apply(to: &project)
+    var c = project.makeAudioClip(asset: asset.id, start: 0, length: 3840)
+    c.fadeInMs = 0; c.fadeOutMs = 0
+    try! Command.insertClip(track: t.id, clip: .audio(c)).apply(to: &project)
+    let h = Harness()
+    h.engine.setRenderer(Renderer(plan: RenderPlan.compile(project, bank: bank)))
+    h.engine.play()
+    h.callback()
+    let track = h.engine.takePeaks(node: 0), master = h.engine.takePeaks(node: 1)
+    #expect(track.left > 0.4 && track.right < 0.05)
+    #expect(master.left > 0.4 && master.right < 0.05)
+}

@@ -27,6 +27,78 @@ struct LevelBar: View {
     }
 }
 
+/// Left and right meters side by side, with a peak line that holds for a moment and a clip light
+/// that stays on once a channel reached 0 dBFS, until it is clicked.
+struct StereoMeter: View {
+    let levels: (left: Float, right: Float)
+    var horizontal = false
+    /// Shows -inf, -12, -6, 0 marks beside the bars (the master).
+    var scale = false
+    @State private var holdLeft: (Float, Date) = (0, .distantPast)
+    @State private var holdRight: (Float, Date) = (0, .distantPast)
+    @State private var clipped = (false, false)
+
+    var body: some View {
+        let now = Date()
+        let hl = hold(&holdLeft, levels.left, now), hr = hold(&holdRight, levels.right, now)
+        if levels.left >= 1 { clipped.0 = true }
+        if levels.right >= 1 { clipped.1 = true }
+        return HStack(spacing: scale ? 3 : 0) {
+            Group {
+                if horizontal {
+                    VStack(spacing: 1) { bar(levels.left, hl, clipped.0); bar(levels.right, hr, clipped.1) }
+                } else {
+                    HStack(spacing: 1) { bar(levels.left, hl, clipped.0); bar(levels.right, hr, clipped.1) }
+                }
+            }
+            if scale { marks }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { clipped = (false, false) }
+        .hint(scale ? "Master level, left and right. The red light stays on after a clip; click to reset it." : "Level, left and right.")
+    }
+
+    private func hold(_ h: inout (Float, Date), _ level: Float, _ now: Date) -> Float {
+        if level >= h.0 || now.timeIntervalSince(h.1) > 1.2 { h = (level, now) }
+        return h.0
+    }
+
+    private func bar(_ level: Float, _ peak: Float, _ clip: Bool) -> some View {
+        GeometryReader { geo in
+            let p = meterPosition(linear: level), q = meterPosition(linear: peak)
+            ZStack(alignment: horizontal ? .leading : .bottom) {
+                Rectangle().fill(Color.black.opacity(0.5))
+                Rectangle()
+                    .fill(LinearGradient(colors: [.green, .green, .yellow, .red], startPoint: horizontal ? .leading : .bottom,
+                                         endPoint: horizontal ? .trailing : .top))
+                    .frame(width: horizontal ? geo.size.width * p : nil, height: horizontal ? nil : geo.size.height * p)
+                // The peak line.
+                Rectangle().fill(q >= 0.98 ? Color.red : Theme.text.opacity(0.9))
+                    .frame(width: horizontal ? 1.5 : nil, height: horizontal ? nil : 1.5)
+                    .offset(x: horizontal ? geo.size.width * q - 1 : 0, y: horizontal ? 0 : -(geo.size.height * q - 1))
+                if clip {
+                    Rectangle().fill(Color.red)
+                        .frame(width: horizontal ? 4 : nil, height: horizontal ? nil : 4)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: horizontal ? .trailing : .top)
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 1.5))
+    }
+
+    /// dB marks along the bar.
+    private var marks: some View {
+        GeometryReader { geo in
+            ForEach([0, -6, -12, -24, -48], id: \.self) { db in
+                let p = meterPosition(linear: Float(pow(10, Double(db) / 20)))
+                Text(db == 0 ? "0" : "\(db)").font(.system(size: 7, design: .monospaced)).foregroundStyle(Theme.dim)
+                    .position(x: 8, y: geo.size.height * (1 - p))
+            }
+        }
+        .frame(width: 16)
+    }
+}
+
 /// Vertical fader. The scale puts 0 dB at 71 % of the travel and +6 dB at the top.
 struct Fader: View {
     let db: Double
@@ -95,7 +167,7 @@ struct MixerStrip: View {
 
             Group {
                 if isMaster {
-                    Text("Master").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.dim)
+                    MasterOutputSection()
                 } else {
                     TrackIOSection(track: track)
                 }
@@ -109,7 +181,8 @@ struct MixerStrip: View {
                     .hint("\(track.name) volume: \(track.volumeDb <= -90 ? "-inf" : String(format: "%.1f dB", track.volumeDb)). Drag; double-click sets 0 dB.")
                     .midiLearnable(.volume(track.id))
                 TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
-                    LevelBar(level: model.meterLevel(track: isMaster ? nil : track.id)).frame(width: 9, height: 100)
+                    StereoMeter(levels: model.meterLevels(track: isMaster ? nil : track.id), scale: isMaster)
+                        .frame(width: isMaster ? 30 : 11, height: 100)
                 }
             }
 
@@ -171,6 +244,48 @@ struct MixerStrip: View {
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.55) : Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// The master's "Audio To": the output pair of the sound card. The device itself is chosen in Settings > Audio.
+struct MasterOutputSection: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Audio To").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
+            let names = model.outputChannelNames
+            Picker("", selection: Binding(get: { model.outputLeft }, set: { model.outputLeft = $0; model.applyAudioSettings() })) {
+                if names.count < 2 {
+                    Text(names.isEmpty ? "No output" : names[0]).tag(model.outputLeft)
+                } else {
+                    ForEach(Array(stride(from: 0, to: names.count - 1, by: 2)), id: \.self) { i in
+                        Text(pairName(names, i)).tag(i)
+                    }
+                    if model.outputLeft + 1 >= names.count { Text("\(model.outputLeft + 1)/\(model.outputLeft + 2) (not on this device)").tag(model.outputLeft) }
+                }
+            }
+            .labelsHidden().controlSize(.mini)
+            .hint(names.count < 2 ? "The playback device has no stereo pair. Choose a device in Settings > Audio."
+                  : "The sound card pair the master plays on. The device is chosen in Settings > Audio.")
+            Button {
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            } label: {
+                Text(deviceName).font(.system(size: 9)).foregroundStyle(Theme.dim).lineLimit(1)
+            }
+            .buttonStyle(.plain).hint("The playback device. Click to open the audio settings.")
+        }
+    }
+
+    /// "1/2", or the driver's names when they say more than numbers.
+    private func pairName(_ names: [String], _ i: Int) -> String {
+        let a = names[i], b = names[i + 1]
+        let plain = a == "\(i + 1)" || a.hasPrefix("Output") || a.hasPrefix("Channel") || a.isEmpty
+        return plain ? "\(i + 1)/\(i + 2)" : "\(a) + \(b)"
+    }
+
+    private var deviceName: String {
+        AudioDeviceCatalog.devices().first { $0.uid == (model.outputUID ?? AudioDeviceCatalog.defaultOutputUID()) }?.name ?? "Default output"
     }
 }
 

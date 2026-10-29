@@ -220,8 +220,8 @@ struct MasterMeter: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
-            LevelBar(level: model.meterLevel(track: nil), horizontal: true)
-                .frame(width: 110, height: 10)
+            StereoMeter(levels: model.meterLevels(track: nil), horizontal: true)
+                .frame(width: 110, height: 12)
         }
     }
 }

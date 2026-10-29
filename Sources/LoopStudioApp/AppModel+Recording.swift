@@ -136,8 +136,8 @@ extension AppModel {
     }
 
     private func beginRecording(status text: String) {
-        recordStartTick = currentTick
-        recordFrameOffset = engine.clockOffset
+        // A Session take keeps the start it was given, on the session clock (see `startRecording`).
+        if recordSlots.isEmpty { recordStartTick = currentTick; recordFrameOffset = engine.clockOffset } else { recordFrameOffset = 0 }
         recording = true
         recordingAudio = true
         updateMetronome()

@@ -13,7 +13,7 @@ public final class Renderer {
     private let nodes: UnsafeMutablePointer<NodePlan>
     private let nodeCount: Int
     private let buffers: UnsafeMutablePointer<Float> // per node: left block, right block
-    private let peaks: UnsafeMutablePointer<Float>   // per node: largest sample since the last `takePeak`
+    private let peaks: UnsafeMutablePointer<Float>   // per node: largest left and right sample since the last `takePeak`
     /// Session clock minus timeline clock for the block being rendered.
     private var sessionOffset: Int64 = 0
     /// The song position of the last grid step asked for, so several effects share one tempo map lookup.
@@ -145,8 +145,8 @@ public final class Renderer {
         outPointers = .allocate(capacity: 2)
         outPointers.initialize(to: scratchOut)
         (outPointers + 1).initialize(to: scratchOut + maxBlock)
-        peaks = .allocate(capacity: max(1, nodeCount))
-        peaks.initialize(repeating: 0, count: max(1, nodeCount))
+        peaks = .allocate(capacity: 2 * max(1, nodeCount))
+        peaks.initialize(repeating: 0, count: 2 * max(1, nodeCount))
         held = .allocate(capacity: max(1, nodeCount) * 2048)
         held.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
         portCount = plan.outputPorts.count
@@ -298,18 +298,27 @@ public final class Renderer {
 
     /// Moves the peaks since the last call into `meters` (keeping the larger value) and starts them again.
     /// Realtime safe. The engine calls it at the end of each callback.
+    /// Two values per node: left, then right.
     public func movePeaks(into meters: UnsafeMutablePointer<Float>, capacity: Int) {
-        for i in 0..<min(nodeCount, capacity) {
+        for i in 0..<min(2 * nodeCount, capacity) {
             meters[i] = max(meters[i], peaks[i])
             peaks[i] = 0
         }
     }
 
-    /// The largest absolute sample of a node (after its fader) since the last call. For meters.
+    /// The largest absolute sample of a node (after its fader) since the last call, left and right. For meters.
+    public func takePeaks(node: Int) -> (left: Float, right: Float) {
+        guard node >= 0, node < nodeCount else { return (0, 0) }
+        let p = (peaks[2 * node], peaks[2 * node + 1])
+        peaks[2 * node] = 0; peaks[2 * node + 1] = 0
+        return p
+    }
+
+    /// The larger of the two channel peaks.
     public func takePeak(node: Int) -> Float {
         guard node >= 0, node < nodeCount else { return 0 }
-        let p = peaks[node]
-        peaks[node] = 0
+        let p = max(peaks[2 * node], peaks[2 * node + 1])
+        peaks[2 * node] = 0; peaks[2 * node + 1] = 0
         return p
     }
 
@@ -376,13 +385,14 @@ public final class Renderer {
 
             for (k, send) in node.sends.enumerated() where send.preFader { sendOut(send, sendLines[i][k], l, r, startFrame: startFrame, frames: frames) }
 
-            let peak: Float
+            let peak: (Float, Float)
             if node.isMaster {
                 peak = fader(node, l, r, outLeft, outRight, startFrame: startFrame, frames: frames)
             } else {
                 peak = fader(node, l, r, l, r, startFrame: startFrame, frames: frames)
             }
-            peaks[i] = max(peaks[i], peak)
+            peaks[2 * i] = max(peaks[2 * i], peak.0)
+            peaks[2 * i + 1] = max(peaks[2 * i + 1], peak.1)
             if transport, let captures, i < plan.trackOrder.count {
                 // The master is `nil` in the track order, and in a set that records it.
                 let track = plan.trackOrder[i]
@@ -426,19 +436,20 @@ public final class Renderer {
         return (volume * pl, volume * pr)
     }
 
-    /// Applies volume and pan from `l`, `r` into `outL`, `outR` (the same memory for a normal track). Returns the peak.
+    /// Applies volume and pan from `l`, `r` into `outL`, `outR` (the same memory for a normal track).
+    /// Returns the peak of each channel.
     private func fader(_ node: NodePlan, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
                        _ outL: UnsafeMutablePointer<Float>, _ outR: UnsafeMutablePointer<Float>,
-                       startFrame: Int64, frames: Int) -> Float {
-        var peak: Float = 0
+                       startFrame: Int64, frames: Int) -> (Float, Float) {
+        var peakL: Float = 0, peakR: Float = 0
         if node.volumeAuto == nil && node.panAuto == nil {
             let gl = node.gain * node.panLeft, gr = node.gain * node.panRight
             for k in 0..<frames {
                 let a = l[k] * gl, b = r[k] * gr
                 outL[k] = a; outR[k] = b
-                peak = max(peak, abs(a), abs(b))
+                peakL = max(peakL, abs(a)); peakR = max(peakR, abs(b))
             }
-            return peak
+            return (peakL, peakR)
         }
         eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, t0 in
             let (al, ar) = gains(node, at: grid), (bl, br) = gains(node, at: grid + 32)
@@ -446,10 +457,10 @@ public final class Renderer {
                 let t = t0 + Float(j) / 32
                 let a = l[offset + j] * (al + (bl - al) * t), b = r[offset + j] * (ar + (br - ar) * t)
                 outL[offset + j] = a; outR[offset + j] = b
-                peak = max(peak, abs(a), abs(b))
+                peakL = max(peakL, abs(a)); peakR = max(peakR, abs(b))
             }
         }
-        return peak
+        return (peakL, peakR)
     }
 
     private func addSend(_ send: SendPlan, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,

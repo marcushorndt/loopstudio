@@ -362,13 +362,19 @@ public final class LiveEngine: @unchecked Sendable {
         if old !== monitor { retire(old) }
     }
 
-    public func takePeak(node: Int) -> Float {
+    /// The peak of a node since the last call, left and right. For meters.
+    public func takePeaks(node: Int) -> (left: Float, right: Float) {
         locked {
-            guard node >= 0, node < meterCapacity else { return 0 }
-            let p = meters[node]
-            meters[node] = 0
+            guard node >= 0, 2 * node + 1 < meterCapacity else { return (0, 0) }
+            let p = (meters[2 * node], meters[2 * node + 1])
+            meters[2 * node] = 0; meters[2 * node + 1] = 0
             return p
         }
+    }
+
+    public func takePeak(node: Int) -> Float {
+        let p = takePeaks(node: node)
+        return max(p.left, p.right)
     }
 
     private func locked<T>(_ body: () -> T) -> T {

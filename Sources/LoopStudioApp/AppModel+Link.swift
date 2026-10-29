@@ -1,6 +1,10 @@
 import Foundation
 import LoopStudioCore
 import LoopStudioEngine
+import os
+
+/// `log stream --predicate 'subsystem == "app.loopstudio"'` shows what Link does.
+private let linkLog = Logger(subsystem: "app.loopstudio", category: "link")
 
 /// Ableton Link, like the Link button in Live.
 ///
@@ -21,10 +25,13 @@ extension AppModel {
         link.isEnabled = linkEnabled
         linkTask?.cancel()
         linkTask = nil
+        linkAnnounceTask?.cancel()
         setLinkPeers(0)
+        linkLog.notice("Link \(self.linkEnabled ? "on" : "off", privacy: .public), start/stop sync \(self.linkStartStop ? "on" : "off", privacy: .public)")
         guard linkEnabled else { return }
         linkTempoKnown = bpm
         link.setTempo(bpm, atMicros: link.nowMicros)
+        if transportPlaying, linkStartStop { announcePlaying() }
         linkTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(100))
@@ -37,15 +44,25 @@ extension AppModel {
     /// One poll of the session.
     func linkTick() {
         let snap = link.snapshot()
-        setLinkPeers(link.peers)
+        let peers = link.peers
+        if peers != linkPeers {
+            linkLog.notice("peers \(self.linkPeers, privacy: .public) -> \(peers, privacy: .public), session tempo \(snap.tempo, privacy: .public), playing \(snap.isPlaying, privacy: .public)")
+            // A peer that joins takes no playing state over from the session; it only sees changes.
+            // Say it again a moment after the join, when the peer is in our session.
+            if peers > linkPeers, transportPlaying, linkStartStop { announcePlaying() }
+        }
+        setLinkPeers(peers)
         if abs(snap.tempo - linkTempoKnown) >= 0.005 {
+            linkLog.notice("session tempo \(snap.tempo, privacy: .public), project \(self.bpm, privacy: .public)")
             linkTempoKnown = snap.tempo
             if abs(snap.tempo - bpm) >= 0.005 { followTempo(snap.tempo) }
         }
         if linkStartStop {
             if snap.isPlaying, !transportPlaying, !recordArmed {
+                linkLog.notice("session plays since \(snap.playTimeMicros - self.link.nowMicros, privacy: .public) us: play")
                 playFromLink(at: snap.playTimeMicros)
             } else if !snap.isPlaying, transportPlaying {
+                linkLog.notice("session stopped: pause")
                 linkFollowing = true
                 pause()
                 linkFollowing = false
@@ -60,8 +77,23 @@ extension AppModel {
         let beat = Double(currentTick.rawValue) / Double(Tick.perQuarter)
         // A little ahead, so the audio thread sees the start time before it is due.
         let start = link.requestBeat(beat, atMicros: link.nowMicros + 50_000, quantum: linkQuantum, play: linkStartStop)
+        linkLog.notice("play: beat \(beat, privacy: .public) in \(start - self.link.nowMicros, privacy: .public) us, \(self.link.peers, privacy: .public) peer(s), tell peers \(self.linkStartStop, privacy: .public)")
         engine.play(atHost: LinkSession.host(fromMicros: start))
         return true
+    }
+
+    /// Sets the session's playing state again, one and three seconds from now. A peer that joined the
+    /// session in the meantime has reset the state it saw and takes this one as a change.
+    func announcePlaying() {
+        linkAnnounceTask?.cancel()
+        linkAnnounceTask = Task { @MainActor [weak self] in
+            for wait in [1.0, 2.0] {
+                try? await Task.sleep(for: .seconds(wait))
+                guard let self, !Task.isCancelled, self.transportPlaying, self.linkEnabled, self.linkStartStop else { return }
+                linkLog.notice("tell \(self.link.peers, privacy: .public) peer(s) again that we play")
+                self.link.setIsPlaying(true, atMicros: self.link.nowMicros)
+            }
+        }
     }
 
     /// A peer started the transport at `micros`: come in on the shared grid, from the bar the song stands in.

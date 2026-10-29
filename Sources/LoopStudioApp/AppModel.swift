@@ -379,6 +379,8 @@ final class AppModel {
     private(set) var linkPeers = 0
     @ObservationIgnored private(set) lazy var link = LinkSession(bpm: bpm)
     @ObservationIgnored var linkTask: Task<Void, Never>?
+    /// Tells a peer that joined while we play that we play (Link resets that state on a join).
+    @ObservationIgnored var linkAnnounceTask: Task<Void, Never>?
     /// The session tempo as this app last saw or set it. The project may differ by a drift nudge.
     @ObservationIgnored var linkTempoKnown = 0.0
     /// A play or pause that came from a peer: do not send it back to the session.
@@ -761,7 +763,7 @@ final class AppModel {
         engine.pause()
         transportPlaying = false
         midiClock.stop()
-        if linkEnabled, linkStartStop, !linkFollowing { link.setIsPlaying(false, atMicros: link.nowMicros) }
+        if linkEnabled, linkStartStop, !linkFollowing { linkAnnounceTask?.cancel(); link.setIsPlaying(false, atMicros: link.nowMicros) }
     }
 
     /// The transport stops: the Session keeps only what plays now (see `SessionPerformance.stop`).

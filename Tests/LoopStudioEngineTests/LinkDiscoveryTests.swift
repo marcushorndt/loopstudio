@@ -36,6 +36,7 @@ func setTheSessionTempoFromHere() async throws {
 @Test(.enabled(if: ProcessInfo.processInfo.environment["LOOPSTUDIO_LINK_PEERS"] == "1"))
 func printTheSessionPeers() async throws {
     let s = LinkSession(bpm: 120)
+    s.startStopSync = true
     s.isEnabled = true
     for second in 1...5 {
         try await Task.sleep(for: .seconds(1))

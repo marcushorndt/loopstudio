@@ -166,7 +166,14 @@ private struct StopButton: View {
     var body: some View {
         Button { model.stopClips(of: track) } label: {
             HStack(spacing: 0) {
-                Image(systemName: "stop.fill").font(.system(size: 11)).foregroundStyle(Theme.dim).frame(width: 26)
+                // A stop waiting for the next bar blinks with the beat.
+                TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !model.transportPlaying)) { _ in
+                    let tick = model.sessionTick
+                    let waiting = model.transportPlaying && model.stopPending(below: track, at: tick)
+                    Image(systemName: "stop.fill").font(.system(size: 11))
+                        .foregroundStyle(waiting ? (model.waitBlink() ? Theme.text : Theme.dim.opacity(0.4)) : Theme.dim)
+                }
+                .frame(width: 26)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, minHeight: slotHeight)
@@ -192,7 +199,7 @@ private struct SlotCell: View {
             if row < track.slots.count, track.slots[row] != nil {
                 TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !model.transportPlaying)) { context in
                     let state = model.slotState(track: track, row: row, at: model.sessionTick)
-                    cell(state, blink: Int(context.date.timeIntervalSinceReferenceDate * 5) % 2 == 0)
+                    cell(state, blink: model.waitBlink())
                 }
             } else {
                 cell(.empty, blink: false)
@@ -210,7 +217,10 @@ private struct SlotCell: View {
             HStack(spacing: 0) {
                 Button { model.launch(track: track.id, row: row) } label: {
                     Image(systemName: icon(state)).font(.system(size: 11))
-                        .foregroundStyle(isPlaying(state) ? Theme.play : tint)
+                        // Blinks with the beat while it waits: green for a launch, off and on for a stop.
+                        .foregroundStyle(state.isStopping ? (blink ? Theme.play : Theme.dim)
+                                         : state.isQueued ? (blink ? Theme.play : tint)
+                                         : isPlaying(state) ? Theme.play : tint)
                         .frame(width: 26, height: slotHeight)
                         .background(isPlaying(state) ? Theme.background.opacity(0.7) : Color.clear)
                 }
@@ -230,12 +240,13 @@ private struct SlotCell: View {
                     Rectangle().fill(Theme.panel)
                     Rectangle().fill(Theme.clipBody(slot.clip.colorIndex ?? track.colorIndex, active: isPlaying(state)))
                     if !slot.clip.lanes.isEmpty { MiniCurves(clip: slot.clip, owner: track).padding(.leading, 26).padding(.vertical, 2) }
-                    if case .playing(let p) = state {
+                    if let p = state.progress {
                         Rectangle().fill(tint.opacity(0.35)).frame(width: geo.size.width * p)
                     }
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
+            // A waiting launch blinks its frame with the beat; a clip about to stop blinks its play button.
             .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(state.isQueued && blink ? Theme.accent : (selected ? Theme.text : tint.opacity(0.5)), lineWidth: selected || state.isQueued ? 1.5 : 1))
             .frame(height: slotHeight)
             .hint("\(model.clipName(slot.clip)): the play icon launches it, a click selects it, Return launches the selection.")
@@ -256,9 +267,11 @@ private struct SlotCell: View {
                     Group {
                         if takeHere {
                             // The slot that records: a red dot that pulses, like Live's recording slot.
-                            TimelineView(.animation(minimumInterval: 1.0 / 4)) { context in
+                            // It blinks with the beat while the take waits: in the count-in, or for its stop bar.
+                            TimelineView(.animation(minimumInterval: 1.0 / 24)) { _ in
+                                let waiting = model.engine.isCountingIn || model.recordStopTick != nil
                                 Image(systemName: "record.circle.fill").font(.system(size: 12))
-                                    .foregroundStyle(Color.red.opacity(Int(context.date.timeIntervalSinceReferenceDate * 2) % 2 == 0 ? 1 : 0.45))
+                                    .foregroundStyle(Color.red.opacity(!waiting || model.waitBlink() ? 1 : 0.35))
                             }
                         } else if armed {
                             Image(systemName: "circle.fill").font(.system(size: 9)).foregroundStyle(Color.red.opacity(0.75))
@@ -287,12 +300,19 @@ private struct SlotCell: View {
         }
     }
 
-    private func isPlaying(_ s: SlotState) -> Bool { if case .playing = s { true } else { false } }
+    private func isPlaying(_ s: SlotState) -> Bool { s.progress != nil }
     private func icon(_ s: SlotState) -> String { isPlaying(s) ? "play.fill" : "play.fill" }
 }
 
 extension SlotState {
     var isQueued: Bool { if case .queued = self { true } else { false } }
+    var isStopping: Bool { if case .stopping = self { true } else { false } }
+    var progress: Double? {
+        switch self {
+        case .playing(let p), .stopping(let p): p
+        default: nil
+        }
+    }
 }
 
 private struct NewTrackColumn: View {
@@ -332,9 +352,14 @@ private struct SceneColumn: View {
             Text("Scenes").font(.system(size: 10)).foregroundStyle(Theme.dim).frame(height: 30)
             ForEach(0..<rows, id: \.self) { row in
                 Button { model.launchScene(row) } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "play.fill").font(.system(size: 9))
-                        Text("\(row + 1)").font(.system(size: 11, design: .monospaced))
+                    TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !model.transportPlaying)) { _ in
+                        // A clip of this scene waits to launch: the play icon blinks with the beat, like a slot's.
+                        let queued = model.transportPlaying && model.sceneQueued(row)
+                        HStack(spacing: 3) {
+                            Image(systemName: "play.fill").font(.system(size: 9))
+                                .foregroundStyle(queued && model.waitBlink() ? Theme.play : Theme.text)
+                            Text("\(row + 1)").font(.system(size: 11, design: .monospaced))
+                        }
                     }
                     .foregroundStyle(Theme.text)
                     .frame(width: columnWidth, height: slotHeight)

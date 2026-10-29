@@ -94,8 +94,12 @@ struct TransportBar: View {
                     .hint("Play / pause (Space)")
                 tile("stop.fill", on: false, tint: Theme.dim) { model.stop() }
                     .hint("Stop; press again to go to the start (⌘.)")
-                tile(model.recordArmed ? "record.circle.fill" : "record.circle", on: model.recordArmed, tint: .red) { model.toggleRecordArm() }
-                    .hint("Arm recording (R). Space starts it.")
+                // During the count-in the record button blinks with the beat, like everything that waits.
+                TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !(model.recording && model.engine.isCountingIn))) { _ in
+                    let dim = model.recording && model.engine.isCountingIn && !model.waitBlink()
+                    tile(model.recordArmed ? "record.circle.fill" : "record.circle", on: model.recordArmed && !dim, tint: .red) { model.toggleRecordArm() }
+                }
+                .hint("Arm recording (R). Space starts it.")
                 tile("metronome", on: model.metronomeOn, tint: Theme.accent) { model.toggleMetronome() }
                     .hint("Metronome (⌘K)")
                 Menu {

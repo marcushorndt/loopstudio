@@ -54,6 +54,8 @@ enum SlotState {
     case stopped
     case queued
     case playing(progress: Double)
+    /// Playing, with a stop waiting for the next bar.
+    case stopping(progress: Double)
 }
 
 /// The state of the open window: the project, the audio engine, the selection, and undo.
@@ -951,10 +953,46 @@ final class AppModel {
         let (now, next) = plays(of: track.id, at: tick)
         if let e = now, e.slot == row {
             let length = max(1, slot.clip.length.rawValue)
-            return .playing(progress: Double((tick - e.startTick).rawValue % length) / Double(length))
+            let progress = Double((tick - e.startTick).rawValue % length) / Double(length)
+            return stopPending(track.id, at: tick) ? .stopping(progress: progress) : .playing(progress: progress)
         }
         if let next, next.slot == row, next.cause == .launch { return .queued }
         return .stopped
+    }
+
+    /// The track plays now, and its latest launch is a stop that has not come yet (a stop button, a scene
+    /// with an empty slot). A Session take that ends at the next bar counts too.
+    func stopPending(_ track: TrackID, at tick: Tick) -> Bool {
+        if recordStopTick != nil, recordSlots[track] != nil { return true }
+        guard let last = performance.last(where: { $0.track == track }), last.slot == nil, last.tick > tick else { return false }
+        return plays(of: track, at: tick).now != nil
+    }
+
+    /// Any track below the master or a bus has a stop waiting.
+    func stopPending(below t: Track, at tick: Tick) -> Bool {
+        switch t.kind {
+        case .master: return project.tracks.contains { stopPending($0.id, at: tick) }
+        case .group, .returnTrack:
+            return project.tracks.contains { Routing.feeds(of: $0, in: project).contains(t.id) && stopPending($0.id, at: tick) }
+        default: return stopPending(t.id, at: tick)
+        }
+    }
+
+    /// The one blink of everything that waits for the grid: a launch, a stop, a take that starts or ends, the
+    /// count-in. On for the first half of each beat on the session clock. With the transport stopped or
+    /// counting in, the beats come from the tempo on the wall clock.
+    func waitBlink() -> Bool {
+        if transportPlaying && !engine.isCountingIn {
+            return sessionTick.rawValue % Int64(Tick.perQuarter) < Int64(Tick.perQuarter / 2)
+        }
+        let beats = Date().timeIntervalSinceReferenceDate * project.tempoMap.bpm(at: currentTick) / 60
+        return beats.truncatingRemainder(dividingBy: 1) < 0.5
+    }
+
+    /// Some slot of this scene row waits to launch.
+    func sceneQueued(_ row: Int) -> Bool {
+        let tick = sessionTick
+        return project.tracks.contains { row < $0.slots.count && slotState(track: $0, row: row, at: tick).isQueued }
     }
 
     /// Ticks since the clip began its current play, or `nil` when it does not play now.

@@ -167,6 +167,12 @@ final class AppModel {
     var outputLeft: Int = UserDefaults.standard.object(forKey: "outputLeft") as? Int ?? 0 {
         didSet { UserDefaults.standard.set(outputLeft, forKey: "outputLeft") }
     }
+    /// Per Mac: the first output channel of each direct port, keyed by port ID.
+    var portChannels: [String: Int] = UserDefaults.standard.dictionary(forKey: "portChannels") as? [String: Int] ?? [:] {
+        didSet { UserDefaults.standard.set(portChannels, forKey: "portChannels") }
+    }
+    /// The direct ports the engine was last set up for. A change rebuilds the output.
+    @ObservationIgnored var appliedDirectPorts: Set<PortID> = []
     var bufferFrames: Int = UserDefaults.standard.object(forKey: "bufferFrames") as? Int ?? 0 {
         didSet { UserDefaults.standard.set(bufferFrames, forKey: "bufferFrames") }
     }
@@ -1368,6 +1374,8 @@ final class AppModel {
     }
 
     private func rebuild(afterWarps: Bool = false) {
+        // A track that starts or stops using a direct output (or another project opened) changes the output graph.
+        if Set(directPorts.map(\.id)) != appliedDirectPorts { applyAudioSettings() }
         var p = project
         p.launches = performance
 

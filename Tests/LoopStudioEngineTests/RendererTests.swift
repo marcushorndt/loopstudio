@@ -240,10 +240,9 @@ private func db(_ x: Float) -> Float { 20 * log10(x) }
     try! Command.insertClip(track: missing, clip: .audio(rig.project.makeAudioClip(asset: ghost.id, length: 960))).apply(to: &rig.project)
 
     let warnings = rig.plan.warnings.joined(separator: "\n")
-    #expect(warnings.contains("hardware port"))
     #expect(warnings.contains("no source tempo"))
     #expect(warnings.contains("missing or unreadable"))
-    #expect(rig.render().peak == 1.0, "the warped clip still plays, unwarped; the direct-out track plays through the master")
+    #expect(rig.render().peak == 0.5, "the warped clip still plays, unwarped; the direct-out track is not in the master")
 }
 
 @Test func tempoChangesMoveClipsOnTheGrid() {
@@ -500,4 +499,21 @@ private func raw(_ plan: RenderPlan, frames: Int, block: Int = 4096) -> [Float] 
     #expect(lane.value(at: 24_000) == -12, "before the take-over the clip moves the volume")
     #expect(lane.value(at: 72_000) == nil, "after it the clip automation stops")
     #expect(lane.value(at: 24_000, sessionOffset: 48_000) == nil, "the cut counts on the session clock")
+}
+
+@Test func aDirectOutputPlaysOnItsPortBusNotTheMaster() {
+    var rig = Rig()
+    let a = rig.asset(seconds: 1) { _ in 0.5 }
+    let direct = rig.track("Direct")
+    rig.clip(a, on: direct)
+    let cue = rig.project.ports[1].id
+    try! Command.setHardwareOutput(id: direct, port: cue).apply(to: &rig.project)
+    let plan = rig.plan
+    #expect(plan.outputPorts == [cue])
+    let renderer = Renderer(plan: plan, maxBlock: 256)
+    let l = UnsafeMutablePointer<Float>.allocate(capacity: 256), r = UnsafeMutablePointer<Float>.allocate(capacity: 256)
+    defer { l.deallocate(); r.deallocate() }
+    renderer.process(startFrame: 0, frames: 256, outLeft: l, outRight: r)
+    #expect((0..<256).allSatisfy { l[$0] == 0 }, "the master is silent")
+    #expect(abs(renderer.portLeft(0)[100] - 0.5) < 0.001 && abs(renderer.portRight(0)[100] - 0.5) < 0.001)
 }

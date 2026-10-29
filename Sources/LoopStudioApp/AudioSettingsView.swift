@@ -39,6 +39,23 @@ struct AudioSettingsView: View {
                         .font(.caption).foregroundStyle(Theme.dim)
                 }
             }
+            Section("Direct outputs") {
+                let ports = model.assignablePorts
+                if let device = current, device.outputs.count > 2 {
+                    ForEach(ports, id: \.id) { port in
+                        Picker(port.name, selection: Binding(get: { model.portLeft(port) }, set: { model.setPortLeft(port, $0) })) {
+                            ForEach(Array(stride(from: 0, to: device.outputs.count - 1, by: 2)), id: \.self) { i in
+                                Text("\(device.outputs[i].name) + \(device.outputs[i + 1].name)").tag(i)
+                            }
+                        }
+                    }
+                    Text("A track set to \"Ext. Out\" plays on these channels, past the master.")
+                        .font(.caption).foregroundStyle(Theme.dim)
+                } else {
+                    Text("This sound card has two outputs. A track set to \"Ext. Out\" plays on the master pair, past the master fader.")
+                        .font(.caption).foregroundStyle(Theme.dim)
+                }
+            }
             Section("Audio input (recording)") {
                 let inputs = devices.filter { !$0.inputs.isEmpty }
                 Picker("Device", selection: Binding(get: { model.inputUID ?? "" }, set: { model.inputUID = $0.isEmpty ? nil : $0; model.inputLeft = 0 })) {

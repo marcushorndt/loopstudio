@@ -120,6 +120,8 @@ struct NodePlan {
     var latency = 0
     /// Delay on the output connection and on each tap, from plugin delay compensation.
     var outputDelay = 0
+    /// A direct hardware output: index into `RenderPlan.outputPorts`. The node then does not feed the master.
+    var port: Int? = nil
     var tapDelays: [Int] = []
     /// How late this node's sound is after its fader, from the plugins on its way there.
     var arrival = 0
@@ -140,6 +142,8 @@ public struct RenderPlan {
     public let trackOrder: [TrackID?]
     /// The song tempo and meter, for effects and plugins that follow the tempo.
     public internal(set) var tempoMap = TempoMap()
+    /// The hardware ports that tracks play to directly, past the master. The renderer has one stereo bus each.
+    public internal(set) var outputPorts: [PortID] = []
     var timeSignatures: [TimeSignatureChange] = [TimeSignatureChange(tick: 0, signature: TimeSignature(4, 4))]
 
     public static func dB(_ db: Double) -> Float { db <= -96 ? 0 : Float(pow(10.0, db / 20.0)) }
@@ -158,6 +162,7 @@ public struct RenderPlan {
     public static func compile(_ project: Project, bank: AudioBank, session: SessionSimulation? = nil,
                                units: [DeviceID: AudioUnitEffect] = [:], arrangementEnds: [TrackID: Int64] = [:]) -> RenderPlan {
         var warnings: [String] = []
+        var outputPorts: [PortID] = []
         let tracks = project.tracks
         let rate = project.sampleRate
         let map = project.tempoMap
@@ -281,11 +286,6 @@ public struct RenderPlan {
 
         for id in order {
             let t = project.track(id)!
-            // The engine has one stereo output so far. A track sent to its own hardware port plays through the
-            // master instead of going silent, and the warning says so.
-            if t.hardwareOutput != nil {
-                warnings.append("track \"\(t.name)\" is set to its own hardware port; it plays through the master until per-port outputs exist")
-            }
             let silent = t.mute || !audible.contains(id)
             var clips: [ClipPlan] = []
 
@@ -377,6 +377,12 @@ public struct RenderPlan {
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
                 effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, instrumentAuto: instrumentAuto, midi: midi, sessionMidi: sessionMidi,
                 arrangementEnd: arrangementEnds[t.id]))
+            // A direct output: the track plays to its hardware port, not into the master.
+            if let port = t.hardwareOutput {
+                if !outputPorts.contains(port) { outputPorts.append(port) }
+                nodes[nodes.count - 1].output = nil
+                nodes[nodes.count - 1].port = outputPorts.firstIndex(of: port)
+            }
         }
 
         var masterEffects = effects(of: project.master, units: units, warnings: &warnings).0
@@ -398,6 +404,7 @@ public struct RenderPlan {
         var plan = RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings,
                               trackOrder: order.map { Optional($0) } + [nil])
         plan.tempoMap = map
+        plan.outputPorts = outputPorts
         plan.timeSignatures = project.timeSignatures.sorted { $0.tick < $1.tick }
         plan.applyDelayCompensation()
         return plan

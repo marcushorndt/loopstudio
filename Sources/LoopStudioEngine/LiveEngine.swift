@@ -53,6 +53,15 @@ public final class LiveEngine: @unchecked Sendable {
         var beatsPerBar = 4
     }
     private var click = Click()
+    /// Where the master and the direct ports go among the output channels.
+    private struct Routes {
+        var multi = false
+        var masterLeft = 0, masterRight = 1
+        var ports: [PortID: (Int, Int)] = [:]
+    }
+    private var routes = Routes()
+    /// Channels of the source node: 2, or every channel of the card when direct ports are in use.
+    private var graphChannels = 2
     private var countInRemaining: Int64 = 0
     private var countInDone: Int64 = 0
     private var stampPending = false
@@ -96,14 +105,25 @@ public final class LiveEngine: @unchecked Sendable {
 
     public func start() throws {
         guard sourceNode == nil else { return }
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
-        let node = AVAudioSourceNode(format: format) { [unowned self] _, timestamp, frameCount, bufferList in
+        let node: AVAudioSourceNode
+        let render: AVAudioSourceNodeRenderBlock = { [unowned self] _, timestamp, frameCount, bufferList in
             self.render(frameCount: Int(frameCount), bufferList: bufferList, host: timestamp.pointee.mHostTime)
             return noErr
         }
+        if graphChannels > 2 {
+            // Direct outputs: the engine renders every channel of the sound card itself, straight to the output.
+            let layout = AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | UInt32(graphChannels))!
+            let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channelLayout: layout)
+            node = AVAudioSourceNode(format: format, renderBlock: render)
+            engine.attach(node)
+            engine.connect(node, to: engine.outputNode, format: format)
+        } else {
+            let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+            node = AVAudioSourceNode(format: format, renderBlock: render)
+            engine.attach(node)
+            engine.connect(node, to: engine.mainMixerNode, format: format)
+        }
         sourceNode = node
-        engine.attach(node)
-        engine.connect(node, to: engine.mainMixerNode, format: format)
         try engine.start()
         // A sound card that changes its format or goes away stops the engine. It starts again on the new setup.
         if configObserver == nil {
@@ -141,10 +161,19 @@ public final class LiveEngine: @unchecked Sendable {
 
     /// Plays through another device, and sends the stereo master to two of its channels.
     /// `uid` nil means the system default. Channels count from 0. The engine restarts if it was running.
-    public func setOutput(uid: String?, left: Int = 0, right: Int = 1, bufferFrames: Int? = nil) throws {
+    /// Plays through another device. The master goes to channels `left` and `right` (from 0). `ports` maps
+    /// each direct hardware port to a channel pair of the device. With direct ports on a card of more than two
+    /// channels, the engine renders every channel itself; otherwise the ports play on the master pair.
+    /// `uid` nil means the system default. The engine restarts if it was running.
+    public func setOutput(uid: String?, left: Int = 0, right: Int = 1, bufferFrames: Int? = nil,
+                          ports: [PortID: (Int, Int)] = [:]) throws {
         let wasRunning = engine.isRunning
         engine.stop()
-        defer { if wasRunning { try? engine.start() } }
+        defer {
+            // A changed channel count dropped the source node: build the graph again.
+            if sourceNode == nil { try? start(); if !wasRunning { engine.stop() } }
+            else if wasRunning { try? engine.start() }
+        }
 
         let system = AudioObjectID(kAudioObjectSystemObject)
         var deviceID: AudioObjectID?
@@ -162,7 +191,19 @@ public final class LiveEngine: @unchecked Sendable {
         guard status == noErr else { throw OutputError.status(status) }
 
         let channels = HAL.channelCount(device, scope: kAudioObjectPropertyScopeOutput)
-        if channels > 2 || left != 0 || right != 1 {
+        let multi = !ports.isEmpty && channels > 2
+        if multi != (graphChannels > 2) || (multi && channels != graphChannels) {
+            if let node = sourceNode { engine.detach(node); sourceNode = nil }
+            graphChannels = multi ? channels : 2
+        }
+        setRoutes(channels: multi ? channels : 2, left: left, right: right, ports: ports)
+        if multi {
+            // Channel n of the engine is channel n of the card.
+            let map = (0..<Int32(channels)).map { $0 }
+            status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_ChannelMap, kAudioUnitScope_Output, 0,
+                                          map, UInt32(map.count * MemoryLayout<Int32>.size))
+            guard status == noErr else { throw OutputError.status(status) }
+        } else if channels > 2 || left != 0 || right != 1 {
             var map = [Int32](repeating: -1, count: max(channels, 2))
             if left < map.count { map[left] = 0 }
             if right < map.count { map[right] = 1 }
@@ -174,6 +215,16 @@ public final class LiveEngine: @unchecked Sendable {
             var address = HAL.address(kAudioDevicePropertyBufferFrameSize)
             AudioObjectSetPropertyData(device, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
         }
+    }
+
+    /// Where the master and the ports go when the engine renders `channels` channels. More than two
+    /// channels turns direct outputs on; with two, the ports play on the master pair.
+    func setRoutes(channels: Int, left: Int, right: Int, ports: [PortID: (Int, Int)]) {
+        let multi = channels > 2
+        let routes = Routes(multi: multi, masterLeft: multi ? min(left, channels - 1) : 0, masterRight: multi ? min(right, channels - 1) : 1,
+                            ports: multi ? ports.filter { $0.value.0 < channels && $0.value.1 < channels } : [:])
+        let old: Routes = locked { let old = self.routes; self.routes = routes; return old }
+        retire(old.ports)
     }
 
     // MARK: Control thread
@@ -317,9 +368,7 @@ public final class LiveEngine: @unchecked Sendable {
 
     func render(frameCount: Int, bufferList: UnsafeMutablePointer<AudioBufferList>, host: UInt64) {
         let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
-        guard buffers.count >= 2,
-              let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
-              let right = buffers[1].mData?.assumingMemoryBound(to: Float.self) else { return }
+        guard buffers.count >= 2 else { return }
 
         // 1. Take the control state. Plain copies and reference counts only; nothing is allocated or freed.
         os_unfair_lock_lock(lock)
@@ -345,12 +394,30 @@ public final class LiveEngine: @unchecked Sendable {
         let clockGeneration = self.clockGeneration
         let stateGeneration = self.stateGeneration
         let sampleRate = self.sampleRate
+        let routes = self.routes
         os_unfair_lock_unlock(lock)
 
-        guard let renderer else {
-            left.update(repeating: 0, count: frameCount); right.update(repeating: 0, count: frameCount)
-            return
+        // Every channel starts silent. The master goes to its pair; with direct ports on, to the pair it is routed to.
+        for b in 0..<buffers.count { buffers[b].mData?.assumingMemoryBound(to: Float.self).update(repeating: 0, count: frameCount) }
+        let masterL = routes.multi && routes.masterLeft < buffers.count ? routes.masterLeft : 0
+        let masterR = routes.multi && routes.masterRight < buffers.count ? routes.masterRight : 1
+        guard let left = buffers[masterL].mData?.assumingMemoryBound(to: Float.self),
+              let right = buffers[masterR].mData?.assumingMemoryBound(to: Float.self) else { return }
+        /// Adds the direct ports of the last block to their channels. Without a route they play on the master pair.
+        func addPorts(_ renderer: Renderer, offset: Int, frames n: Int) {
+            guard renderer.portCount > 0 else { return }
+            let ports = renderer.outputPorts
+            for i in 0..<renderer.portCount {
+                var pair = (masterL, masterR)
+                if routes.multi, let route = routes.ports[ports[i]], route.0 < buffers.count, route.1 < buffers.count { pair = route }
+                guard let l = buffers[pair.0].mData?.assumingMemoryBound(to: Float.self),
+                      let r = buffers[pair.1].mData?.assumingMemoryBound(to: Float.self) else { continue }
+                let pl = renderer.portLeft(i), pr = renderer.portRight(i)
+                for k in 0..<n { l[offset + k] += pl[k]; r[offset + k] += pr[k] }
+            }
         }
+
+        guard let renderer else { return }
 
         // 2. Render, with no lock held.
         if let previous, previous !== renderer { renderer.takeOverNotes(from: previous, at: position) }
@@ -366,6 +433,7 @@ public final class LiveEngine: @unchecked Sendable {
             var n = min(frameCount - done, renderer.maxBlock)
             if countInRemaining > 0 { n = Int(min(Int64(n), countInRemaining)) }
             renderer.process(startFrame: position, frames: n, transport: false, outLeft: left + done, outRight: right + done)
+            addPorts(renderer, offset: done, frames: n)
             if countInRemaining > 0 {
                 Self.addClick(left + done, right + done, n, clock: countInDone, click, sampleRate)
                 countInDone += Int64(n)
@@ -387,6 +455,7 @@ public final class LiveEngine: @unchecked Sendable {
                 n = min(n, Int(loop.upperBound - position))
             }
             renderer.process(startFrame: position, sessionFrame: sessionPosition, frames: n, outLeft: left + done, outRight: right + done)
+            addPorts(renderer, offset: done, frames: n)
             if click.enabled {
                 if click.frames.isEmpty { Self.addClick(left + done, right + done, n, clock: position, click, sampleRate) }
                 else { Self.addGridClick(left + done, right + done, n, clock: position, click, sampleRate) }

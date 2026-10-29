@@ -221,7 +221,7 @@ struct TrackIOSection: View {
     @Environment(AppModel.self) private var model
     let track: Track
 
-    private enum Out: Hashable { case master, sendsOnly, track(TrackID) }
+    private enum Out: Hashable { case master, sendsOnly, track(TrackID), port(PortID) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -292,16 +292,25 @@ struct TrackIOSection: View {
 
     private var outputPicker: some View {
         let options = model.project.tracks.filter { ($0.kind == .group || $0.kind == .returnTrack) && $0.id != track.id }
-        let current: Out = track.isSendsOnly ? .sendsOnly : (track.output.map { .track($0) } ?? .master)
+        let current: Out = track.isSendsOnly ? .sendsOnly
+            : track.hardwareOutput.map { .port($0) } ?? (track.output.map { .track($0) } ?? .master)
+        // Leaving a direct output clears it first: a track goes to one place only.
+        let clearPort: [Command] = track.hardwareOutput == nil ? [] : [.setHardwareOutput(id: track.id, port: nil)]
         return Picker("", selection: Binding(get: { current }, set: { choice in
             switch choice {
-            case .master: model.apply(.batch(commands: [.setSendsOnly(id: track.id, sendsOnly: false), .setOutput(id: track.id, target: nil)]))
-            case .sendsOnly: model.apply(.setSendsOnly(id: track.id, sendsOnly: true))
-            case .track(let id): model.apply(.batch(commands: [.setSendsOnly(id: track.id, sendsOnly: false), .setOutput(id: track.id, target: id)]))
+            case .master: model.apply(.batch(commands: clearPort + [.setSendsOnly(id: track.id, sendsOnly: false), .setOutput(id: track.id, target: nil)]))
+            case .sendsOnly: model.apply(.batch(commands: clearPort + [.setSendsOnly(id: track.id, sendsOnly: true)]))
+            case .track(let id): model.apply(.batch(commands: clearPort + [.setSendsOnly(id: track.id, sendsOnly: false), .setOutput(id: track.id, target: id)]))
+            case .port(let id): model.apply(.batch(commands: [.setSendsOnly(id: track.id, sendsOnly: false), .setOutput(id: track.id, target: nil),
+                                                              .setHardwareOutput(id: track.id, port: id)]))
             }
         })) {
             Text("Master").tag(Out.master)
             ForEach(options, id: \.id) { Text($0.name).tag(Out.track($0.id)) }
+            if !model.assignablePorts.isEmpty {
+                Divider()
+                ForEach(model.assignablePorts, id: \.id) { Text("Ext. Out: \($0.name)").tag(Out.port($0.id)) }
+            }
             Divider()
             Text("Sends Only").tag(Out.sendsOnly)
         }

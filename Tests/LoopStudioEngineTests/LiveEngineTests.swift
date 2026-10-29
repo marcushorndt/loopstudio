@@ -11,17 +11,19 @@ private final class Harness {
     let engine = LiveEngine(sampleRate: rate)
     let frames: Int
     let list: UnsafeMutableAudioBufferListPointer
-    let left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>
+    let channels: [UnsafeMutablePointer<Float>]
+    var left: UnsafeMutablePointer<Float> { channels[0] }
 
-    init(frames: Int = 512) {
+    init(frames: Int = 512, channels count: Int = 2) {
         self.frames = frames
-        list = AudioBufferList.allocate(maximumBuffers: 2)
-        left = .allocate(capacity: frames); right = .allocate(capacity: frames)
-        list[0] = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(frames * 4), mData: left)
-        list[1] = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(frames * 4), mData: right)
+        list = AudioBufferList.allocate(maximumBuffers: count)
+        channels = (0..<count).map { _ in .allocate(capacity: frames) }
+        for (i, c) in channels.enumerated() { list[i] = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(frames * 4), mData: c) }
     }
 
-    deinit { left.deallocate(); right.deallocate(); list.unsafeMutablePointer.deallocate() }
+    deinit { channels.forEach { $0.deallocate() }; list.unsafeMutablePointer.deallocate() }
+
+    func peak(_ channel: Int) -> Float { (0..<frames).reduce(0) { max($0, abs(channels[channel][$1])) } }
 
     /// One callback. Returns the peak of the left channel.
     @discardableResult
@@ -31,8 +33,8 @@ private final class Harness {
     }
 }
 
-/// A project with one audio track that plays a steady 0.5 for four seconds.
-private func plan() -> RenderPlan {
+/// A project with one audio track that plays a steady 0.5 for four seconds, optionally to a direct port.
+private func plan(direct: Bool = false) -> RenderPlan {
     var project = Project(name: "L", sampleRate: rate)
     let bank = AudioBank()
     let n = Int(4 * rate)
@@ -44,6 +46,7 @@ private func plan() -> RenderPlan {
     var c = project.makeAudioClip(asset: asset.id, start: 0, length: 7680)
     c.fadeInMs = 0; c.fadeOutMs = 0
     try! Command.insertClip(track: t.id, clip: .audio(c)).apply(to: &project)
+    if direct { try! Command.setHardwareOutput(id: t.id, port: project.ports[1].id).apply(to: &project) }
     return RenderPlan.compile(project, bank: bank)
 }
 
@@ -91,4 +94,22 @@ private func plan() -> RenderPlan {
     for _ in 0..<600 { h.callback() }
     await control.value
     #expect(h.engine.positionFrame >= 0 && h.engine.positionFrame < 600 * 256 + 30_000)
+}
+
+@Test func onAStereoOutputADirectPortPlaysOnTheMasterPair() {
+    let h = Harness()
+    h.engine.setRenderer(Renderer(plan: plan(direct: true)))
+    h.engine.play()
+    #expect(abs(h.callback() - 0.5) < 0.01, "two channels only: the port folds onto the master pair")
+}
+
+@Test func onAFourChannelCardADirectPortPlaysOnItsOwnPair() {
+    let h = Harness(channels: 4)
+    let p = plan(direct: true)
+    h.engine.setRenderer(Renderer(plan: p))
+    h.engine.setRoutes(channels: 4, left: 0, right: 1, ports: [p.outputPorts[0]: (2, 3)])
+    h.engine.play()
+    h.callback()
+    #expect(h.peak(0) == 0 && h.peak(1) == 0, "the master pair is silent")
+    #expect(abs(h.peak(2) - 0.5) < 0.01 && abs(h.peak(3) - 0.5) < 0.01, "the port plays on channels 3 and 4")
 }

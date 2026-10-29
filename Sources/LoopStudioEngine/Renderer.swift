@@ -58,6 +58,9 @@ public final class Renderer {
     }
     private let scratchIn: UnsafeMutablePointer<Float>
     private let scratchOut: UnsafeMutablePointer<Float>
+    /// One stereo bus per direct hardware port (`RenderPlan.outputPorts`), filled by each `process` call.
+    private let portBuffers: UnsafeMutablePointer<Float>
+    public let portCount: Int
     private let inPointers: UnsafeMutablePointer<UnsafePointer<Float>>
     private let outPointers: UnsafeMutablePointer<UnsafeMutablePointer<Float>>
     private let chains: [[Slot]]
@@ -141,6 +144,9 @@ public final class Renderer {
         peaks.initialize(repeating: 0, count: max(1, nodeCount))
         held = .allocate(capacity: max(1, nodeCount) * 2048)
         held.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
+        portCount = plan.outputPorts.count
+        portBuffers = .allocate(capacity: max(1, portCount) * 2 * maxBlock)
+        portBuffers.initialize(repeating: 0, count: max(1, portCount) * 2 * maxBlock)
     }
 
     deinit {
@@ -149,6 +155,7 @@ public final class Renderer {
         buffers.deallocate()
         peaks.deallocate()
         held.deallocate()
+        portBuffers.deallocate()
         scratchIn.deallocate(); scratchOut.deallocate(); inPointers.deallocate(); outPointers.deallocate()
     }
 
@@ -301,6 +308,11 @@ public final class Renderer {
         return p
     }
 
+    /// The sound of direct port `i` (an index into `RenderPlan.outputPorts`) from the last `process` call.
+    public func portLeft(_ i: Int) -> UnsafePointer<Float> { UnsafePointer(portBuffers + i * 2 * maxBlock) }
+    public func portRight(_ i: Int) -> UnsafePointer<Float> { UnsafePointer(portBuffers + (i * 2 + 1) * maxBlock) }
+    public var outputPorts: [PortID] { plan.outputPorts }
+
     @inline(__always) private func left(_ node: Int) -> UnsafeMutablePointer<Float> { buffers + node * 2 * maxBlock }
     @inline(__always) private func right(_ node: Int) -> UnsafeMutablePointer<Float> { buffers + (node * 2 + 1) * maxBlock }
 
@@ -315,6 +327,7 @@ public final class Renderer {
         sessionOffset = (sessionFrame ?? startFrame) - startFrame
         blockStart = startFrame; blockPlaying = transport
         buffers.update(repeating: 0, count: nodeCount * 2 * maxBlock)
+        if portCount > 0 { portBuffers.update(repeating: 0, count: portCount * 2 * maxBlock) }
 
         for i in 0..<nodeCount {
             let node = nodes[i]
@@ -357,6 +370,10 @@ public final class Renderer {
             }
             for (k, send) in node.sends.enumerated() where !send.preFader { sendOut(send, sendLines[i][k], l, r, startFrame: startFrame, frames: frames) }
             if let target = node.output { addDelayed(l, r, to: target, line: outputLines[i], frames: frames) }
+            if let port = node.port {
+                let pl = portBuffers + port * 2 * maxBlock, pr = pl + maxBlock
+                for k in 0..<frames { pl[k] += l[k]; pr[k] += r[k] }
+            }
             for (k, tap) in node.taps.enumerated() { addDelayed(l, r, to: tap, line: tapLines[i][k], frames: frames) }
         }
     }

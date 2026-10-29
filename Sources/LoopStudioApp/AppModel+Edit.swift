@@ -159,10 +159,37 @@ extension AppModel {
 
     // MARK: Sound card
 
-    /// Sends the master to the chosen device and channel pair. Falls back to the default and says so.
+    /// The output ports that tracks play to directly, past the master. The master's own port is not one.
+    var directPorts: [IOPort] {
+        let used = Set(project.tracks.compactMap(\.hardwareOutput))
+        return project.ports.filter { $0.direction == .output && used.contains($0.id) }
+    }
+
+    /// Output ports a track can choose as "Audio To": every output port but the master's own.
+    var assignablePorts: [IOPort] {
+        project.ports.filter { $0.direction == .output && $0.id != project.master.hardwareOutput }
+    }
+
+    /// The first channel (from 0) of a port's pair on this Mac. Unset: the pairs after the master, in port order.
+    func portLeft(_ port: IOPort) -> Int {
+        if let saved = portChannels[port.id.rawValue.uuidString] { return saved }
+        let k = (assignablePorts.firstIndex { $0.id == port.id } ?? 0) + 1
+        return outputLeft + 2 * k
+    }
+
+    func setPortLeft(_ port: IOPort, _ left: Int) {
+        portChannels[port.id.rawValue.uuidString] = left
+        applyAudioSettings()
+    }
+
+    /// Sends the master to the chosen device and channel pair, and each direct port to its own pair.
+    /// Falls back to the default and says so.
     func applyAudioSettings() {
+        let ports = Dictionary(uniqueKeysWithValues: directPorts.map { ($0.id, (portLeft($0), portLeft($0) + 1)) })
+        appliedDirectPorts = Set(ports.keys)
         do {
-            try engine.setOutput(uid: outputUID, left: outputLeft, right: outputLeft + 1, bufferFrames: bufferFrames > 0 ? bufferFrames : nil)
+            try engine.setOutput(uid: outputUID, left: outputLeft, right: outputLeft + 1, bufferFrames: bufferFrames > 0 ? bufferFrames : nil,
+                                 ports: ports)
         } catch {
             status = "Could not use that output (\(error)). Using the default."
             outputUID = nil; outputLeft = 0

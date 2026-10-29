@@ -1435,6 +1435,15 @@ final class AppModel {
     // MARK: Audio import and drop
 
     @discardableResult
+    /// The length of a clip's file in ticks: the period a looping clip goes round. Warped, at the source tempo;
+    /// otherwise at the song tempo. `nil` without a file, or warped without a source tempo.
+    func sourceTicks(of a: AudioClip) -> Tick? {
+        guard let asset = project.asset(a.asset), asset.sampleRate > 0, asset.frames > 0 else { return nil }
+        let tempo = a.warpMode == .off ? bpm : (asset.sourceTempo ?? 0)
+        guard tempo > 0 else { return nil }
+        return Tick.quarters(Double(asset.frames) / asset.sampleRate * tempo / 60)
+    }
+
     /// `name`: the asset's name, when it is not the file's (a take recorded into a file with a random name).
     func importAudio(_ url: URL, name: String? = nil) -> Asset? {
         do {

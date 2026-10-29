@@ -61,6 +61,11 @@ private let lane = ParameterAddress(node: ParameterAddress.ownTrack, parameter: 
     #expect(Clip.audio(audio).trimmingStart(to: 960) == nil, "audio cannot start before its file")
     guard case .audio(let a)? = Clip.audio(audio).trimmingStart(to: 2400) else { Issue.record("no audio"); return }
     #expect(a.offset == 480 && a.length == 1440)
+    // A looping clip goes round its file: a start one beat before the file shows the file's last beat there.
+    audio.loop = true
+    guard case .audio(let wrapped)? = Clip.audio(audio).trimmingStart(to: 960, period: 3840) else { Issue.record("no wrap"); return }
+    #expect(wrapped.offset == 2880 && wrapped.length == 2880 && wrapped.start == 960)
+    #expect(Clip.audio(audio).trimmingStart(to: 960) == nil, "without a period the file start still stops it")
 }
 
 @Test func clearingARangeCutsRemovesAndSplitsClips() throws {

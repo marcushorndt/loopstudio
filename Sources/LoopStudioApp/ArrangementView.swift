@@ -236,8 +236,9 @@ private struct ArrangementClip: View {
     @State private var resizeEnd: Tick?
 
     /// The earliest start of the left edge: the first sample of an audio file, else the timeline start.
+    /// A looping audio clip goes round its file, so it can start anywhere.
     private var earliestStart: Tick {
-        if case .audio(let a) = clip { return max(0, clip.start - a.offset) }
+        if case .audio(let a) = clip, !a.loop || model.sourceTicks(of: a) == nil { return max(0, clip.start - a.offset) }
         return 0
     }
 
@@ -266,7 +267,10 @@ private struct ArrangementClip: View {
             RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.clipBody(clip.colorIndex ?? track.colorIndex))
             if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                 let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
-                let offset = a.offset.rawValue + (shownStart - clip.start).rawValue
+                // A looping clip dragged out past the file start shows the end of the file there.
+                let period = a.loop ? (model.sourceTicks(of: a)?.rawValue ?? 0) : 0
+                let raw = a.offset.rawValue + (shownStart - clip.start).rawValue
+                let offset = period > 0 ? (raw % period + period) % period : raw
                 WaveformView(peaks: peaks, color: tint.opacity(0.9), fraction: Double(shownLength.rawValue) / max(1, assetTicks), loop: a.loop,
                              start: Double(max(0, offset)) / max(1, assetTicks))
                     .padding(.top, 16).padding(.bottom, 3)
@@ -291,7 +295,8 @@ private struct ArrangementClip: View {
                         let start = trimTarget(g.translation.width)
                         trimStart = nil
                         guard start != clip.start else { return }
-                        if let trimmed = clip.trimmingStart(to: start) { model.apply(.setClip(clip: trimmed)) }
+                        let period: Tick? = { if case .audio(let a) = clip { return model.sourceTicks(of: a) }; return nil }()
+                        if let trimmed = clip.trimmingStart(to: start, period: period) { model.apply(.setClip(clip: trimmed)) }
                         else { model.status = "The clip cannot start there" }
                     })
                 .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }

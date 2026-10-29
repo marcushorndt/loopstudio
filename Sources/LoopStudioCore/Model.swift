@@ -309,8 +309,9 @@ public enum Clip: Hashable, Sendable, Identifiable {
     /// The clip with its start moved to `newStart` and its end kept: the left edge trimmed or extended.
     /// The content stays where it was on the timeline: audio moves its offset, notes and clip automation
     /// move the other way. Notes cut by the new start are shortened; notes and points before it are dropped.
-    /// `nil` when nothing would remain, or audio would start before its file.
-    public func trimmingStart(to newStart: Tick) -> Clip? {
+    /// `nil` when nothing would remain, or audio would start before its file. A looping audio clip with a
+    /// `period` (its file length in ticks) wraps instead: the offset goes round the loop.
+    public func trimmingStart(to newStart: Tick, period: Tick? = nil) -> Clip? {
         let end = start.rawValue + length.rawValue
         let d = newStart.rawValue - start.rawValue
         guard newStart.rawValue >= 0, newStart.rawValue < end else { return nil }
@@ -326,8 +327,13 @@ public enum Clip: Hashable, Sendable, Identifiable {
         var clip = with(start: newStart, length: Tick(end - newStart.rawValue))
         switch clip {
         case .audio(var c):
-            guard c.offset.rawValue + d >= 0 else { return nil }
-            c.offset = Tick(c.offset.rawValue + d)
+            if let period, c.loop, period.rawValue > 0 {
+                let p = period.rawValue
+                c.offset = Tick(((c.offset.rawValue + d) % p + p) % p)
+            } else {
+                guard c.offset.rawValue + d >= 0 else { return nil }
+                c.offset = Tick(c.offset.rawValue + d)
+            }
             c.lanes = c.lanes.map(shift)
             if let env = c.gainEnvelope {
                 let moved = env.compactMap { p -> AutomationPoint? in

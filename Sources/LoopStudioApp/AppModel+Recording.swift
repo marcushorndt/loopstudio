@@ -171,12 +171,6 @@ extension AppModel {
         if let error = take.writeError { status += ". Warning: writing the take failed: \(error)" }
     }
 
-    /// In the Session view, with the cursor on an empty slot of the track, the take goes into that slot.
-    func sessionRecordSlot(_ id: TrackID) -> Int? {
-        guard viewMode == .session, let row = selectedSceneRow, let track = project.track(id) else { return nil }
-        return row < track.slots.count && track.slots[row] != nil ? nil : row
-    }
-
     /// Puts a finished take where the recording was aimed: a Session slot (it loops and starts to play,
     /// like Live), or the arrangement at the place it was played.
     func placeTake(_ take: Clip, on id: TrackID) {

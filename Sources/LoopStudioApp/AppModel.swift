@@ -187,8 +187,8 @@ final class AppModel {
     /// The recording started while the transport already played (R during playback): no count-in,
     /// and the take lines up with the moment R was pressed.
     @ObservationIgnored var recordPunch = false
-    /// Session recording: per track, the empty slot the take goes into. A track not listed records into the arrangement.
-    @ObservationIgnored var recordSlots: [TrackID: Int] = [:]
+    /// Session recording: per track, the slot the take goes into. A track not listed records into the arrangement.
+    var recordSlots: [TrackID: Int] = [:]
     /// Sound card choice. It belongs to this Mac, not to a project. `nil` means the system default.
     var outputUID: String? = UserDefaults.standard.string(forKey: "outputUID") {
         didSet { UserDefaults.standard.set(outputUID, forKey: "outputUID") }
@@ -428,15 +428,17 @@ final class AppModel {
         return true
     }
 
-    private func startRecording() {
-        guard recordTargetOK() else { recordArmed = false; play(); return }
-        let targets = recordTargets
+    /// R and Space record the armed tracks into the arrangement, in either view. `slot` records one track
+    /// into one Session slot instead (the record button of an empty slot).
+    private func startRecording(slot: (track: TrackID, row: Int)? = nil) {
+        if slot == nil { guard recordTargetOK() else { recordArmed = false; play(); return } }
+        let targets = slot.map { [$0.track] } ?? recordTargets
         recordPunch = transportPlaying
         recordStartTick = currentTick
         // The take belongs to these tracks, even if the selection changes while it records.
         recordMIDITracks = targets.filter { project.track($0)?.kind == .midi }
         recordAudioTracks = targets.filter { project.track($0)?.kind == .audio }
-        recordSlots = Dictionary(uniqueKeysWithValues: targets.compactMap { id in sessionRecordSlot(id).map { (id, $0) } })
+        recordSlots = slot.map { [$0.track: $0.row] } ?? [:]
         if !recordMIDITracks.isEmpty {
             // Notes are stamped on the session clock, which does not jump back at the loop end.
             recordFrameOffset = engine.positionFrame - engine.sessionFrame
@@ -452,6 +454,24 @@ final class AppModel {
         if !recordPunch { engine.playAfterCountIn(beats: countInBars * meter.beats) }
         transportPlaying = true
         status = recordStatus("Recording")
+    }
+
+    /// The record button of an empty Session slot: records this track into that slot. A second click, or
+    /// Space, ends the take; the new clip then loops in its slot.
+    func recordIntoSlot(track id: TrackID, row: Int) {
+        if recording {
+            if recordSlots[id] == row { finishRecording() } else { status = "A take is already recording. Stop it first." }
+            return
+        }
+        guard let track = project.track(id), track.kind == .audio || track.kind == .midi else { return }
+        if !armedTracks.contains(id) { armedTracks.insert(id) }
+        // The track's playing clip stops, so the take is not recorded over it.
+        if transportPlaying { stopClips(of: track) }
+        recordArmed = true
+        selectedTrack = id
+        selectedSceneRow = row
+        if !transportPlaying { playStart = currentTick }
+        startRecording(slot: (id, row))
     }
 
     /// "Recording", with the tracks when there are several, or the slot of a single Session take.

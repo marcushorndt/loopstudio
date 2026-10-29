@@ -243,15 +243,30 @@ private struct SlotCell: View {
         } else {
             // An empty slot reached with the arrow keys shows a frame.
             let selected = model.selectedClip == nil && model.selectedTrack == track.id && model.selectedSceneRow == row
+            let armed = model.armedTracks.contains(track.id) && (track.kind == .audio || track.kind == .midi)
+            let takeHere = model.recording && model.recordSlots[track.id] == row
             HStack(spacing: 0) {
                 Button {
+                    if armed || takeHere { model.recordIntoSlot(track: track.id, row: row); return }
                     switch track.kind {
                     case .midi: model.createMIDIClip(track: track.id, row: row)
                     default: model.stopClips(of: track)
                     }
                 } label: {
-                    Image(systemName: track.kind == .midi ? "plus" : "stop.fill").font(.system(size: 11)).foregroundStyle(Theme.dim.opacity(0.5))
-                        .frame(width: 26, height: slotHeight)
+                    Group {
+                        if takeHere {
+                            // The slot that records: a red dot that pulses, like Live's recording slot.
+                            TimelineView(.animation(minimumInterval: 1.0 / 4)) { context in
+                                Image(systemName: "record.circle.fill").font(.system(size: 12))
+                                    .foregroundStyle(Color.red.opacity(Int(context.date.timeIntervalSinceReferenceDate * 2) % 2 == 0 ? 1 : 0.45))
+                            }
+                        } else if armed {
+                            Image(systemName: "circle.fill").font(.system(size: 9)).foregroundStyle(Color.red.opacity(0.75))
+                        } else {
+                            Image(systemName: track.kind == .midi ? "plus" : "stop.fill").font(.system(size: 11)).foregroundStyle(Theme.dim.opacity(0.5))
+                        }
+                    }
+                    .frame(width: 26, height: slotHeight)
                 }
                 .buttonStyle(.plain)
                 // The rest of the slot selects it; the arrow keys go on from there.
@@ -261,10 +276,12 @@ private struct SlotCell: View {
                     .onTapGesture { model.selectSlot(track: track.id, row: row) }
                     .simultaneousGesture(TapGesture(count: 2).onEnded { if track.kind == .midi { model.createMIDIClip(track: track.id, row: row) } })
             }
-            .background(Theme.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
-            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : Color.clear, lineWidth: 1.5))
+            .background(takeHere ? Color.red.opacity(0.22) : Theme.panel.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(takeHere ? Color.red : (selected ? Theme.text : Color.clear), lineWidth: 1.5))
             .contextMenu { SlotMenu(track: track, row: row) }
-            .hint(track.kind == .midi ? "Empty slot. Click selects it; the + or a double-click creates a MIDI clip."
+            .hint(takeHere ? "Recording into this slot. Click the dot or press Space to stop; the clip then loops."
+                  : armed ? "Armed track: the dot records into this slot. Click it again to stop; the clip then loops."
+                  : track.kind == .midi ? "Empty slot. Click selects it; the + or a double-click creates a MIDI clip."
                   : (track.kind == .audio ? "Empty slot. Click selects it; the square stops the track. Drop an audio file here."
                      : "Empty slot. Click selects it. Right-click for a dummy clip: silent, it carries automation."))
         }

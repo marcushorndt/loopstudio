@@ -111,6 +111,10 @@ private struct ArrangementHeader: View {
                     pill("M", on: track.mute, tint: Theme.accent) { model.apply(.setMute(id: track.id, mute: !track.mute)) }
                     pill("A", on: !model.shownLanes(track).isEmpty, tint: Theme.track(0)) { model.toggleAutomation(track) }
                         .hint("Show automation")
+                    if track.kind == .audio || track.kind == .midi {
+                        pill("●", on: model.armedTrack == track.id, tint: .red) { model.toggleArm(track.id) }
+                            .hint("Arm: this track records and plays the MIDI keyboard, whatever is selected")
+                    }
                 }
             }
             Spacer()

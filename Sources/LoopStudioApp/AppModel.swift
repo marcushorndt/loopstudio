@@ -191,6 +191,19 @@ final class AppModel {
     var selectedTrack: TrackID? {
         didSet { updateLiveTarget() }
     }
+    /// The track armed for recording (its arm button). It records and gets the MIDI keyboard, whatever is
+    /// selected. `nil`: the selected track does.
+    var armedTrack: TrackID? {
+        didSet { updateLiveTarget() }
+    }
+    /// Where a recording and live notes go: the armed track, else the selected one.
+    var recordTarget: TrackID? { armedTrack.flatMap { project.track($0) != nil ? $0 : nil } ?? selectedTrack }
+
+    /// Arms a track, like Live's arm button. A second click disarms it. One track is armed at a time.
+    func toggleArm(_ id: TrackID) {
+        armedTrack = armedTrack == id ? nil : id
+        if let id = armedTrack, let name = project.track(id)?.name { status = "\(name) is armed: it records and plays the MIDI keyboard" }
+    }
     /// Bumped when a plugin finished loading, so the device cards refresh.
     private(set) var pluginRevision = 0
     private(set) var midiSources = 0
@@ -371,7 +384,7 @@ final class AppModel {
     }
 
     private func recordTargetOK() -> Bool {
-        guard let id = selectedTrack, let t = project.track(id) else { status = "Select an audio or MIDI track to record"; return false }
+        guard let id = recordTarget, let t = project.track(id) else { status = "Select or arm an audio or MIDI track to record"; return false }
         guard t.kind == .midi || t.kind == .audio else { status = "Select an audio or MIDI track to record"; return false }
         return true
     }
@@ -379,14 +392,14 @@ final class AppModel {
     private func startRecording() {
         guard recordTargetOK() else { recordArmed = false; play(); return }
         recordPunch = transportPlaying
-        if let id = selectedTrack, project.track(id)?.kind == .audio {
+        if let id = recordTarget, project.track(id)?.kind == .audio {
             Task { @MainActor in await startAudioRecording() }
             return
         }
         recordStartTick = currentTick
         // The take belongs to this track, even if the selection changes while it records.
-        recordTrackID = selectedTrack
-        recordSlot = selectedTrack.flatMap(sessionRecordSlot)
+        recordTrackID = recordTarget
+        recordSlot = recordTarget.flatMap(sessionRecordSlot)
         // Notes are stamped on the session clock, which does not jump back at the loop end.
         recordFrameOffset = engine.positionFrame - engine.sessionFrame
         recorder.begin()
@@ -1085,7 +1098,7 @@ final class AppModel {
 
     /// Points live notes (keyboard, MIDI devices, piano roll clicks) at the selected MIDI track.
     private func updateLiveTarget() {
-        guard let id = selectedTrack, let track = project.track(id), track.kind == .midi else { liveTarget.set(.init(track: nil)); return }
+        guard let id = recordTarget, let track = project.track(id), track.kind == .midi else { liveTarget.set(.init(track: nil)); return }
         liveTarget.set(.init(track: id, enabled: track.midiInput != nil,
                              source: track.midiInput?.sourceUID, channel: track.midiInput?.channel))
     }

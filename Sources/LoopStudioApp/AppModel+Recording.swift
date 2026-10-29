@@ -16,7 +16,7 @@ extension AppModel {
     }
 
     func startAudioRecording() async {
-        guard let id = selectedTrack else { return }
+        guard let id = recordTarget else { return }
         // "Audio From" another track: record its sound after the fader, with no sound card involved.
         if let source = project.track(id)?.inputTrack {
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("LoopStudio-\(UUID().uuidString)", isDirectory: true)

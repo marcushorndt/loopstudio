@@ -191,6 +191,15 @@ final class AppModel {
     @ObservationIgnored var recordPunch = false
     /// Session recording: per track, the slot the take goes into. A track not listed records into the arrangement.
     var recordSlots: [TrackID: Int] = [:]
+    /// A Session take ends at this bar (session clock). Set by the slot's dot or the track stop button.
+    var recordStopTick: Tick?
+    /// The tracks of the running take, for the inspector.
+    var takeTracks: [TrackID] = []
+    /// When a Session take ends: launch the new clip at the stop bar (the dot), or leave it stopped (the stop button).
+    @ObservationIgnored var recordLaunchAt: Tick?
+    @ObservationIgnored var recordLaunchTake = true
+    /// Counts takes, so a delayed stop never ends a later take.
+    @ObservationIgnored var takeSerial = 0
     /// Sound card choice. It belongs to this Mac, not to a project. `nil` means the system default.
     var outputUID: String? = UserDefaults.standard.string(forKey: "outputUID") {
         didSet { UserDefaults.standard.set(outputUID, forKey: "outputUID") }
@@ -451,6 +460,11 @@ final class AppModel {
         recordMIDITracks = targets.filter { project.track($0)?.kind == .midi }
         recordAudioTracks = targets.filter { project.track($0)?.kind == .audio }
         recordSlots = slot.map { [$0.track: $0.row] } ?? [:]
+        takeSerial += 1
+        takeTracks = targets
+        recordStopTick = nil
+        recordLaunchAt = nil
+        recordLaunchTake = true
         if !recordMIDITracks.isEmpty {
             // Notes are stamped on the session clock, which does not jump back at the loop end.
             recordFrameOffset = engine.positionFrame - engine.sessionFrame
@@ -472,7 +486,7 @@ final class AppModel {
     /// Space, ends the take; the new clip then loops in its slot.
     func recordIntoSlot(track id: TrackID, row: Int) {
         if recording {
-            if recordSlots[id] == row { finishRecording() } else { status = "A take is already recording. Stop it first." }
+            if recordSlots[id] == row { stopSlotRecordingAtGrid(launch: true) } else { status = "A take is already recording. Stop it first." }
             return
         }
         guard let track = project.track(id), track.kind == .audio || track.kind == .midi else { return }
@@ -483,7 +497,32 @@ final class AppModel {
         selectedTrack = id
         selectedSceneRow = row
         if !transportPlaying { playStart = currentTick }
+        // The inspector shows the take while it records.
+        selectedClip = nil
+        detailTab = .clip
         startRecording(slot: (id, row))
+    }
+
+    /// Ends a Session take at the next bar line. `launch` true: the new clip goes on looping from that bar,
+    /// with no gap. False (the track stop button): the clip is kept, and the track stops.
+    func stopSlotRecordingAtGrid(launch: Bool) {
+        guard recording, !recordSlots.isEmpty else { return }
+        recordLaunchTake = launch
+        guard transportPlaying, !engine.isCountingIn else { finishRecording(); return }
+        let now = sessionTick
+        // Within a sixteenth after a bar line, that bar line still counts.
+        let barStart = project.barBoundary(atOrAfter: now - Tick(Tick.perQuarter / 4))
+        let target = barStart <= now ? barStart : project.barBoundary(atOrAfter: now)
+        recordStopTick = target
+        recordLaunchAt = target
+        let serial = takeSerial
+        let wait = max(0, Double(frame(target) - engine.sessionFrame) / sampleRate) + 0.08
+        status = "The take ends at the next bar."
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard let self, self.recording, self.takeSerial == serial else { return }
+            self.finishRecording()
+        }
     }
 
     /// "Recording", with the tracks when there are several, or the slot of a single Session take.
@@ -525,6 +564,10 @@ final class AppModel {
             status = midiText ?? "Nothing recorded"
         }
         recordSlots = [:]
+        takeTracks = []
+        recordStopTick = nil
+        recordLaunchAt = nil
+        recordLaunchTake = true
     }
 
     func toggleMetronome() { metronomeOn.toggle(); updateMetronome() }
@@ -838,10 +881,11 @@ final class AppModel {
 
     // MARK: Session launching
 
-    func launch(track: TrackID, row: Int) {
+    /// `at`: the press time on the session clock; the slot's launch grid applies from there. `nil` is now.
+    func launch(track: TrackID, row: Int, at press: Tick? = nil) {
         guard let t = project.track(track), row < t.slots.count, t.slots[row] != nil else { return }
         startIfStopped()
-        performance.append(Launch(track: track, slot: row, tick: sessionTick))
+        performance.append(Launch(track: track, slot: row, tick: press ?? sessionTick))
         rebuild()
     }
 
@@ -867,6 +911,8 @@ final class AppModel {
 
     /// Stop button of a track, a bus or the master.
     func stopClips(of track: Track) {
+        // The track's stop button ends its Session take at the next bar, like Live. Master's stops every take.
+        if recording, track.kind == .master || recordSlots[track.id] != nil { stopSlotRecordingAtGrid(launch: false) }
         switch track.kind {
         case .master: stopAllClips()
         case .returnTrack, .group:

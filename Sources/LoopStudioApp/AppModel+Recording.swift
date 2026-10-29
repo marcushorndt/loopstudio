@@ -216,7 +216,9 @@ extension AppModel {
         }
         apply(.setSlot(track: id, index: row, slot: SessionSlot(clip: clip)))
         selectedClip = clip.id
-        launch(track: id, row: row)
+        guard recordLaunchTake, transportPlaying else { return }
+        // A press one tick before the stop bar launches on that bar, so the loop goes on with no gap.
+        launch(track: id, row: row, at: recordLaunchAt.map { $0 - Tick(1) })
     }
 
     private func nextTakeName() -> String {

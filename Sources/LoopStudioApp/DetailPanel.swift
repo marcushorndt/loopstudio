@@ -129,7 +129,9 @@ private struct ClipPanel: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if let id = model.selectedClip, let (trackID, clip) = model.project.findClip(id), let track = model.project.track(trackID) {
+        if model.recording, let track = recordingTrack {
+            RecordingPanel(track: track)
+        } else if let id = model.selectedClip, let (trackID, clip) = model.project.findClip(id), let track = model.project.track(trackID) {
             let slotRow = track.slots.firstIndex { $0?.clip.id == id }
             HStack(alignment: .top, spacing: 14) {
                 FoldableColumn(id: "clip", title: "Clip", width: 230) { properties(clip, track: track) }
@@ -150,6 +152,13 @@ private struct ClipPanel: View {
             VStack { Spacer(); Text("Select a clip to see its settings.").foregroundStyle(Theme.dim); Spacer() }
                 .frame(maxWidth: .infinity)
         }
+    }
+
+    /// While a take records: the selected track if it records, else the first track of the take.
+    private var recordingTrack: Track? {
+        let ids = model.takeTracks
+        let id = model.selectedTrack.flatMap { ids.contains($0) ? $0 : nil } ?? ids.first
+        return id.flatMap { model.project.track($0) }
     }
 
     /// The pages of the main area. A dummy clip has only automation, so it gets no picker.

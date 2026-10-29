@@ -18,6 +18,12 @@ public final class MIDIRecorder: @unchecked Sendable {
         if active { events.append(Event(frame: frame, status: status, data1: data1, data2: data2)) }
     }
 
+    /// What came in so far, while the take goes on.
+    public func snapshot() -> [Event] {
+        lock.lock(); defer { lock.unlock() }
+        return events
+    }
+
     /// Stops and returns what came in.
     public func end() -> [Event] {
         lock.lock(); defer { lock.unlock() }

@@ -265,10 +265,12 @@ private struct ArrangementClip: View {
                 .gesture(DragGesture(minimumDistance: 1)
                     .onChanged { trim = $0.translation.width }
                     .onEnded { g in
-                        let start = model.snap(xTick(tickX(clip.start, model) + g.translation.width, model))
+                        var start = model.snap(xTick(tickX(clip.start, model) + g.translation.width, model))
                         trim = 0
+                        // A clip only shows part of its file. Dragged out past the file start, it stops there.
+                        if case .audio(let a) = clip { start = max(start, clip.start - a.offset) }
                         if let trimmed = clip.trimmingStart(to: start) { model.apply(.setClip(clip: trimmed)) }
-                        else { model.status = "The clip cannot start there: its audio begins later" }
+                        else { model.status = "The clip cannot start there" }
                     })
                 .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
                 .hint("Drag to trim the start. The sound stays in place.")

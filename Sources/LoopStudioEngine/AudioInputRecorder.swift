@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreAudio
 import Foundation
+import os
 
 /// Records channels of a sound card input into files: one file per lane, each lane one or two channels.
 ///
@@ -49,6 +50,8 @@ public final class AudioInputRecorder: @unchecked Sendable {
     private var rate = 48_000.0
     private var inputLatency = 0
     private var writers: [CaptureWriter] = []
+    /// Per lane, the peak of each captured buffer: the waveform of the take while it records.
+    private let peakLock = OSAllocatedUnfairLock(initialState: [[Float]]())
 
     public init() {}
 
@@ -93,15 +96,25 @@ public final class AudioInputRecorder: @unchecked Sendable {
             try CaptureWriter(url: url, sampleRate: format.sampleRate, channels: pick.1 == nil ? 1 : 2)
         }
         let rings = writers.map(\.ring)
+        let peaks = peakLock
+        peaks.withLock { $0 = Array(repeating: [], count: lanes.count) }
         lock.lock()
         self.writers = writers; self.urls = urls; rate = format.sampleRate; inputLatency = deviceLatency
         lock.unlock()
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, time in
             guard let src = buffer.floatChannelData else { return }
-            for (ring, pick) in zip(rings, picks) {
+            let n = Int(buffer.frameLength)
+            var levels = [Float](repeating: 0, count: picks.count)
+            for (k, (ring, pick)) in zip(rings, picks).enumerated() {
                 ring.noteStart(hostTime: time.hostTime)
-                ring.write(src[pick.0], pick.1.map { UnsafePointer(src[$0]) }, frames: Int(buffer.frameLength))
+                ring.write(src[pick.0], pick.1.map { UnsafePointer(src[$0]) }, frames: n)
+                var peak: Float = 0
+                for i in 0..<n { peak = max(peak, abs(src[pick.0][i])) }
+                if let r = pick.1 { for i in 0..<n { peak = max(peak, abs(src[r][i])) } }
+                levels[k] = peak
             }
+            let done = levels
+            peaks.withLock { all in for k in all.indices where k < done.count { all[k].append(done[k]) } }
         }
         engine.prepare()
         do { try engine.start() } catch {
@@ -111,6 +124,13 @@ public final class AudioInputRecorder: @unchecked Sendable {
             throw error
         }
     }
+
+    /// The waveform of a lane so far: one peak per captured buffer of `bufferFrames` frames.
+    public func livePeaks(lane: Int) -> [Float] {
+        peakLock.withLock { lane < $0.count ? $0[lane] : [] }
+    }
+
+    public var bufferFrames: Int { 2048 }
 
     /// Stops and closes the file of a single lane.
     public func stop() -> Take? { stopAll().first ?? nil }

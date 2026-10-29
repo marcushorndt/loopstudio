@@ -36,6 +36,10 @@ struct PianoRoll: View {
             HStack(spacing: 8) {
                 Text("\(clip.notes.count) notes").font(.caption).foregroundStyle(Theme.dim)
                 Spacer()
+                velocityControl
+                Button("Quantize") { quantize() }
+                    .controlSize(.small).disabled(clip.notes.isEmpty)
+                    .hint("Quantize: move the marked notes (or all notes) to the nearest sixteenth")
                 toolButton("pencil", on: model.drawMode, help: "Draw mode (B): click or drag to draw notes, click a note to delete it") {
                     model.drawMode.toggle()
                 }
@@ -105,6 +109,50 @@ struct PianoRoll: View {
             }
             .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: Theme.radius))
         }
+    }
+
+    private var marked: [MIDINote] { clip.notes.filter { model.selectedNotes.contains($0) } }
+
+    /// The velocity of the marked notes. Dragging sets them all to one value.
+    private var velocityControl: some View {
+        let notes = marked
+        let average = notes.isEmpty ? 100 : Double(notes.map { Int($0.velocity) }.reduce(0, +)) / Double(notes.count)
+        return HStack(spacing: 4) {
+            Text("Vel").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
+            Slider(value: Binding(get: { average }, set: { setVelocity(UInt8(min(127, max(1, $0.rounded())))) }), in: 1...127)
+                .controlSize(.mini).frame(width: 80).disabled(notes.isEmpty)
+            Text(notes.isEmpty ? "-" : "\(Int(average.rounded()))").font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(Theme.dim).frame(width: 22, alignment: .leading)
+        }
+        .hint("Velocity of the marked notes")
+    }
+
+    private func setVelocity(_ v: UInt8) {
+        var changed: Set<MIDINote> = []
+        let notes = clip.notes.map { n -> MIDINote in
+            guard model.selectedNotes.contains(n) else { return n }
+            var n = n; n.velocity = v; changed.insert(n); return n
+        }
+        // The marking follows the notes: a note is its value, so the new values are marked.
+        model.selectedNotes = changed
+        // One slider drag is one undo step.
+        model.setNotes(clip.id, notes, key: "velocity\(clip.id)")
+    }
+
+    /// Moves note starts to the nearest sixteenth. The marked notes, or every note when none is marked.
+    private func quantize() {
+        let all = model.selectedNotes.isEmpty
+        var moved: Set<MIDINote> = []
+        let notes = clip.notes.map { n -> MIDINote in
+            guard all || model.selectedNotes.contains(n) else { return n }
+            var q = n
+            q.tick = Tick(min((n.tick.rawValue + grid / 2) / grid * grid, max(0, clip.length.rawValue - 1)))
+            q.length = Tick(max(1, min(n.length.rawValue, clip.length.rawValue - q.tick.rawValue)))
+            moved.insert(q)
+            return q
+        }
+        model.setNotes(clip.id, notes)
+        if !all { model.selectedNotes = moved }
     }
 
     private func toolButton(_ symbol: String, on: Bool, help: String, action: @escaping () -> Void) -> some View {
@@ -252,7 +300,11 @@ private struct NoteView: View {
                     let dt = Int64(Double(g.translation.width / pxPerBeat) * Double(Tick.perQuarter))
                     let tick = min(max(0, (note.tick.rawValue + dt + grid / 2) / grid * grid), max(0, clip.length.rawValue - grid))
                     let pitch = min(max(lowPitch, Int(note.pitch) - Int((g.translation.height / rowHeight).rounded())), highPitch)
-                    replace { $0.tick = Tick(tick); $0.pitch = UInt8(pitch) }
+                    if selected && model.selectedNotes.count > 1 {
+                        moveMarked(by: tick - note.tick.rawValue, pitch: pitch - Int(note.pitch))
+                    } else {
+                        replace { $0.tick = Tick(tick); $0.pitch = UInt8(pitch) }
+                    }
                     if model.previewNotes { model.auditionNote(UInt8(pitch)) }
                 })
             .onTapGesture {
@@ -265,6 +317,23 @@ private struct NoteView: View {
                 Button("Delete", role: .destructive) { delete() }
                 Menu("Velocity") { ForEach([32, 64, 96, 127], id: \.self) { v in Button("\(v)") { replace { $0.velocity = UInt8(v) } } } }
             }
+    }
+
+    /// Moves every marked note by the same time and pitch, like the dragged one. Notes stay inside the clip
+    /// and the key range; the marking follows them.
+    private func moveMarked(by dt: Int64, pitch dp: Int) {
+        var moved: Set<MIDINote> = []
+        let notes = clip.notes.map { n -> MIDINote in
+            guard model.selectedNotes.contains(n) else { return n }
+            var m = n
+            m.tick = Tick(min(max(0, n.tick.rawValue + dt), max(0, clip.length.rawValue - 1)))
+            m.length = Tick(max(1, min(n.length.rawValue, clip.length.rawValue - m.tick.rawValue)))
+            m.pitch = UInt8(min(max(lowPitch, Int(n.pitch) + dp), highPitch))
+            moved.insert(m)
+            return m
+        }
+        model.setNotes(clip.id, notes)
+        model.selectedNotes = moved
     }
 
     /// A grip at one end of the note: drag it to shorten or lengthen the note.

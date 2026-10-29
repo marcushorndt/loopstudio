@@ -28,6 +28,7 @@ private func track(_ name: String, _ kind: TrackKind) -> Track { Track(name: nam
         .setTempoPoints(points: [TempoPoint(tick: 0, bpm: 90)]),
         .setLoop(loop: LoopRegion(start: 0, end: 3840)),
         .setRandomSeed(seed: 42),
+        .setDefaultFade(ms: 8),
         .setAutoLoop(rule: AutoLoopRule(enabled: false)),
         .addAsset(asset: Asset(sha256: "cc", name: "x", frames: 10, sampleRate: 44_100, channels: 1)),
         .removeTrack(id: ret.id),

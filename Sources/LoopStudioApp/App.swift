@@ -86,7 +86,11 @@ struct LoopStudioApp: App {
         }
 
         Settings {
-            AudioSettingsView().environment(model).preferredColorScheme(model.isLightTheme ? .light : .dark)
+            TabView {
+                AudioSettingsView().tabItem { Label("Audio", systemImage: "hifispeaker") }
+                ProjectSettingsView().frame(width: 520, height: 420).tabItem { Label("Project", systemImage: "doc") }
+            }
+            .environment(model).preferredColorScheme(model.isLightTheme ? .light : .dark)
         }
     }
 }

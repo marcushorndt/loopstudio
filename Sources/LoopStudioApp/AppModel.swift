@@ -1126,9 +1126,9 @@ final class AppModel {
         detailTab = .clip
     }
 
-    func setNotes(_ clip: ClipID, _ notes: [MIDINote]) {
-        // Every note edit is its own undo step: a drag commits once, at its end.
-        apply(.setMIDINotes(clip: clip, notes: notes))
+    func setNotes(_ clip: ClipID, _ notes: [MIDINote], key: String? = nil) {
+        // Every note edit is its own undo step: a drag commits once, at its end. A slider passes a key.
+        apply(.setMIDINotes(clip: clip, notes: notes), key: key)
     }
 
     // MARK: Devices

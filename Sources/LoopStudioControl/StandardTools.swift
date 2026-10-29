@@ -522,6 +522,7 @@ public enum StandardTools {
             ("setTempoPoints", .setTempoPoints(points: [TempoPoint(tick: 0, bpm: 100, ramp: true), TempoPoint(tick: 15360, bpm: 128)])),
             ("setLoop", .setLoop(loop: LoopRegion(start: 0, end: 15360))),
             ("setRandomSeed", .setRandomSeed(seed: 7)),
+            ("setDefaultFade", .setDefaultFade(ms: 5)),
             ("setAutoLoop", .setAutoLoop(rule: AutoLoopRule(enabled: true, minSeconds: 0, maxSeconds: 20))),
             ("addPort", .addPort(port: IOPort(id: PortID(uuid(5)), name: "Out 5-6", direction: .output, channels: 2), index: nil)),
             ("removePort", .removePort(id: PortID(uuid(5)))),

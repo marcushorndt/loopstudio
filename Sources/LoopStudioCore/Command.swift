@@ -66,6 +66,8 @@ public enum Command: Codable, Sendable {
     case setTempoPoints(points: [TempoPoint])
     case setLoop(loop: LoopRegion?)
     case setRandomSeed(seed: UInt32)
+    /// The fade every new audio clip gets at both ends, so a cut never clicks. 0 to 1000 ms.
+    case setDefaultFade(ms: Double)
     case setAutoLoop(rule: AutoLoopRule)
     case addAsset(asset: Asset)
     /// The tempo a loop was recorded at. `nil` means unknown.
@@ -416,6 +418,12 @@ extension Project {
             let old = randomSeed
             randomSeed = seed
             return .setRandomSeed(seed: old)
+
+        case .setDefaultFade(let ms):
+            guard ms.isFinite, (0...1000).contains(ms) else { throw CommandError.invalidValue("default fade \(ms) ms") }
+            let old = defaultFadeMs
+            defaultFadeMs = ms
+            return .setDefaultFade(ms: old)
 
         case .setAutoLoop(let rule):
             guard rule.minSeconds >= 0, rule.maxSeconds >= rule.minSeconds, !rule.maxSeconds.isNaN else {

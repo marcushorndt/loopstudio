@@ -66,6 +66,17 @@ If the Directory stays empty: both Macs must be on the same network, and the oth
 be allowed on the local network. Bonjour finds the sessions; a firewall rule that blocks
 incoming connections to Audio MIDI Setup stops it.
 
+"Driver error: [address]:5004 refused the connection request" ("Treiberfehler ... hat die
+Verbindungsanfrage abgelehnt") means the other Mac's session is not ticked, or its "Who may
+connect to me" is not "Anyone". Fix it there, or connect from that side.
+
+Pick the RTP session, not "Network MIDI 2" ("Netzwerk MIDI 2", "UMP-Netzwerk"): that is the new
+UMP network standard of macOS 26. It needs macOS 26 and a host that supports it on both ends,
+and Live uses the classic ports.
+
+Verified on 2026-10-29: Live on another MacBook sends notes to a LoopStudio track over the RTP
+session "Netzwerk RTP-Sitzung 1", with Link keeping both on one grid.
+
 ## 4. Audio over the network
 
 macOS has no network audio device out of the box. What works today, all as a sound card the

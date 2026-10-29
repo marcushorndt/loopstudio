@@ -49,14 +49,6 @@ enum DetailTab { case clip, devices }
 enum ClipPage { case content, gain, automation }
 enum SidebarTab: String, CaseIterable { case audio, effects, instruments, projects }
 
-enum SlotState {
-    case empty
-    case stopped
-    case queued
-    case playing(progress: Double)
-    /// Playing, with a stop waiting for the next bar.
-    case stopping(progress: Double)
-}
 
 /// The state of the open window: the project, the audio engine, the selection, and undo.
 /// Every edit goes through `apply`, which is the same `Command` path the MCP server uses.
@@ -67,25 +59,9 @@ final class AppModel {
     private(set) var packageURL: URL
     private(set) var exporting = false
     private(set) var waveforms: [AssetID: [Float]] = [:]
-    private(set) var simulation = SessionSimulation(events: [], warnings: []) {
-        // Slot states are read many times a second: index the plays by track once, sorted by start.
-        didSet {
-            eventsByTrack = Dictionary(grouping: simulation.events, by: \.track).mapValues { $0.sorted { $0.startTick < $1.startTick } }
-        }
-    }
-    private(set) var eventsByTrack: [TrackID: [SessionEvent]] = [:]
-
-    /// The play of a track at `tick`, and the next one after it. Binary search in the sorted plays.
-    private func plays(of track: TrackID, at tick: Tick) -> (now: SessionEvent?, next: SessionEvent?) {
-        guard let events = eventsByTrack[track], !events.isEmpty else { return (nil, nil) }
-        var lo = 0, hi = events.count
-        while lo < hi { let mid = (lo + hi) / 2; if events[mid].startTick <= tick { lo = mid + 1 } else { hi = mid } }
-        // lo: the first play that starts after `tick`. One of the few before it may still be playing
-        // (plays of one track follow each other; a stop can sit on the same tick as a start).
-        let now = stride(from: lo - 1, through: max(0, lo - 4), by: -1).lazy.map { events[$0] }
-            .first { $0.startTick <= tick && tick < $0.endTick }
-        return (now, lo < events.count ? events[lo] : nil)
-    }
+    /// The live Session: launches, what plays from them, what the next Play starts. Rules and tests live in Core.
+    private(set) var session = SessionPerformance()
+    var simulation: SessionSimulation { session.simulation }
     private(set) var warnings: [String] = []
     private(set) var dirty = false
     var status = ""
@@ -287,34 +263,6 @@ final class AppModel {
     @ObservationIgnored private var warpRounds = 0
     @ObservationIgnored private(set) var plan: RenderPlan?
     @ObservationIgnored private var renderer: Renderer?
-    @ObservationIgnored private var performance: [Launch] = [] {
-        // Each launch remembers the clip it started, so a slot that moves (a scene inserted above it, an undo)
-        // keeps playing the same clip. Launches are only appended, or the list is cleared.
-        didSet {
-            if performance.count < performanceClips.count { performanceClips = [] }
-            for launch in performance.dropFirst(performanceClips.count) {
-                performanceClips.append(launch.slot.flatMap { row in
-                    project.track(launch.track).flatMap { row < $0.slots.count ? $0.slots[row]?.clip.id : nil }
-                })
-            }
-        }
-    }
-    @ObservationIgnored private var performanceClips: [ClipID?] = []
-    /// What the Session played when the transport stopped: per track, the slot that played (`nil`: stopped,
-    /// so the arrangement stays silent there) and when it began. The next Play starts these and nothing else.
-    @ObservationIgnored private var resumeSlots: [(track: TrackID, slot: Int?, start: Tick)] = []
-    /// Session clock and timeline position when the transport stopped.
-    @ObservationIgnored private var pausedAt: (session: Tick, timeline: Tick)?
-
-    /// After an edit: points each launch at the row where its clip is now. A clip that is gone stops.
-    private func followMovedSlots() {
-        for (i, clip) in performanceClips.enumerated() {
-            guard let clip, i < performance.count else { continue }
-            let launch = performance[i]
-            let row = project.track(launch.track)?.slots.firstIndex { $0?.clip.id == clip }
-            if row != launch.slot { performance[i].slot = row }
-        }
-    }
     @ObservationIgnored private var undoStack: [Command] = []
     @ObservationIgnored private var redoStack: [Command] = []
     @ObservationIgnored private var lastKey: (String, Date)?
@@ -615,39 +563,16 @@ final class AppModel {
         transportPlaying = false
     }
 
-    /// The transport stops: keep only what plays now. Launches still waiting, and the history before, go.
-    /// Otherwise the next Play starts the clock at the timeline position again, and old launches that lie
-    /// after it would wait to play as if they were new.
+    /// The transport stops: the Session keeps only what plays now (see `SessionPerformance.stop`).
     private func keepSessionForResume() {
-        guard transportPlaying, !performance.isEmpty else { return }
-        let tick = sessionTick
-        let tracks = Set(performance.map(\.track))
-        resumeSlots = project.tracks.filter { tracks.contains($0.id) }.map { t in
-            let now = plays(of: t.id, at: tick).now
-            return (t.id, now?.slot, now?.startTick ?? tick)
-        }
-        pausedAt = (tick, currentTick)
-        performance = []
+        guard transportPlaying, !session.isEmpty else { return }
+        session.stop(at: sessionTick, timeline: currentTick, trackOrder: project.tracks.map(\.id))
         rebuild()
     }
 
-    /// Play after a stop: the clips that played start again. From the same place (Shift+Space), each one goes on
-    /// where it was. From elsewhere, each starts on the bar before, so it runs in time with the bars.
+    /// Play after a stop: the kept clips start again (see `SessionPerformance.resume`).
     private func resumeSession() {
-        guard !resumeSlots.isEmpty, let paused = pausedAt else { return }
-        let start = currentTick
-        let sameSpot = paused.timeline == start
-        let bar = project.barBoundary(atOrAfter: start)
-        let barBefore = bar == start ? start : Tick(max(0, bar.rawValue - barTicks))
-        performance = []
-        for r in resumeSlots {
-            // A stop sits on the bar before too, so a stopped track is silent from the first frame.
-            let tick = r.slot == nil ? barBefore : (sameSpot ? r.start - paused.session + start : barBefore)
-            performance.append(Launch(track: r.track, slot: r.slot, tick: tick))
-        }
-        resumeSlots = []
-        pausedAt = nil
-        rebuild()
+        if session.resume(at: currentTick, in: project) { rebuild() }
     }
 
     /// First press stops. A second press, with the transport already stopped, goes back to the start.
@@ -657,8 +582,7 @@ final class AppModel {
         } else {
             engine.seek(to: 0)
         }
-        resumeSlots = []
-        if !performance.isEmpty { performance = []; rebuild() }
+        if !session.isEmpty || !session.kept.isEmpty { session.clear(); rebuild() }
     }
 
     func seek(to tick: Tick) {
@@ -666,11 +590,10 @@ final class AppModel {
         if !transportPlaying { playStart = max(0, tick) }
     }
 
-    var arrangementOverridden: Bool { !performance.isEmpty }
+    var arrangementOverridden: Bool { !session.isEmpty || !session.kept.isEmpty }
 
     func backToArrangement() {
-        resumeSlots = []
-        performance = []
+        session.clear()
         rebuild()
     }
 
@@ -931,7 +854,7 @@ final class AppModel {
     func launch(track: TrackID, row: Int, at press: Tick? = nil) {
         guard let t = project.track(track), row < t.slots.count, t.slots[row] != nil else { return }
         startIfStopped()
-        performance.append(Launch(track: track, slot: row, tick: press ?? sessionTick))
+        session.add(Launch(track: track, slot: row, tick: press ?? sessionTick), in: project)
         rebuild()
     }
 
@@ -940,18 +863,18 @@ final class AppModel {
         guard !ids.isEmpty else { return }
         startIfStopped()
         let now = sessionTick
-        for id in ids { performance.append(Launch(track: id, slot: row, tick: now)) }
+        for id in ids { session.add(Launch(track: id, slot: row, tick: now), in: project) }
         // As in Live, an empty slot in the scene stops its track, on the next bar.
         let stopAt = project.barBoundary(atOrAfter: now)
         for t in project.tracks where !ids.contains(t.id) && !t.slots.isEmpty {
-            performance.append(Launch(track: t.id, slot: nil, tick: stopAt))
+            session.add(Launch(track: t.id, slot: nil, tick: stopAt), in: project)
         }
         rebuild()
     }
 
     func stopTrack(_ track: TrackID) {
         guard transportPlaying else { return }
-        performance.append(Launch(track: track, slot: nil, tick: project.barBoundary(atOrAfter: sessionTick)))
+        session.add(Launch(track: track, slot: nil, tick: project.barBoundary(atOrAfter: sessionTick)), in: project)
         rebuild()
     }
 
@@ -973,7 +896,7 @@ final class AppModel {
                     reach.insert(t.id); grew = true
                 }
             }
-            for t in project.tracks where reach.contains(t.id) && !t.slots.isEmpty { performance.append(Launch(track: t.id, slot: nil, tick: at)) }
+            for t in project.tracks where reach.contains(t.id) && !t.slots.isEmpty { session.add(Launch(track: t.id, slot: nil, tick: at), in: project) }
             rebuild()
         default: stopTrack(track.id)
         }
@@ -982,36 +905,26 @@ final class AppModel {
     func stopAllClips() {
         guard transportPlaying else { return }
         let at = project.barBoundary(atOrAfter: sessionTick)
-        for t in project.tracks where !t.slots.isEmpty { performance.append(Launch(track: t.id, slot: nil, tick: at)) }
+        for t in project.tracks where !t.slots.isEmpty { session.add(Launch(track: t.id, slot: nil, tick: at), in: project) }
         rebuild()
     }
 
     private func startIfStopped() {
         guard !transportPlaying else { return }
         // A launch while stopped starts that clip only, not what played before the stop.
-        resumeSlots = []
-        if performance.isEmpty == false { performance = [] }
+        session.clear()
         play()
     }
 
     func slotState(track: Track, row: Int, at tick: Tick) -> SlotState {
-        guard row < track.slots.count, let slot = track.slots[row] else { return .empty }
-        let (now, next) = plays(of: track.id, at: tick)
-        if let e = now, e.slot == row {
-            let length = max(1, slot.clip.length.rawValue)
-            let progress = Double((tick - e.startTick).rawValue % length) / Double(length)
-            return stopPending(track.id, at: tick) ? .stopping(progress: progress) : .playing(progress: progress)
-        }
-        if let next, next.slot == row, next.cause == .launch { return .queued }
-        return .stopped
+        session.slotState(of: track, row: row, at: tick, playing: transportPlaying)
     }
 
     /// The track plays now, and its latest launch is a stop that has not come yet (a stop button, a scene
     /// with an empty slot). A Session take that ends at the next bar counts too.
     func stopPending(_ track: TrackID, at tick: Tick) -> Bool {
         if recordStopTick != nil, recordSlots[track] != nil { return true }
-        guard let last = performance.last(where: { $0.track == track }), last.slot == nil, last.tick > tick else { return false }
-        return plays(of: track, at: tick).now != nil
+        return session.stopPending(track, at: tick)
     }
 
     /// Any track below the master or a bus has a stop waiting.
@@ -1051,7 +964,7 @@ final class AppModel {
         }
         guard let row = track.slots.firstIndex(where: { $0?.clip.id == id }) else { return nil }
         let tick = sessionTick
-        guard let e = plays(of: trackID, at: tick).now, e.slot == row else { return nil }
+        guard let e = session.plays(of: trackID, at: tick).now, e.slot == row else { return nil }
         return tick - e.startTick
     }
 
@@ -1096,7 +1009,7 @@ final class AppModel {
         dirty = true
         if let c = selectedClip, project.findClip(c) == nil { selectedClip = nil }
         selectedClips = selectedClips.filter { project.findClip($0) != nil }
-        followMovedSlots()
+        session.followMovedSlots(in: project)
         rebuild()
         syncPlugins()
         scheduleSave()
@@ -1606,7 +1519,7 @@ final class AppModel {
         Task { @MainActor [weak self] in
             while let self {
                 try? await Task.sleep(for: .seconds(3))
-                if transportPlaying, !performance.isEmpty, sessionTick.rawValue > planHorizon.rawValue - barTicks * 100 { rebuild() }
+                if transportPlaying, !session.isEmpty, sessionTick.rawValue > planHorizon.rawValue - barTicks * 100 { rebuild() }
             }
         }
     }
@@ -1615,18 +1528,18 @@ final class AppModel {
         // A track that starts or stops using a direct output (or another project opened) changes the output graph.
         if Set(directPorts.map(\.id)) != appliedDirectPorts { applyAudioSettings() }
         var p = project
-        p.launches = performance
+        p.launches = session.launches
 
         // The session clock runs on past the loop end, so the plan reaches 300 bars past it, and is extended in time.
         let horizon = Tick(max(0, sessionTick.rawValue) + barTicks * 300)
         planHorizon = horizon
-        simulation = SessionSimulator.run(p, horizon: horizon)
+        session.simulate(project, horizon: horizon)
         // A track launched from the session stops its arrangement (like Live), but only when the session
         // really takes over: at the quantized clip start, or at a session stop.
         var ends: [TrackID: Int64] = [:]
-        for track in Set(performance.map(\.track)) {
+        for track in Set(session.launches.map(\.track)) {
             let starts = simulation.events.filter { $0.track == track }.map(\.startTick)
-            let stops = performance.filter { $0.track == track && $0.slot == nil }.map(\.tick)
+            let stops = session.launches.filter { $0.track == track && $0.slot == nil }.map(\.tick)
             if let first = (starts + stops).min() { ends[track] = frame(first) }
         }
         let compiled = RenderPlan.compile(p, bank: bank, session: simulation, units: host.units, arrangementEnds: ends)
@@ -1800,9 +1713,9 @@ final class AppModel {
         // Session instead, so a jam does not export as silence. Capture puts a jam into the arrangement.
         var snapshot = project
         let arrangementEmpty = !project.tracks.contains { !$0.clips.isEmpty }
-        let jam = arrangementEmpty && !performance.isEmpty
-        if jam { snapshot.launches = performance }
-        let skipped = !arrangementEmpty && !performance.isEmpty
+        let jam = arrangementEmpty && !session.isEmpty
+        if jam { snapshot.launches = session.launches }
+        let skipped = !arrangementEmpty && !session.isEmpty
         let bank = bank
         Task { [weak self] in
             // Own plugin instances: the live ones belong to the audio thread.
@@ -1850,7 +1763,7 @@ final class AppModel {
         warpTask?.cancel()
         host.removeAll()
         waveforms = [:]
-        performance = []
+        session = SessionPerformance()
         undoStack = []; redoStack = []
         canUndo = false; canRedo = false
         selectedClip = nil; selectedTrack = nil

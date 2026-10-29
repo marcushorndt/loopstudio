@@ -61,7 +61,12 @@ enum Theme {
 
     /// A clip body: the track colour, softened, on the panel.
     static func clipBody(_ index: Int, active: Bool = false) -> Color {
-        track(index).opacity(active ? min(1, palette.clipFill + 0.34) : palette.clipFill)
+        clipBody(index, lift: active ? 1 : 0)
+    }
+
+    /// `lift` 0 is a resting clip, 1 a playing one; between is a clip that is ready to play.
+    static func clipBody(_ index: Int, lift: Double) -> Color {
+        track(index).opacity(min(1, palette.clipFill + 0.34 * lift))
     }
 }
 

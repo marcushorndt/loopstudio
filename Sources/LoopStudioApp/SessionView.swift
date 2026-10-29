@@ -199,30 +199,27 @@ private struct SlotCell: View {
             if row < track.slots.count, track.slots[row] != nil {
                 TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !model.transportPlaying)) { context in
                     let state = model.slotState(track: track, row: row, at: model.sessionTick)
-                    cell(state, blink: model.waitBlink())
+                    cell(state, look: SlotLook(state, blink: model.waitBlink()))
                 }
             } else {
-                cell(.empty, blink: false)
+                cell(.empty, look: SlotLook(.empty, blink: false))
             }
         }
         .dropDestination(for: URL.self) { urls, _ in model.dropOnSlot(urls, track: track.id, row: row) }
     }
 
     @ViewBuilder
-    private func cell(_ state: SlotState, blink: Bool) -> some View {
+    private func cell(_ state: SlotState, look: SlotLook) -> some View {
         let slot = row < track.slots.count ? track.slots[row] : nil
         let tint = Theme.track(slot?.clip.colorIndex ?? track.colorIndex)
         if let slot {
             let selected = model.selectedClip == slot.clip.id
             HStack(spacing: 0) {
                 Button { model.launch(track: track.id, row: row) } label: {
-                    Image(systemName: icon(state)).font(.system(size: 11))
-                        // Blinks with the beat while it waits: green for a launch, off and on for a stop.
-                        .foregroundStyle(state.isStopping ? (blink ? Theme.play : Theme.dim)
-                                         : state.isQueued ? (blink ? Theme.play : tint)
-                                         : isPlaying(state) ? Theme.play : tint)
+                    Image(systemName: "play.fill").font(.system(size: 11))
+                        .foregroundStyle(look.icon(tint: tint))
                         .frame(width: 26, height: slotHeight)
-                        .background(isPlaying(state) ? Theme.background.opacity(0.7) : Color.clear)
+                        .background(Theme.background.opacity(look.iconWell))
                 }
                 .buttonStyle(.plain)
                 HStack {
@@ -238,7 +235,7 @@ private struct SlotCell: View {
             .background(alignment: .leading) {
                 GeometryReader { geo in
                     Rectangle().fill(Theme.panel)
-                    Rectangle().fill(Theme.clipBody(slot.clip.colorIndex ?? track.colorIndex, active: isPlaying(state)))
+                    Rectangle().fill(Theme.clipBody(slot.clip.colorIndex ?? track.colorIndex, lift: look.lift))
                     if !slot.clip.lanes.isEmpty { MiniCurves(clip: slot.clip, owner: track).padding(.leading, 26).padding(.vertical, 2) }
                     if let p = state.progress {
                         Rectangle().fill(tint.opacity(0.35)).frame(width: geo.size.width * p)
@@ -246,10 +243,10 @@ private struct SlotCell: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
-            // A waiting launch blinks its frame with the beat; a clip about to stop blinks its play button.
-            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(state.isQueued && blink ? Theme.accent : (selected ? Theme.text : tint.opacity(0.5)), lineWidth: selected || state.isQueued ? 1.5 : 1))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(look.frame(tint: tint, selected: selected), lineWidth: selected || look.frameLit ? 1.5 : 1))
             .frame(height: slotHeight)
-            .hint("\(model.clipName(slot.clip)): the play icon launches it, a click selects it, Return launches the selection.")
+            .hint(state == .ready ? "\(model.clipName(slot.clip)): played when the transport stopped. Play starts it again."
+                  : "\(model.clipName(slot.clip)): the play icon launches it, a click selects it, Return launches the selection.")
             .contextMenu { SlotMenu(track: track, row: row) }
         } else {
             // An empty slot reached with the arrow keys shows a frame.
@@ -300,18 +297,52 @@ private struct SlotCell: View {
         }
     }
 
-    private func isPlaying(_ s: SlotState) -> Bool { s.progress != nil }
-    private func icon(_ s: SlotState) -> String { isPlaying(s) ? "play.fill" : "play.fill" }
 }
 
-extension SlotState {
-    var isQueued: Bool { if case .queued = self { true } else { false } }
-    var isStopping: Bool { if case .stopping = self { true } else { false } }
-    var progress: Double? {
-        switch self {
-        case .playing(let p), .stopping(let p): p
-        default: nil
+
+/// How a slot with a clip looks in each state. The one place for these colors: playing, waiting (blinking with
+/// the beat), ready after a stop, or resting.
+struct SlotLook {
+    let state: SlotState
+    let blink: Bool
+    init(_ state: SlotState, blink: Bool) { self.state = state; self.blink = blink }
+
+    /// 0 resting, 1 playing. A ready clip sits between, so it shows what Play starts.
+    var lift: Double {
+        switch state {
+        case .playing, .stopping: 1
+        case .ready: 0.55
+        default: 0
         }
+    }
+
+    /// The dark well behind the play icon, while the clip plays or is ready.
+    var iconWell: Double {
+        switch state {
+        case .playing, .stopping: 0.7
+        case .ready: 0.4
+        default: 0
+        }
+    }
+
+    /// Green while it plays. Waiting, it blinks with the beat: green and the clip color for a launch, green and
+    /// grey for a stop. Ready after a stop, a softer green.
+    func icon(tint: Color) -> Color {
+        switch state {
+        case .playing: Theme.play
+        case .stopping: blink ? Theme.play : Theme.dim
+        case .queued: blink ? Theme.play : tint
+        case .ready: Theme.play.opacity(0.6)
+        default: tint
+        }
+    }
+
+    /// A waiting launch also blinks the frame.
+    var frameLit: Bool { state.isQueued }
+
+    func frame(tint: Color, selected: Bool) -> Color {
+        if state.isQueued && blink { return Theme.accent }
+        return selected ? Theme.text : tint.opacity(0.5)
     }
 }
 

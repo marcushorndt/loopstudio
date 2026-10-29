@@ -397,7 +397,7 @@ extension AppModel {
         // arrangement loop moves the two clocks apart, so with the loop on the performance keeps its session times.
         let shift = project.loop?.enabled == true ? 0 : engine.clockOffset
         var stops: [TrackID: Tick] = [:]
-        for l in project.launches where l.slot == nil {
+        for l in session.launches where l.slot == nil {
             let t = project.onTimeline(l.tick, shift: shift)
             stops[l.track] = min(stops[l.track] ?? t, t)
         }

@@ -52,7 +52,8 @@ struct SessionView: View {
             ScrollView(.vertical) {
                 HStack(alignment: .top, spacing: gap) {
                     ScrollView(.horizontal) {
-                        HStack(alignment: .top, spacing: gap) {
+                        // Lazy: with many tracks, only the columns in view are built.
+                        LazyHStack(alignment: .top, spacing: gap) {
                             ForEach(tracks, id: \.id) { TrackColumn(track: $0, rows: rows) }
                             NewTrackColumn(rows: rows)
                         }
@@ -186,9 +187,16 @@ private struct SlotCell: View {
     let row: Int
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !model.transportPlaying)) { context in
-            let state = model.slotState(track: track, row: row, at: model.sessionTick)
-            cell(state, blink: Int(context.date.timeIntervalSinceReferenceDate * 5) % 2 == 0)
+        Group {
+            // Only a slot with a clip shows play progress; an empty slot is drawn once, not 24 times a second.
+            if row < track.slots.count, track.slots[row] != nil {
+                TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !model.transportPlaying)) { context in
+                    let state = model.slotState(track: track, row: row, at: model.sessionTick)
+                    cell(state, blink: Int(context.date.timeIntervalSinceReferenceDate * 5) % 2 == 0)
+                }
+            } else {
+                cell(.empty, blink: false)
+            }
         }
         .dropDestination(for: URL.self) { urls, _ in model.dropOnSlot(urls, track: track.id, row: row) }
     }

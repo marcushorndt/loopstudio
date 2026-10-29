@@ -56,7 +56,25 @@ final class AppModel {
     private(set) var packageURL: URL
     private(set) var exporting = false
     private(set) var waveforms: [AssetID: [Float]] = [:]
-    private(set) var simulation = SessionSimulation(events: [], warnings: [])
+    private(set) var simulation = SessionSimulation(events: [], warnings: []) {
+        // Slot states are read many times a second: index the plays by track once, sorted by start.
+        didSet {
+            eventsByTrack = Dictionary(grouping: simulation.events, by: \.track).mapValues { $0.sorted { $0.startTick < $1.startTick } }
+        }
+    }
+    private(set) var eventsByTrack: [TrackID: [SessionEvent]] = [:]
+
+    /// The play of a track at `tick`, and the next one after it. Binary search in the sorted plays.
+    private func plays(of track: TrackID, at tick: Tick) -> (now: SessionEvent?, next: SessionEvent?) {
+        guard let events = eventsByTrack[track], !events.isEmpty else { return (nil, nil) }
+        var lo = 0, hi = events.count
+        while lo < hi { let mid = (lo + hi) / 2; if events[mid].startTick <= tick { lo = mid + 1 } else { hi = mid } }
+        // lo: the first play that starts after `tick`. One of the few before it may still be playing
+        // (plays of one track follow each other; a stop can sit on the same tick as a start).
+        let now = stride(from: lo - 1, through: max(0, lo - 4), by: -1).lazy.map { events[$0] }
+            .first { $0.startTick <= tick && tick < $0.endTick }
+        return (now, lo < events.count ? events[lo] : nil)
+    }
     private(set) var warnings: [String] = []
     private(set) var dirty = false
     var status = ""
@@ -808,13 +826,12 @@ final class AppModel {
 
     func slotState(track: Track, row: Int, at tick: Tick) -> SlotState {
         guard row < track.slots.count, let slot = track.slots[row] else { return .empty }
-        let events = simulation.events.filter { $0.track == track.id }
-        if let e = events.first(where: { $0.startTick <= tick && tick < $0.endTick }), e.slot == row {
+        let (now, next) = plays(of: track.id, at: tick)
+        if let e = now, e.slot == row {
             let length = max(1, slot.clip.length.rawValue)
             return .playing(progress: Double((tick - e.startTick).rawValue % length) / Double(length))
         }
-        if let next = events.filter({ $0.startTick > tick }).min(by: { $0.startTick < $1.startTick }),
-           next.slot == row, next.cause == .launch { return .queued }
+        if let next, next.slot == row, next.cause == .launch { return .queued }
         return .stopped
     }
 
@@ -828,8 +845,7 @@ final class AppModel {
         }
         guard let row = track.slots.firstIndex(where: { $0?.clip.id == id }) else { return nil }
         let tick = sessionTick
-        guard let e = simulation.events.first(where: { $0.track == trackID && $0.startTick <= tick && tick < $0.endTick }),
-              e.slot == row else { return nil }
+        guard let e = plays(of: trackID, at: tick).now, e.slot == row else { return nil }
         return tick - e.startTick
     }
 

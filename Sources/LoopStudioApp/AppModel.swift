@@ -175,6 +175,11 @@ final class AppModel {
     var recordSlots: [TrackID: Int] = [:]
     /// A Session take ends at this bar (session clock). Set by the slot's dot or the track stop button.
     var recordStopTick: Tick?
+    /// A Session take begun while the transport played starts at this bar (session clock), like a launch.
+    /// The input records from the click on; the part before the bar is cut.
+    var recordStartsAt: Tick?
+    /// The take waits for its start bar.
+    var recordWaitsForGrid: Bool { recordStartsAt.map { sessionTick < $0 } ?? false }
     /// The tracks of the running take, for the inspector.
     var takeTracks: [TrackID] = []
     /// When a Session take ends: launch the new clip at the stop bar (the dot), or leave it stopped (the stop button).
@@ -438,6 +443,14 @@ final class AppModel {
         let targets = slot.map { [$0.track] } ?? recordTargets
         recordPunch = transportPlaying
         recordStartTick = currentTick
+        recordStartsAt = nil
+        if slot != nil, transportPlaying, !engine.isCountingIn {
+            // Into a slot while playing: the take starts on the next bar, as a launched clip would.
+            let now = currentTick
+            let bar = project.barBoundary(atOrAfter: now)
+            recordStartTick = bar
+            recordStartsAt = sessionTick + (bar - now)
+        }
         // The take belongs to these tracks, even if the selection changes while it records.
         recordMIDITracks = targets.filter { project.track($0)?.kind == .midi }
         recordAudioTracks = targets.filter { project.track($0)?.kind == .audio }
@@ -494,7 +507,9 @@ final class AppModel {
         let now = sessionTick
         // Within a sixteenth after a bar line, that bar line still counts.
         let barStart = project.barBoundary(atOrAfter: now - Tick(Tick.perQuarter / 4))
-        let target = barStart <= now ? barStart : project.barBoundary(atOrAfter: now)
+        var target = barStart <= now ? barStart : project.barBoundary(atOrAfter: now)
+        // A take that has not begun yet ends one bar after it begins: a one-bar loop, not nothing.
+        if let begin = recordStartsAt, target <= begin { target = project.barBoundary(atOrAfter: begin + Tick(1)) }
         recordStopTick = target
         recordLaunchAt = target
         let serial = takeSerial
@@ -511,7 +526,8 @@ final class AppModel {
     func recordStatus(_ text: String) -> String {
         let all = recordMIDITracks + recordAudioTracks
         if all.count > 1 { return "\(text) on \(all.count) tracks" }
-        return all.first.flatMap { recordSlots[$0] }.map { "\(text) into slot \($0 + 1)" } ?? text
+        let grid = recordStartsAt == nil ? "" : " from the next bar"
+        return all.first.flatMap { recordSlots[$0] }.map { "\(text) into slot \($0 + 1)\(grid)" } ?? text
     }
 
     /// Turns what was played into MIDI clips on the armed MIDI tracks, and the audio take into audio clips.
@@ -527,9 +543,11 @@ final class AppModel {
             let offset = recordFrameOffset
             let endFrame = engine.sessionFrame
             let sr = sampleRate, map = project.tempoMap, start = recordStartTick.rawValue
-            let notes = MIDIRecorder.notes(from: events, endFrame: endFrame) { frame in
+            let allNotes = MIDIRecorder.notes(from: events, endFrame: endFrame) { frame in
                 max(0, map.tick(atFrame: Frame(frame + offset), sampleRate: sr).rawValue - start)
             }
+            // Notes played before a grid-synced start land on tick 0 with no length: they were not part of the take.
+            let notes = recordStartsAt == nil ? allNotes : allNotes.filter { !($0.tick == 0 && $0.length.rawValue <= 1) }
             if !notes.isEmpty {
                 let elapsed = max(1, project.tempoMap.tick(atFrame: Frame(endFrame + offset), sampleRate: sr).rawValue - start)
                 let bars = max(1, (elapsed + barTicks - 1) / barTicks)
@@ -548,6 +566,7 @@ final class AppModel {
         recordSlots = [:]
         takeTracks = []
         recordStopTick = nil
+        recordStartsAt = nil
         recordLaunchAt = nil
         recordLaunchTake = true
     }

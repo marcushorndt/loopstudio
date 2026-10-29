@@ -264,9 +264,9 @@ private struct SlotCell: View {
                     Group {
                         if takeHere {
                             // The slot that records: a red dot that pulses, like Live's recording slot.
-                            // It blinks with the beat while the take waits: in the count-in, or for its stop bar.
+                            // It blinks with the beat while the take waits: in the count-in, for its start bar, or for its stop bar.
                             TimelineView(.animation(minimumInterval: 1.0 / 24)) { _ in
-                                let waiting = model.engine.isCountingIn || model.recordStopTick != nil
+                                let waiting = model.engine.isCountingIn || model.recordStopTick != nil || model.recordWaitsForGrid
                                 Image(systemName: "record.circle.fill").font(.system(size: 12))
                                     .foregroundStyle(Color.red.opacity(!waiting || model.waitBlink() ? 1 : 0.35))
                             }

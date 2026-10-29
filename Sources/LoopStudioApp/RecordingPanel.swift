@@ -62,6 +62,7 @@ struct RecordingPanel: View {
     /// Bars and beats since the take began, or the count-in.
     private var lengthText: String {
         if model.engine.isCountingIn { return "Count-in" }
+        if let start = model.recordStartsAt, model.recordWaitsForGrid { return "starts at bar \(barNumber(start))" }
         let ticks = max(0, model.currentTick.rawValue - model.recordStartTick.rawValue)
         let beat = Int64(Tick.perQuarter)
         let bar = max(1, model.barTicks)

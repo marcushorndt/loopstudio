@@ -109,8 +109,9 @@ The render callback must not: allocate, free, take a lock, call Objective-C or S
 
 How we enforce it:
 - Renderer code uses only pre-allocated `UnsafeMutablePointer` buffers and `Atomic` values from the `Synchronization` module.
-- A `RealtimeSafe` code-review checklist for every renderer file, and a debug build that traps on `malloc` inside the callback (malloc hook in tests).
-- Soak test: render 10 minutes of a busy project in a loop under Instruments. Zero allocations, zero lock waits.
+- A `RealtimeSafe` code-review checklist for every renderer file, and a malloc hook in the tests (`SoakTests.swift`): libmalloc's `malloc_logger` counts every allocation on the audio thread while the live engine renders a busy project, and samples the call stacks of the first ones.
+- Soak test: 20 seconds of a busy project (eight tracks, every built-in effect, a synced LFO, sends, a group, automation, a session clip, the click, the loop) on every test run; `LOOPSTUDIO_SOAK=1` renders 10 minutes. Zero allocations, measured.
+- Debug builds: unoptimized Swift runs `for` loops over ranges and arrays through generic code that allocates (about 30,000 times per block of 512 frames in the busy project). So `Package.swift` compiles `LoopStudioCore` and `LoopStudioEngine` with `-O` in debug builds too. The app that `scripts/run-app.sh` opens therefore has a clean audio thread.
 - Thread sanitizer runs in CI on the offline renderer.
 
 ## 8. Audio clips, loops and warping
@@ -288,7 +289,7 @@ Tools to add as features land: `asset_import` (hash and copy a file into the pro
 | 0 | Single loop player | Done: 4 tests pass |
 | 1 | **Core**: time types, `TempoMap`, project model, commands, undo, JSON package with migrations, command journal, follow-action resolver | Done: 70 tests pass, including random edit sequences that undo back to the start |
 | 1b | **Hardware I/O model and control layer**: logical ports, track inputs and outputs, `IOResolver`, device and MIDI catalogs, tool registry, MCP server | Done: 112 tests pass, MCP checked over real pipes |
-| 2 | **Renderer spike** (see section 17) | Part 1 done: `AudioUnitEffect` hosts Apple's AUDelay through `renderBlock`; output is the same for 64 and 1024 frame blocks. Still open: 10 min soak with zero allocations, and one third-party AUv3 |
+| 2 | **Renderer spike** (see section 17) | Done: `AudioUnitEffect` hosts Apple's AUDelay through `renderBlock`; output is the same for 64 and 1024 frame blocks. The 10-minute soak renders with zero allocations on the audio thread (malloc hook). Still open: one third-party AUv3 |
 | 3 | Renderer v1: tracks, clips, transport, loop region, offline bounce = realtime | Null test passes |
 | 4 | Mixer: sends, buses, groups, PDC, meters | Routing and latency tests pass |
 | 5 | Timeline UI: tracks, clips, waveform, drag, trim, loop brace | Usable by hand on a real loop set |

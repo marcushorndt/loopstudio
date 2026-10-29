@@ -1,6 +1,11 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
+/// The code on the audio thread is optimized in debug builds too. Unoptimized Swift runs loops over ranges
+/// and arrays through generic code that allocates on the heap; the soak test (`SoakTests.swift`) measures
+/// about 30,000 allocations per block of 512 frames in a plain debug build, and none with -O.
+let audioThreadSettings: [SwiftSetting] = [.unsafeFlags(["-O"], .when(configuration: .debug))]
+
 let package = Package(
     name: "loopstudio",
     platforms: [.macOS(.v26)],
@@ -14,10 +19,10 @@ let package = Package(
     ],
     targets: [
         // Time, project model, commands, undo. No audio frameworks.
-        .target(name: "LoopStudioCore"),
+        .target(name: "LoopStudioCore", swiftSettings: audioThreadSettings),
         // Package format, migrations, command journal.
         .target(name: "LoopStudioProject", dependencies: ["LoopStudioCore"]),
-        .target(name: "LoopStudioEngine", dependencies: ["LoopStudioCore"]),
+        .target(name: "LoopStudioEngine", dependencies: ["LoopStudioCore"], swiftSettings: audioThreadSettings),
         // Tool registry and MCP server: the one way for scripts and agents to drive the app.
         .target(name: "LoopStudioControl", dependencies: ["LoopStudioCore", "LoopStudioProject", "LoopStudioEngine"]),
         .executableTarget(name: "loopstudio", dependencies: ["LoopStudioEngine", "LoopStudioProject", "LoopStudioCore", "LoopStudioControl"]),

@@ -300,6 +300,11 @@ final class AppModel {
         }
     }
     @ObservationIgnored private var performanceClips: [ClipID?] = []
+    /// What the Session played when the transport stopped: per track, the slot that played (`nil`: stopped,
+    /// so the arrangement stays silent there) and when it began. The next Play starts these and nothing else.
+    @ObservationIgnored private var resumeSlots: [(track: TrackID, slot: Int?, start: Tick)] = []
+    /// Session clock and timeline position when the transport stopped.
+    @ObservationIgnored private var pausedAt: (session: Tick, timeline: Tick)?
 
     /// After an edit: points each launch at the row where its clip is now. A clip that is gone stops.
     private func followMovedSlots() {
@@ -598,14 +603,51 @@ final class AppModel {
     func togglePause() { transportPlaying ? pause() : play() }
 
     func play() {
+        resumeSession()
         engine.play()
         transportPlaying = true
     }
 
     func pause() {
         if recording { finishRecording() }
+        keepSessionForResume()
         engine.pause()
         transportPlaying = false
+    }
+
+    /// The transport stops: keep only what plays now. Launches still waiting, and the history before, go.
+    /// Otherwise the next Play starts the clock at the timeline position again, and old launches that lie
+    /// after it would wait to play as if they were new.
+    private func keepSessionForResume() {
+        guard transportPlaying, !performance.isEmpty else { return }
+        let tick = sessionTick
+        let tracks = Set(performance.map(\.track))
+        resumeSlots = project.tracks.filter { tracks.contains($0.id) }.map { t in
+            let now = plays(of: t.id, at: tick).now
+            return (t.id, now?.slot, now?.startTick ?? tick)
+        }
+        pausedAt = (tick, currentTick)
+        performance = []
+        rebuild()
+    }
+
+    /// Play after a stop: the clips that played start again. From the same place (Shift+Space), each one goes on
+    /// where it was. From elsewhere, each starts on the bar before, so it runs in time with the bars.
+    private func resumeSession() {
+        guard !resumeSlots.isEmpty, let paused = pausedAt else { return }
+        let start = currentTick
+        let sameSpot = paused.timeline == start
+        let bar = project.barBoundary(atOrAfter: start)
+        let barBefore = bar == start ? start : Tick(max(0, bar.rawValue - barTicks))
+        performance = []
+        for r in resumeSlots {
+            // A stop sits on the bar before too, so a stopped track is silent from the first frame.
+            let tick = r.slot == nil ? barBefore : (sameSpot ? r.start - paused.session + start : barBefore)
+            performance.append(Launch(track: r.track, slot: r.slot, tick: tick))
+        }
+        resumeSlots = []
+        pausedAt = nil
+        rebuild()
     }
 
     /// First press stops. A second press, with the transport already stopped, goes back to the start.
@@ -615,6 +657,7 @@ final class AppModel {
         } else {
             engine.seek(to: 0)
         }
+        resumeSlots = []
         if !performance.isEmpty { performance = []; rebuild() }
     }
 
@@ -626,6 +669,7 @@ final class AppModel {
     var arrangementOverridden: Bool { !performance.isEmpty }
 
     func backToArrangement() {
+        resumeSlots = []
         performance = []
         rebuild()
     }
@@ -944,6 +988,8 @@ final class AppModel {
 
     private func startIfStopped() {
         guard !transportPlaying else { return }
+        // A launch while stopped starts that clip only, not what played before the stop.
+        resumeSlots = []
         if performance.isEmpty == false { performance = [] }
         play()
     }

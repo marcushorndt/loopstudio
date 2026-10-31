@@ -54,6 +54,8 @@ enum Theme {
     static var play: Color { palette.play }
     static var onTint: Color { palette.onTint }
     static var trackColors: [Color] { palette.trackColors }
+    /// The dot that says "this holds automation points", like Live's red automation LED.
+    static let automationDot = Color(red: 0.96, green: 0.36, blue: 0.36)
 
     static let radius: CGFloat = 2
 

@@ -157,8 +157,15 @@ private struct ArrangementHeader: View {
                             .hint("Solo this track only. ⌘-click adds it to the soloed tracks.")
                     }
                     pill("M", on: track.mute, tint: Theme.accent) { model.apply(.setMute(id: track.id, mute: !track.mute)) }
-                    pill("A", on: !model.shownLanes(track).isEmpty, tint: Theme.track(0)) { model.toggleAutomation(track) }
-                        .hint("Show automation")
+                    // The pill folds the lanes away and back; a dot on it says the track holds automation points.
+                    pill(model.isAutomationCollapsed(track) ? "A ▸" : "A", on: !model.shownLanes(track).isEmpty, tint: Theme.track(0)) { model.toggleAutomation(track) }
+                        .overlay(alignment: .topTrailing) {
+                            if model.hasAutomation(track) {
+                                Circle().fill(Theme.automationDot).frame(width: 5, height: 5).offset(x: 2, y: -2)
+                            }
+                        }
+                        .hint(model.laneList(track).isEmpty ? "Show the automation lanes (A shows every track's)"
+                              : model.isAutomationCollapsed(track) ? "Expand the automation lanes" : "Collapse the automation lanes; they are kept")
                     if track.kind == .audio || track.kind == .midi {
                         pill("●", on: model.armedTracks.contains(track.id), tint: .red) { model.toggleArm(track.id) }
                             .hint("Arm this track only: it records and plays the MIDI keyboard. ⌘-click adds it to the armed tracks.")
@@ -186,7 +193,7 @@ private struct ArrangementHeader: View {
 
     private func pill(_ label: String, on: Bool, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(label).font(.system(size: 10, weight: .bold)).frame(width: 24, height: 18)
+            Text(label).font(.system(size: 10, weight: .bold)).frame(minWidth: 24, maxWidth: 32).frame(height: 18)
                 .foregroundStyle(on ? tint : Theme.dim)
                 .background(on ? tint.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.55) : Theme.line, lineWidth: 1))
@@ -590,35 +597,65 @@ private struct ClipOverrideSpans: View {
     }
 }
 
-/// Header column of the automation lanes: one label per lane, and a menu to choose the lanes.
+/// Header column of the automation lanes. Each lane has a dropdown that picks its parameter, a dot when that
+/// parameter holds points, and a close button. The last lane has a button that adds one more lane.
 private struct AutomationLabels: View {
     @Environment(AppModel.self) private var model
     let track: Track
 
     var body: some View {
         let lanes = model.shownLanes(track)
+        let automated = model.automatedTargets(track)
         VStack(spacing: 0) {
-            ForEach(lanes, id: \.self) { address in
-                HStack(spacing: 4) {
-                    Text(model.project.automationTarget(address)?.name ?? "?")
-                        .font(.system(size: 10)).lineLimit(1).foregroundStyle(Theme.dim)
-                    Spacer(minLength: 0)
-                    Button { model.setLane(track, address, shown: false) } label: {
-                        Image(systemName: "xmark").font(.system(size: 8)).frame(width: 16, height: 16).contentShape(Rectangle())
+            ForEach(Array(lanes.enumerated()), id: \.element) { i, address in
+                let target = model.project.automationTarget(address)
+                let hasPoints = automated.contains(address)
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 4) {
+                        LaneParameterMenu(track: track, index: i) {
+                            HStack(spacing: 4) {
+                                Circle().fill(hasPoints ? Theme.automationDot : Theme.dim.opacity(0.35)).frame(width: 6, height: 6)
+                                Text(target.map(LaneGroup.shortName) ?? "?")
+                                    .font(.system(size: 10, weight: hasPoints ? .semibold : .regular))
+                                    .foregroundStyle(hasPoints ? Theme.text : Theme.dim).lineLimit(1)
+                                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundStyle(Theme.dim)
+                            }
+                            .padding(.horizontal, 5).frame(height: 18)
+                            .background(Theme.panelRaised.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
+                            .contentShape(Rectangle())
+                        }
+                        .fixedSize()
+                        .hint(hasPoints ? "\(target?.name ?? "This lane") holds automation. Click to show another parameter in this lane."
+                              : "\(target?.name ?? "This lane") has no automation yet: the dotted line is the default value. Click to show another parameter.")
+                        Spacer(minLength: 0)
+                        Button { model.setLane(track, address, shown: false) } label: {
+                            Image(systemName: "xmark").font(.system(size: 8)).frame(width: 16, height: 16).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(Theme.dim).hint("Close this lane")
                     }
-                    .buttonStyle(.plain).foregroundStyle(Theme.dim).hint("Hide this lane")
+                    if let device = target.flatMap(deviceName) {
+                        Text(device).font(.system(size: 9)).foregroundStyle(Theme.dim.opacity(0.8)).lineLimit(1).padding(.leading, 5).padding(.top, 2)
+                    }
+                    Spacer(minLength: 0)
+                    if i == lanes.count - 1 {
+                        Button { model.addLane(track) } label: {
+                            Label("Lane", systemImage: "plus").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
+                                .padding(.horizontal, 5).frame(height: 16).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).hint("One more lane under this track, for another parameter")
+                        .padding(.bottom, 3)
+                    }
                 }
                 .padding(.horizontal, 8).padding(.top, 4)
                 .frame(height: AppModel.automationRow, alignment: .top)
                 .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
             }
         }
-        .overlay(alignment: .bottomTrailing) {
-            if !lanes.isEmpty {
-                AutomationLanesMenu(track: track).menuStyle(.borderlessButton).menuIndicator(.hidden)
-                    .frame(width: 24).padding(.trailing, 4).padding(.bottom, 2)
-                    .hint("Choose lanes")
-            }
-        }
+    }
+
+    /// The device part of a target name ("Reverb" from "Reverb › Size"), none for the mixer.
+    private func deviceName(_ target: AutomationTarget) -> String? {
+        let parts = target.name.components(separatedBy: " › ")
+        return parts.count > 1 ? parts.dropLast().joined(separator: " › ") : nil
     }
 }

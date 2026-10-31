@@ -166,7 +166,7 @@ struct DeviceChainView: View {
                             RoundedRectangle(cornerRadius: 2).fill(Theme.track(track.colorIndex)).frame(width: 8, height: 8)
                             Text(track.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                             Spacer(minLength: 4)
-                            PillMenu(label: "Automate") { AutomationLaneToggles(track: track) }
+                            PillMenu(label: "Automate") { AutomationLaneToggles(track: track, reveals: true) }
                         }
                         .frame(height: 22)
                         Text(kindLabel(track.kind) + " · " + (track.devices.isEmpty ? "no devices" : "\(track.devices.count) device\(track.devices.count == 1 ? "" : "s")"))

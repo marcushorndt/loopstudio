@@ -79,7 +79,9 @@ struct TrackMenuItems: View {
         }
         Divider()
         if showsAutomation {
-            Button(model.shownLanes(track).isEmpty ? "Show Automation" : "Hide Automation") { model.toggleAutomation(track) }
+            Button(model.laneList(track).isEmpty ? "Show Automation" : (model.isAutomationCollapsed(track) ? "Expand Automation" : "Collapse Automation")) {
+                model.toggleAutomation(track)
+            }
             AutomationLanesMenu(track: track)
         }
         Button("Clear Automation") { model.clearAutomation(track.id) }.disabled(track.automation.isEmpty)
@@ -278,41 +280,98 @@ struct DeviceMenu: View {
     }
 }
 
-/// The checkmark items of the lane menu, for use inside any menu.
+/// The automation targets of a track in groups: the mixer, then each device. The menus list them this way.
+struct LaneGroup: Identifiable {
+    let id: UUID
+    let name: String
+    let targets: [AutomationTarget]
+
+    @MainActor static func groups(of track: Track, in project: Project) -> [LaneGroup] {
+        let all = project.automationTargets(of: track)
+        var groups = [LaneGroup(id: track.id.rawValue, name: "Mixer", targets: all.filter { $0.node == track.id.rawValue })]
+        for device in track.devices {
+            let mine = all.filter { $0.node == device.id.rawValue }
+            if !mine.isEmpty { groups.append(LaneGroup(id: device.id.rawValue, name: device.name, targets: mine)) }
+        }
+        return groups.filter { !$0.targets.isEmpty }
+    }
+
+    /// The parameter name without the "Device › " prefix, for use under the device's own heading.
+    static func shortName(_ target: AutomationTarget) -> String {
+        target.name.components(separatedBy: " › ").last ?? target.name
+    }
+}
+
+private extension AutomationTarget {
+    var node: UUID { address.node }
+}
+
+/// A row of the lane menus: the parameter name, with a dot in front when it holds automation points.
+private func laneLabel(_ target: AutomationTarget, automated: Set<ParameterAddress>) -> Text {
+    automated.contains(target.address) ? Text("● ") + Text(LaneGroup.shortName(target)) : Text(LaneGroup.shortName(target))
+}
+
+/// The checkmark items of the lane menu, for use inside any menu. A dot marks a parameter with points.
 struct AutomationLaneToggles: View {
     @Environment(AppModel.self) private var model
     let track: Track
+    /// Also switches to the arrangement when a lane is turned on (for menus in the session view).
+    var reveals = false
 
     var body: some View {
-        Button("Lanes With Points") { model.showAllUsedLanes(track) }
-            .disabled(track.automation.allSatisfy { $0.points.isEmpty })
-        Button("Hide All") { model.automationShown[track.id] = nil }.disabled(model.shownLanes(track).isEmpty)
+        let automated = model.automatedTargets(track)
+        Button("Lanes With Points") { model.showAllUsedLanes(track); if reveals { model.viewMode = .arrangement } }
+            .disabled(automated.isEmpty)
+        Button("Add Lane") { model.addLane(track); if reveals { model.viewMode = .arrangement } }
+        Button("Hide All") { model.hideLanes(track) }.disabled(model.laneList(track).isEmpty)
         Divider()
-        ForEach(model.project.automationTargets(of: track), id: \.address) { target in
-            Toggle(target.name, isOn: Binding(
-                get: { model.isLaneShown(track, target.address) },
-                set: { on in model.setLane(track, target.address, shown: on); if on { model.viewMode = .arrangement } }))
+        ForEach(LaneGroup.groups(of: track, in: model.project)) { group in
+            Section(group.name) {
+                ForEach(group.targets, id: \.address) { target in
+                    Toggle(isOn: Binding(
+                        get: { model.isLaneShown(track, target.address) },
+                        set: { on in model.setLane(track, target.address, shown: on); if on && reveals { model.viewMode = .arrangement } })) {
+                        laneLabel(target, automated: automated)
+                    }
+                }
+            }
         }
     }
 }
 
 /// A menu of checkmarks: which automation lanes of a track are visible.
 struct AutomationLanesMenu: View {
-    @Environment(AppModel.self) private var model
     let track: Track
     var title = "Automation Lanes"
 
     var body: some View {
-        Menu(title) {
-            Button("Lanes With Points") { model.showAllUsedLanes(track) }
-                .disabled(track.automation.allSatisfy { $0.points.isEmpty })
-            Button("Hide All") { model.automationShown[track.id] = nil }.disabled(model.shownLanes(track).isEmpty)
-            Divider()
-            ForEach(model.project.automationTargets(of: track), id: \.address) { target in
-                Toggle(target.name, isOn: Binding(
-                    get: { model.isLaneShown(track, target.address) },
-                    set: { model.setLane(track, target.address, shown: $0) }))
+        Menu(title) { AutomationLaneToggles(track: track) }
+    }
+}
+
+/// The parameter chooser of one lane: picking a parameter makes this lane show it.
+struct LaneParameterMenu<Label: View>: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+    let index: Int
+    @ViewBuilder let label: () -> Label
+
+    var body: some View {
+        let automated = model.automatedTargets(track)
+        let current = model.shownLanes(track).indices.contains(index) ? model.shownLanes(track)[index] : nil
+        Menu {
+            ForEach(LaneGroup.groups(of: track, in: model.project)) { group in
+                Section(group.name) {
+                    ForEach(group.targets, id: \.address) { target in
+                        Toggle(isOn: Binding(
+                            get: { current == target.address },
+                            set: { _ in model.replaceLane(track, at: index, with: target.address) })) {
+                            laneLabel(target, automated: automated)
+                        }
+                    }
+                }
             }
-        }
+        } label: { label() }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden)
     }
 }

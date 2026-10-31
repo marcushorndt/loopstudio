@@ -87,6 +87,10 @@ struct ArrangementView: View {
                     }
                 }
             }
+            // When a track opens its automation lanes the rows get taller. The top edge stays where it is, so the
+            // lanes open below the track; without this the scroll view keeps its bottom edge and the track jumps up.
+            .defaultScrollAnchor(.top)
+            .defaultScrollAnchor(.top, for: .sizeChanges)
 
             // The pinned rows: returns and master. They hold automation and the session's dummy clips; no
             // clips are dragged into them, so the marquee stays above. The playhead runs through them too.

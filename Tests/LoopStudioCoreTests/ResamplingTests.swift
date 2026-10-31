@@ -34,3 +34,26 @@ import Testing
     let old = try JSONDecoder().decode(Project.self, from: JSONSerialization.data(withJSONObject: plain))
     #expect(old.track(t.id)?.armed == nil)
 }
+
+@Test func theOpenAutomationLanesTravelWithTheProjectFile() throws {
+    var p = Fixture.baseProject()
+    var t = Track(name: "Keys", kind: .midi)
+    let volume = ParameterAddress(node: t.id.rawValue, parameter: "volume")
+    let pan = ParameterAddress(node: t.id.rawValue, parameter: "pan")
+    t.automationLanes = [pan, volume]
+    t.automationFolded = true
+    try Command.insertTrack(track: t, index: 0).apply(to: &p)
+    let data = try JSONEncoder().encode(p)
+    let back = try JSONDecoder().decode(Project.self, from: data)
+    #expect(back.track(t.id)?.automationLanes == [pan, volume], "the order of the lanes is kept")
+    #expect(back.track(t.id)?.automationFolded == true)
+    // An older file without the fields: no lanes open.
+    var plain = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+    var tracks = plain["tracks"] as! [[String: Any]]
+    tracks[0]["automationLanes"] = nil
+    tracks[0]["automationFolded"] = nil
+    plain["tracks"] = tracks
+    let old = try JSONDecoder().decode(Project.self, from: JSONSerialization.data(withJSONObject: plain))
+    #expect(old.track(t.id)?.automationLanes == nil)
+    #expect(old.track(t.id)?.automationFolded == nil)
+}

@@ -612,16 +612,20 @@ private struct AutomationLabels: View {
                 let hasPoints = automated.contains(address)
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 4) {
+                        // The same look as the other dropdowns of the app (`PillMenu`): a bordered field with
+                        // the up-down chevron, so it reads as a chooser and not as a fold button.
                         LaneParameterMenu(track: track, index: i) {
-                            HStack(spacing: 4) {
+                            HStack(spacing: 5) {
                                 Circle().fill(hasPoints ? Theme.automationDot : Theme.dim.opacity(0.35)).frame(width: 6, height: 6)
                                 Text(target.map(LaneGroup.shortName) ?? "?")
                                     .font(.system(size: 10, weight: hasPoints ? .semibold : .regular))
                                     .foregroundStyle(hasPoints ? Theme.text : Theme.dim).lineLimit(1)
-                                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundStyle(Theme.dim)
+                                Spacer(minLength: 4)
+                                Image(systemName: "chevron.up.chevron.down").font(.system(size: 7, weight: .semibold)).foregroundStyle(Theme.dim)
                             }
-                            .padding(.horizontal, 5).frame(height: 18)
-                            .background(Theme.panelRaised.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
+                            .padding(.horizontal, 6).frame(minWidth: 84, maxWidth: 130).frame(height: 18)
+                            .background(Theme.panelRaised.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius + 2))
+                            .overlay(RoundedRectangle(cornerRadius: Theme.radius + 2).strokeBorder(Theme.line, lineWidth: 1))
                             .contentShape(Rectangle())
                         }
                         .fixedSize()

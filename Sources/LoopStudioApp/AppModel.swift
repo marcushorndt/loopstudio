@@ -233,10 +233,15 @@ final class AppModel {
     var clipRenameRequest: ClipID?
     var selectedSceneRow: Int?
     /// The automation lanes under each track in the arrangement, top to bottom. A collapsed track keeps its
-    /// list, so expanding it brings the same lanes back.
-    var automationShown: [TrackID: [ParameterAddress]] = [:]
+    /// list, so expanding it brings the same lanes back. Saved with the project (see `projectForSaving`),
+    /// so a project opens with the lanes it was closed with. A new project has none open.
+    var automationShown: [TrackID: [ParameterAddress]] = [:] {
+        didSet { if automationShown != oldValue { dirty = true; scheduleSave() } }
+    }
     /// Tracks whose lanes are folded away for now.
-    var automationCollapsed: Set<TrackID> = []
+    var automationCollapsed: Set<TrackID> = [] {
+        didSet { if automationCollapsed != oldValue { dirty = true; scheduleSave() } }
+    }
     /// While a clip of a marked group is dragged, the others follow by this offset.
     var groupDrag: CGSize = .zero
     var selectedTrack: TrackID? {
@@ -2085,8 +2090,16 @@ final class AppModel {
         undoStack = []; redoStack = []
         canUndo = false; canRedo = false
         selectedClip = nil; selectedTrack = nil
-        // The arms come back as they were saved, and so do the MIDI mappings.
+        // The arms come back as they were saved, and so do the open automation lanes and the MIDI mappings.
         armedTracks = Set(new.tracks.filter { $0.armed == true }.map(\.id))
+        var lanes: [TrackID: [ParameterAddress]] = [:]
+        var folded: Set<TrackID> = []
+        for t in new.allTracks {
+            if let list = t.automationLanes, !list.isEmpty { lanes[t.id] = list }
+            if t.automationFolded == true { folded.insert(t.id) }
+        }
+        automationShown = lanes
+        automationCollapsed = folded
         midiLearn = false; learnTarget = nil
         loadMIDIMappings()
         saveTask?.cancel()
@@ -2094,10 +2107,17 @@ final class AppModel {
         rebuild()
     }
 
-    /// The project as it goes to disk: with the arm state of each track.
+    /// The project as it goes to disk: with the arm state and the open automation lanes of each track.
     func projectForSaving() -> Project {
         var copy = project
-        for i in copy.tracks.indices { copy.tracks[i].armed = armedTracks.contains(copy.tracks[i].id) ? true : nil }
+        func viewState(_ t: inout Track) {
+            t.armed = armedTracks.contains(t.id) ? true : nil
+            let lanes = laneList(t)
+            t.automationLanes = lanes.isEmpty ? nil : lanes
+            t.automationFolded = !lanes.isEmpty && automationCollapsed.contains(t.id) ? true : nil
+        }
+        for i in copy.tracks.indices { viewState(&copy.tracks[i]) }
+        viewState(&copy.master)
         return copy
     }
 

@@ -372,6 +372,6 @@ struct LaneParameterMenu<Label: View>: View {
                 }
             }
         } label: { label() }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden)
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
     }
 }

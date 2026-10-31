@@ -680,9 +680,10 @@ private struct AutomationLabels: View {
         }
     }
 
-    /// The device part of a target name ("Reverb" from "Reverb › Size"), none for the mixer.
+    /// The device part of a target name: "Reverb" from "Drums › Reverb › Size". The track name in front is
+    /// not shown, the lane sits under its track; a mixer parameter ("Drums › Volume") has no device.
     private func deviceName(_ target: AutomationTarget) -> String? {
-        let parts = target.name.components(separatedBy: " › ")
-        return parts.count > 1 ? parts.dropLast().joined(separator: " › ") : nil
+        let parts = target.name.components(separatedBy: " › ").dropFirst().dropLast()
+        return parts.isEmpty ? nil : parts.joined(separator: " › ")
     }
 }

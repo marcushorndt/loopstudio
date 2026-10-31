@@ -658,19 +658,24 @@ private struct AutomationLabels: View {
                     if let device = target.flatMap(deviceName) {
                         Text(device).font(.system(size: 9)).foregroundStyle(Theme.dim.opacity(0.8)).lineLimit(1).padding(.leading, 5).padding(.top, 2)
                     }
-                    Spacer(minLength: 0)
-                    if i == lanes.count - 1 {
-                        Button { model.addLane(track) } label: {
-                            Label("Lane", systemImage: "plus").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
-                                .padding(.horizontal, 5).frame(height: 16).contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain).hint("One more lane under this track, for another parameter")
-                        .padding(.bottom, 3)
-                    }
                 }
                 .padding(.horizontal, 8).padding(.top, 4)
                 .frame(height: AppModel.automationRow, alignment: .top)
                 .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
+                // The last lane has the same small button as the track label, with a plus: one more lane below.
+                .overlay(alignment: .bottomTrailing) {
+                    if i == lanes.count - 1 {
+                        Button { model.addLane(track) } label: {
+                            Image(systemName: "plus").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim)
+                                .padding(.horizontal, 4).frame(height: 14)
+                                .background(Theme.panelRaised.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
+                                .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).hint("One more lane under this track, for another parameter")
+                        .padding(.trailing, 4).padding(.bottom, 3)
+                    }
+                }
             }
         }
     }

@@ -35,6 +35,7 @@ struct ArrangementView: View {
                                     .frame(width: 22, height: 18)
                                     .overlay(RoundedRectangle(cornerRadius: Theme.radius)
                                         .stroke(model.anyLanesShown ? Theme.accent.opacity(0.55) : Theme.line, lineWidth: 1))
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain).hint("Show or hide automation lanes on all tracks (A)")
                         }
@@ -189,6 +190,7 @@ private struct ArrangementHeader: View {
                 .foregroundStyle(on ? tint : Theme.dim)
                 .background(on ? tint.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.55) : Theme.line, lineWidth: 1))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -602,7 +604,7 @@ private struct AutomationLabels: View {
                         .font(.system(size: 10)).lineLimit(1).foregroundStyle(Theme.dim)
                     Spacer(minLength: 0)
                     Button { model.setLane(track, address, shown: false) } label: {
-                        Image(systemName: "xmark").font(.system(size: 8))
+                        Image(systemName: "xmark").font(.system(size: 8)).frame(width: 16, height: 16).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain).foregroundStyle(Theme.dim).hint("Hide this lane")
                 }

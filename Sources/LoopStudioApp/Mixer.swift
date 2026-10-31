@@ -242,6 +242,8 @@ struct MixerStrip: View {
                 .foregroundStyle(on ? tint : Theme.dim)
                 .background(on ? tint.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.55) : Theme.line, lineWidth: 1))
+                // A clear background takes no clicks; the whole frame must, not only the letter.
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

@@ -220,6 +220,8 @@ private struct SlotCell: View {
                         .foregroundStyle(look.icon(tint: tint))
                         .frame(width: 26, height: slotHeight)
                         .background(Theme.background.opacity(look.iconWell))
+                        // The well is transparent while the clip rests; the whole column must still take the click.
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 HStack {
@@ -277,6 +279,7 @@ private struct SlotCell: View {
                         }
                     }
                     .frame(width: 26, height: slotHeight)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 // The rest of the slot selects it; the arrow keys go on from there.

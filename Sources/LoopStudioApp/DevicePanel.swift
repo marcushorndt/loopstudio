@@ -140,6 +140,7 @@ private struct SyncToggle: View {
             .font(.system(size: 9, weight: .semibold))
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.line, lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .hint(sync.synced ? "Follows the tempo. Click for a free time in \(sync.unit)." : "Free time. Click to follow the tempo with a note value.")
@@ -254,12 +255,14 @@ private struct DeviceCard: View {
                 Button { model.apply(.setDeviceBypass(track: track.id, device: device.id, bypassed: !device.bypassed)) } label: {
                     Image(systemName: "power").font(.system(size: 11, weight: .bold))
                         .foregroundStyle(device.bypassed ? Theme.dim : Theme.accent)
+                        .frame(width: 20, height: 20).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).hint(device.bypassed ? "Turn on" : "Bypass")
                 Text(device.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 8)
                 Button { model.apply(.removeDevice(track: track.id, device: device.id)) } label: {
                     Image(systemName: "xmark").font(.system(size: 9)).foregroundStyle(Theme.dim)
+                        .frame(width: 20, height: 20).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).hint("Remove")
             }

@@ -565,12 +565,12 @@ private struct ClipLanesPanel: View {
                 HStack(spacing: 2) {
                     if !points.isEmpty {
                         Button { model.apply(.setClipAutomation(clip: clip.id, target: address, points: [])) } label: {
-                            Image(systemName: "trash").font(.system(size: 10)).frame(width: 20, height: 20)
+                            Image(systemName: "trash").font(.system(size: 10)).frame(width: 20, height: 20).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain).hint("Delete this curve")
                     }
                     Button { model.setClipLane(clip, owner: track, address, shown: false) } label: {
-                        Image(systemName: "xmark").font(.system(size: 10)).frame(width: 20, height: 20)
+                        Image(systemName: "xmark").font(.system(size: 10)).frame(width: 20, height: 20).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain).hint("Hide this lane")
                 }

@@ -218,6 +218,7 @@ struct PianoRoll: View {
                 .foregroundStyle(on ? tint : Theme.dim)
                 .background(on ? tint.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.5) : Theme.line, lineWidth: 1))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .hint(help)

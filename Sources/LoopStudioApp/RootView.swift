@@ -113,6 +113,7 @@ struct TransportBar: View {
                         .foregroundStyle(model.midiLearn ? Theme.accent : Theme.text.opacity(0.85))
                         .background(model.midiLearn ? Theme.accent.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
                         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(model.midiLearn ? Theme.accent.opacity(0.5) : Theme.line, lineWidth: 1))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .hint(model.midiLearn ? "MIDI Learn is on: click a control in the app, then move a control on your device (⌘⇧M ends it)."
@@ -123,6 +124,7 @@ struct TransportBar: View {
                         .foregroundStyle(model.linkEnabled ? Theme.play : Theme.text.opacity(0.85))
                         .background(model.linkEnabled ? Theme.play.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
                         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(model.linkEnabled ? Theme.play.opacity(0.5) : Theme.line, lineWidth: 1))
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .hint(model.linkEnabled
@@ -238,6 +240,8 @@ struct TransportBar: View {
                 .foregroundStyle(on ? tint : Theme.text.opacity(0.85))
                 .background(on ? tint.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.5) : Theme.line, lineWidth: 1))
+                // The frame takes the click, not only the symbol: a clear background is not hit-tested.
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

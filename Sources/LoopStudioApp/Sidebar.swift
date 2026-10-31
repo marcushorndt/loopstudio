@@ -43,6 +43,7 @@ struct SidebarView: View {
                     .frame(maxWidth: .infinity).padding(.vertical, 6)
                     .foregroundStyle(model.sidebarTab == tab ? Theme.accent : Theme.dim)
                     .background(model.sidebarTab == tab ? Theme.panelRaised : .clear, in: RoundedRectangle(cornerRadius: Theme.radius))
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }

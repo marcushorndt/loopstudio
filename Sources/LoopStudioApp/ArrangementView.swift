@@ -157,15 +157,6 @@ private struct ArrangementHeader: View {
                             .hint("Solo this track only. ⌘-click adds it to the soloed tracks.")
                     }
                     pill("M", on: track.mute, tint: Theme.accent) { model.apply(.setMute(id: track.id, mute: !track.mute)) }
-                    // The pill folds the lanes away and back; a dot on it says the track holds automation points.
-                    pill(model.isAutomationCollapsed(track) ? "A ▸" : "A", on: !model.shownLanes(track).isEmpty, tint: Theme.track(0)) { model.toggleAutomation(track) }
-                        .overlay(alignment: .topTrailing) {
-                            if model.hasAutomation(track) {
-                                Circle().fill(Theme.automationDot).frame(width: 5, height: 5).offset(x: 2, y: -2)
-                            }
-                        }
-                        .hint(model.laneList(track).isEmpty ? "Show the automation lanes (A shows every track's)"
-                              : model.isAutomationCollapsed(track) ? "Expand the automation lanes" : "Collapse the automation lanes; they are kept")
                     if track.kind == .audio || track.kind == .midi {
                         pill("●", on: model.armedTracks.contains(track.id), tint: .red) { model.toggleArm(track.id) }
                             .hint("Arm this track only: it records and plays the MIDI keyboard. ⌘-click adds it to the armed tracks.")
@@ -175,6 +166,7 @@ private struct ArrangementHeader: View {
             Spacer()
         }
         .padding(6).frame(height: laneHeight, alignment: .top)
+        .overlay(alignment: .bottomTrailing) { automationDisclosure.padding(.trailing, 4).padding(.bottom, 3) }
         .frame(height: model.rowHeight(track), alignment: .top)
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel)
         .overlay(alignment: .bottom) { AutomationLabels(track: track) }
@@ -189,6 +181,28 @@ private struct ArrangementHeader: View {
         .dropDestination(for: String.self) { items, _ in
             return model.dropDevices(items, on: track.id)
         }
+    }
+
+    /// The small expander at the bottom right of the track label: a chevron that points down while the lanes
+    /// are closed and up while they are open. A red dot next to it says the track holds automation points.
+    private var automationDisclosure: some View {
+        let open = !model.shownLanes(track).isEmpty
+        return Button { model.toggleAutomation(track) } label: {
+            HStack(spacing: 3) {
+                if model.hasAutomation(track) {
+                    Circle().fill(Theme.automationDot).frame(width: 5, height: 5)
+                }
+                Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(open ? Theme.text : Theme.dim)
+            }
+            .padding(.horizontal, 4).frame(height: 14)
+            .background(Theme.panelRaised.opacity(open ? 1 : 0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .hint(model.laneList(track).isEmpty ? "Open the automation lanes of this track. The A key opens every track's."
+              : open ? "Fold the automation lanes away; they are kept." : "Open the automation lanes again.")
     }
 
     private func pill(_ label: String, on: Bool, tint: Color, action: @escaping () -> Void) -> some View {

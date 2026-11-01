@@ -71,6 +71,8 @@ struct EffectPlan {
     var auto: [String: AutoLane] = [:]
     /// A hosted Audio Unit effect. `nil` for a built-in one.
     var unit: AudioUnitEffect? = nil
+    /// The node whose output the effect listens to (a sidechain). It renders before this node.
+    var sidechain: Int? = nil
 }
 
 struct MIDIEvent {
@@ -220,19 +222,39 @@ public struct RenderPlan {
             !feeders.contains(source) || feeders.contains(target) || soloed.contains(target)
         }
 
-        // Order: sources before targets (Kahn). Ties keep project order, so the plan is deterministic.
-        var incoming = Dictionary(tracks.map { ($0.id, 0) }, uniquingKeysWith: { a, _ in a })
-        for t in tracks { for target in Routing.feeds(of: t, in: project) where incoming[target] != nil { incoming[target]! += 1 } }
-        var ready = tracks.filter { incoming[$0.id] == 0 }.map(\.id)
-        var order: [TrackID] = []
-        while !ready.isEmpty {
-            let id = ready.removeFirst()
-            order.append(id)
-            guard let t = project.track(id) else { continue }
-            for target in Routing.feeds(of: t, in: project) where incoming[target] != nil {
-                incoming[target]! -= 1
-                if incoming[target] == 0 { ready.append(target) }
+        // A sidechain listens to another track: that track renders first, like a source of a send.
+        var listeners: [TrackID: [TrackID]] = [:]
+        for t in tracks {
+            for d in t.devices {
+                guard let source = d.sidechain, source != t.id, project.track(source) != nil, !d.bypassed else { continue }
+                listeners[source, default: []].append(t.id)
             }
+        }
+        // Order: sources before targets (Kahn). Ties keep project order, so the plan is deterministic.
+        func ordered(sidechains: Bool) -> [TrackID] {
+            func targets(of t: Track) -> [TrackID] { Routing.feeds(of: t, in: project) + (sidechains ? listeners[t.id] ?? [] : []) }
+            var incoming = Dictionary(tracks.map { ($0.id, 0) }, uniquingKeysWith: { a, _ in a })
+            for t in tracks { for target in targets(of: t) where incoming[target] != nil { incoming[target]! += 1 } }
+            var ready = tracks.filter { incoming[$0.id] == 0 }.map(\.id)
+            var order: [TrackID] = []
+            while !ready.isEmpty {
+                let id = ready.removeFirst()
+                order.append(id)
+                guard let t = project.track(id) else { continue }
+                for target in targets(of: t) where incoming[target] != nil {
+                    incoming[target]! -= 1
+                    if incoming[target] == 0 { ready.append(target) }
+                }
+            }
+            return order
+        }
+        var order = ordered(sidechains: true)
+        var sidechainsOrdered = true
+        if order.count != tracks.count, !listeners.isEmpty {
+            // The sidechains close a loop (A listens to B, B sends to A): render without them.
+            order = ordered(sidechains: false)
+            sidechainsOrdered = false
+            warnings.append("a sidechain and a send form a loop; the sidechains listen to their own tracks")
         }
         if order.count != tracks.count { warnings.append("routing has a cycle; some tracks are not rendered") }
 
@@ -386,6 +408,7 @@ public struct RenderPlan {
 
             var (chain, instrument, synth, instrumentDevice) = effects(of: t, units: units, warnings: &warnings)
             chain = chain.map { var e = $0; e.auto = autoParams(e.device, of: t); return e }
+            if sidechainsOrdered { chain = sidechained(chain, of: t, index: index, before: index[t.id] ?? masterIndex) }
             let instrumentAuto = instrumentDevice.map { autoParams($0, of: t) } ?? [:]
             if t.kind != .midi { synth = nil } // an instrument on an audio track stays silent
             var midi: [MIDIEvent] = [], sessionMidi: [MIDIEvent] = []
@@ -425,6 +448,7 @@ public struct RenderPlan {
 
         var masterEffects = effects(of: project.master, units: units, warnings: &warnings).0
         masterEffects = masterEffects.map { var e = $0; e.auto = autoParams(e.device, of: project.master); return e }
+        masterEffects = sidechained(masterEffects, of: project.master, index: index, before: masterIndex)
         let (ml, mr) = balance(project.master.pan)
         nodes.append(NodePlan(isMaster: true, clips: [], gain: project.master.mute ? 0 : dB(project.master.volumeDb),
                               panLeft: ml, panRight: mr, output: nil, sends: [],
@@ -436,7 +460,9 @@ public struct RenderPlan {
             nodes[from].taps.append(to)
         }
         for i in nodes.indices {
-            let chainLatency = nodes[i].effects.filter { !$0.bypassed }.reduce(0) { $0 + ($1.unit?.latencySamples ?? 0) }
+            let chainLatency = nodes[i].effects.filter { !$0.bypassed }.reduce(0) {
+                $0 + ($1.unit?.latencySamples ?? DSPEffect.latency(kind: $1.kind, params: $1.params, sampleRate: rate))
+            }
             nodes[i].latency = chainLatency + (nodes[i].instrument?.latencySamples ?? 0)
         }
         var plan = RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings,
@@ -551,6 +577,17 @@ public struct RenderPlan {
             }
         }
         return (plans, instrument, synth, instrumentDevice)
+    }
+
+    /// Resolves the sidechain of each effect to the node it listens to. Only a node that renders before
+    /// `before` (this node's index) can be listened to; any other sidechain falls back to the own input.
+    private static func sidechained(_ chain: [EffectPlan], of track: Track, index: [TrackID: Int], before: Int) -> [EffectPlan] {
+        chain.map { e in
+            var e = e
+            guard let source = track.devices.first(where: { $0.id == e.device })?.sidechain, let i = index[source], i < before else { return e }
+            e.sidechain = i
+            return e
+        }
     }
 
     /// Note on and off events for a MIDI track: arrangement clips plus the session clips that play.

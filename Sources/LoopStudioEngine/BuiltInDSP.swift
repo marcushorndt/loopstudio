@@ -14,9 +14,24 @@ public class DSPEffect: @unchecked Sendable {
     /// Seconds per quarter note at the current grid step. Set by `clock`.
     private(set) var quarterSeconds = 0.5
 
+    /// Readings for the display, written by the audio thread: a compressor's gain reduction in dB
+    /// (`meters[0]`, the bands of the multiband in 0...2). Four floats, allocated once.
+    public static let meterCount = 4
+    public let meters: UnsafeMutablePointer<Float>
+
     init(spec: EffectSpec, sampleRate: Double) {
         self.spec = spec
         self.sampleRate = sampleRate
+        meters = .allocate(capacity: Self.meterCount)
+        meters.initialize(repeating: 0, count: Self.meterCount)
+    }
+
+    deinit { meters.deallocate() }
+
+    /// The frames an effect delays its sound by (a limiter's look-ahead). The plan lines the tracks up by it.
+    public static func latency(kind: String, params: [String: Double], sampleRate: Double) -> Int {
+        guard kind == "limiter", let spec = BuiltInEffects.spec(kind), let p = spec.param("lookahead") else { return 0 }
+        return Int(p.clamp(params["lookahead"] ?? p.def) * 0.001 * sampleRate)
     }
 
     func value(_ p: [String: Double], _ key: String) -> Float {
@@ -49,6 +64,13 @@ public class DSPEffect: @unchecked Sendable {
     public func reset() {}
     public func process(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {}
 
+    /// With a sidechain: `sidechainL`/`sidechainR` hold another track's sound for this block. An effect
+    /// without a sidechain input ignores them.
+    public func process(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
+                        sidechainL: UnsafePointer<Float>?, sidechainR: UnsafePointer<Float>?, frames: Int) {
+        process(l, r, frames: frames)
+    }
+
     /// A built-in device by id: an effect, or an instrument (a `DSPInstrument`).
     public static func make(_ id: String, sampleRate: Double) -> DSPEffect? {
         if let instrument = DSPInstrument.makeInstrument(id, sampleRate: sampleRate) { return instrument }
@@ -62,6 +84,9 @@ public class DSPEffect: @unchecked Sendable {
         case "reverb": effect = ReverbDSP(spec: spec, sampleRate: sampleRate)
         case "compressor": effect = CompressorDSP(spec: spec, sampleRate: sampleRate)
         case "limiter": effect = LimiterDSP(spec: spec, sampleRate: sampleRate)
+        case "multiband": effect = MultibandDSP(spec: spec, sampleRate: sampleRate)
+        case "tapeEcho": effect = TapeEchoDSP(spec: spec, sampleRate: sampleRate)
+        case _ where spec.view == "eq" && spec.bands > 0: effect = EQDSP(spec: spec, sampleRate: sampleRate)
         default: return nil
         }
         effect.configure([:])
@@ -125,6 +150,24 @@ struct Biquad {
     mutating func bandpass(_ f: Double, q: Double, rate: Double) {
         let w = 2 * .pi * min(f, rate * 0.45) / rate, c = cos(w), a = sin(w) / (2 * q)
         set(b0: a, b1: 0, b2: -a, a0: 1 + a, a1: -2 * c, a2: 1 - a)
+    }
+    mutating func notch(_ f: Double, q: Double, rate: Double) {
+        let w = 2 * .pi * min(f, rate * 0.45) / rate, c = cos(w), a = sin(w) / (2 * q)
+        set(b0: 1, b1: -2 * c, b2: 1, a0: 1 + a, a1: -2 * c, a2: 1 - a)
+    }
+    /// A one-pole-like gentle slope is not enough for a crossover: this is the second-order Butterworth
+    /// section (Q 0.7071) that a Linkwitz-Riley filter cascades twice.
+    mutating func butterworthLow(_ f: Double, rate: Double) { lowpass(f, q: 0.70710678, rate: rate) }
+    mutating func butterworthHigh(_ f: Double, rate: Double) { highpass(f, q: 0.70710678, rate: rate) }
+
+    /// The gain of the filter at `f` in dB, for a curve display.
+    func magnitudeDb(at f: Double, rate: Double) -> Double {
+        let w = 2 * .pi * f / rate
+        let c1 = cos(w), s1 = sin(w), c2 = cos(2 * w), s2 = sin(2 * w)
+        let nr = Double(b0) + Double(b1) * c1 + Double(b2) * c2, ni = -(Double(b1) * s1 + Double(b2) * s2)
+        let dr = 1 + Double(a1) * c1 + Double(a2) * c2, di = -(Double(a1) * s1 + Double(a2) * s2)
+        let num = nr * nr + ni * ni, den = max(dr * dr + di * di, 1e-30)
+        return 10 * log10(max(num / den, 1e-30))
     }
     mutating func peaking(_ f: Double, gainDb: Double, q: Double, rate: Double) {
         let A = pow(10, gainDb / 40), w = 2 * .pi * min(f, rate * 0.45) / rate, c = cos(w), a = sin(w) / (2 * q)
@@ -427,56 +470,3 @@ final class ReverbDSP: DSPEffect, @unchecked Sendable {
     }
 }
 
-// MARK: Dynamics
-
-final class CompressorDSP: DSPEffect, @unchecked Sendable {
-    private var threshold: Float = -18, ratio: Float = 4, makeup: Float = 1
-    private var attack: Float = 0.01, release: Float = 0.001
-    private var env: Float = 0
-
-    override func configure(_ p: [String: Double]) {
-        threshold = value(p, "threshold")
-        ratio = value(p, "ratio")
-        makeup = dbToLinear(value(p, "makeup"))
-        attack = 1 - expf(-1 / (value(p, "attack") * 0.001 * Float(sampleRate)))
-        release = 1 - expf(-1 / (value(p, "release") * 0.001 * Float(sampleRate)))
-    }
-
-    override func reset() { env = 0 }
-
-    override func process(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
-        let slope = 1 - 1 / ratio
-        for i in 0..<frames {
-            let level = max(abs(l[i]), abs(r[i]))
-            env += (level - env) * (level > env ? attack : release)
-            let db = 20 * log10f(max(env, 1e-6))
-            let over = db - threshold
-            let gain = (over > 0 ? dbToLinear(-over * slope) : 1) * makeup
-            l[i] *= gain; r[i] *= gain
-        }
-    }
-}
-
-final class LimiterDSP: DSPEffect, @unchecked Sendable {
-    private var inGain: Float = 1, ceiling: Float = 0.97, release: Float = 0.001
-    private var gain: Float = 1
-
-    override func configure(_ p: [String: Double]) {
-        inGain = dbToLinear(value(p, "gain"))
-        ceiling = dbToLinear(value(p, "ceiling"))
-        release = 1 - expf(-1 / (value(p, "release") * 0.001 * Float(sampleRate)))
-    }
-
-    override func reset() { gain = 1 }
-
-    override func process(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
-        for i in 0..<frames {
-            let a = l[i] * inGain, b = r[i] * inGain
-            let peak = max(abs(a), abs(b))
-            let want = peak > ceiling ? ceiling / peak : 1
-            if want < gain { gain = want } else { gain += (want - gain) * release }
-            // The gain is already at or below `want` here, so the output never passes the ceiling.
-            l[i] = a * min(gain, want); r[i] = b * min(gain, want)
-        }
-    }
-}

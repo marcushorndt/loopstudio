@@ -333,7 +333,7 @@ public enum StandardTools {
         ) { _ in
             func describe(_ spec: EffectSpec) -> JSONValue {
                 .object([
-                    "id": .string(spec.id), "name": .string(spec.name),
+                    "id": .string(spec.id), "name": .string(spec.name), "sidechain": .bool(spec.sidechain),
                     "params": .array(spec.params.map { p in
                         var o: [String: JSONValue] = ["key": .string(p.key), "name": .string(p.name), "min": .number(p.min),
                                                       "max": .number(p.max), "default": .number(p.def)]
@@ -589,6 +589,7 @@ public enum StandardTools {
             ("moveDevice", .moveDevice(track: track.id, device: DeviceID(uuid(10)), to: 0)),
             ("setDeviceParam", .setDeviceParam(track: track.id, device: DeviceID(uuid(10)), key: "mix", value: 0.3)),
             ("setDeviceBypass", .setDeviceBypass(track: track.id, device: DeviceID(uuid(10)), bypassed: true)),
+            ("setDeviceSidechain (a compressor listens to another track; null: its own input)", .setDeviceSidechain(track: track.id, device: DeviceID(uuid(10)), source: TrackID(uuid(2)))),
             ("setAudioClip (gain and fades)", .setAudioClip(clip: ClipID(uuid(4)), gainDb: -3, fadeInMs: 2, fadeOutMs: 10, muted: false)),
             ("setLaunches", .setLaunches(launches: [Launch(track: track.id, slot: 0, tick: 0)])),
             ("batch", .batch(commands: [.setVolume(id: track.id, db: -3), .setPan(id: track.id, pan: 0.5)])),

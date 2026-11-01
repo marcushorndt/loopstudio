@@ -58,8 +58,10 @@ public final class Renderer {
         var needsConfigure = false
         /// Automated Audio Unit parameters, keyed by their address.
         let unitAuto: [(address: AUParameterAddress, lane: AutoLane)]
-        init(effect: DSPEffect?, unit: AudioUnitEffect?, bypassed: Bool, auto: [String: AutoLane], params: [String: Double]) {
-            self.effect = effect; self.unit = unit; self.bypassed = bypassed
+        /// The node this effect listens to (a sidechain), rendered before this one.
+        let sidechain: Int?
+        init(effect: DSPEffect?, unit: AudioUnitEffect?, bypassed: Bool, auto: [String: AutoLane], params: [String: Double], sidechain: Int? = nil) {
+            self.effect = effect; self.unit = unit; self.bypassed = bypassed; self.sidechain = sidechain
             let sorted = auto.map { ($0.key, $0.value) }.sorted { $0.0 < $1.0 }
             self.auto = sorted
             self.base = sorted.map { key, _ in params[key] ?? effect?.spec.params.first { $0.key == key }?.def }
@@ -114,7 +116,7 @@ public final class Renderer {
                 if let unit = e.unit { chain.append(Slot(effect: nil, unit: unit, bypassed: e.bypassed, auto: e.auto, params: [:])); continue }
                 guard let found = builtIn(e.device, kind: e.kind, params: e.params) else { continue }
                 made[e.device] = found.0
-                let slot = Slot(effect: found.0, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params)
+                let slot = Slot(effect: found.0, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params, sidechain: e.sidechain)
                 slot.needsConfigure = found.running
                 chain.append(slot)
             }
@@ -628,7 +630,9 @@ public final class Renderer {
         }
         guard let effect = slot.effect else { return }
         if slot.needsConfigure { effect.configure(slot.live); slot.needsConfigure = false }
-        guard !slot.auto.isEmpty || effect.followsTempo else { effect.process(l, r, frames: frames); return }
+        // A sidechain reads the output of a node that rendered before this one in this block.
+        let scL = slot.sidechain.map { UnsafePointer(left($0)) }, scR = slot.sidechain.map { UnsafePointer(right($0)) }
+        guard !slot.auto.isEmpty || effect.followsTempo else { effect.process(l, r, sidechainL: scL, sidechainR: scR, frames: frames); return }
         eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
             var changed = false
             for (i, (key, lane)) in slot.auto.enumerated() {
@@ -641,7 +645,7 @@ public final class Renderer {
                 let (beat, quarter) = songPosition(grid + idleShift)
                 effect.clock(frame: grid + idleShift, beat: beat, quarterSeconds: quarter)
             }
-            effect.process(l + offset, r + offset, frames: count)
+            effect.process(l + offset, r + offset, sidechainL: scL.map { $0 + offset }, sidechainR: scR.map { $0 + offset }, frames: count)
         }
     }
 

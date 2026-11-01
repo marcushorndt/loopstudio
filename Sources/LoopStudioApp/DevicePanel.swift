@@ -256,6 +256,8 @@ private struct DeviceCard: View {
                 .buttonStyle(.plain).hint(device.bypassed ? "Turn on" : "Bypass")
                 Text(device.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 8)
+                if let spec, spec.sidechain { sidechainMenu }
+                if let spec, spec.isDynamics { GainReductionMeter(device: device, bands: spec.id == "multiband" ? 3 : 1) }
                 Button { model.apply(.removeDevice(track: track.id, device: device.id)) } label: {
                     Image(systemName: "xmark").font(.system(size: 9)).foregroundStyle(Theme.dim)
                         .frame(width: 20, height: 20).contentShape(Rectangle())
@@ -265,6 +267,24 @@ private struct DeviceCard: View {
             if let spec, spec.isInstrument {
                 InstrumentView(track: track, device: device, spec: spec)
                     .opacity(device.bypassed ? 0.4 : 1)
+            } else if let spec, spec.view == "eq" {
+                EQView(track: track, device: device, spec: spec)
+                    .opacity(device.bypassed ? 0.4 : 1)
+            } else if let spec, !spec.groups.isEmpty {
+                // Titled groups in rows, like the instruments: a row's groups side by side, the rows under each other.
+                let rows = Array(Set(spec.groups.map(\.row))).sorted()
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(rows, id: \.self) { row in
+                        HStack(alignment: .top, spacing: 6) {
+                            ForEach(spec.groups.filter { $0.row == row }, id: \.self) { group in
+                                KnobSection(title: group.title) {
+                                    ForEach(group.keys, id: \.self) { ParamKnob(track: track, device: device, spec: spec, key: $0) }
+                                }
+                            }
+                        }
+                    }
+                }
+                .opacity(device.bypassed ? 0.4 : 1)
             } else if let spec {
                 HStack(alignment: .top, spacing: 2) {
                     ForEach(spec.shownParams, id: \.key) { ParamKnob(track: track, device: device, spec: spec, key: $0.key) }
@@ -289,4 +309,58 @@ private struct DeviceCard: View {
     }
 
     private var selected: Bool { model.selectedDevice == device.id }
+
+    /// The source a sidechain effect listens to: its own input, or another track's output.
+    private var sidechainMenu: some View {
+        let sources = model.project.tracks.filter { $0.id != track.id && $0.kind != .master }
+        let current = device.sidechain.flatMap { model.project.track($0) }
+        return Menu {
+            Button("Own Input" + (device.sidechain == nil ? "  ✓" : "")) {
+                model.apply(.setDeviceSidechain(track: track.id, device: device.id, source: nil))
+            }
+            Divider()
+            ForEach(sources) { source in
+                Button(source.name + (device.sidechain == source.id ? "  ✓" : "")) {
+                    model.apply(.setDeviceSidechain(track: track.id, device: device.id, source: source.id))
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.triangle.branch").font(.system(size: 9))
+                Text(current?.name ?? "Own Input").font(.system(size: 10)).lineLimit(1)
+            }
+            .foregroundStyle(current == nil ? Theme.dim : Theme.track(current!.colorIndex))
+            .padding(.horizontal, 5).frame(height: 18)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .hint("Sidechain: the signal the detector listens to. Own input, or another track.")
+    }
+}
+
+/// The gain reduction of a compressor, limiter or multiband, as bars that grow down from the top. 30 Hz.
+private struct GainReductionMeter: View {
+    @Environment(AppModel.self) private var model
+    let device: DeviceSlot
+    let bands: Int
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1.0 / 30)) { _ in
+            let dsp = model.engine.builtInEffect(device.id)
+            HStack(spacing: 2) {
+                ForEach(0..<bands, id: \.self) { i in
+                    let reduction = dsp.map { Double($0.meters[i]) } ?? 0
+                    ZStack(alignment: .top) {
+                        RoundedRectangle(cornerRadius: 1).fill(Theme.panel)
+                        RoundedRectangle(cornerRadius: 1).fill(Theme.accent.opacity(0.85))
+                            .frame(height: CGFloat(min(reduction, 24) / 24) * 18)
+                    }
+                    .frame(width: bands > 1 ? 4 : 6, height: 18)
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 1).stroke(Theme.line, lineWidth: 1))
+            .hint(dsp.map { String(format: "Gain reduction: %.1f dB", $0.meters[bands > 1 ? 3 : 0]) } ?? "Gain reduction")
+        }
+    }
 }

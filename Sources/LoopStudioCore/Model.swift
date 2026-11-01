@@ -458,9 +458,11 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
     public var params: [String: Double]
     /// Automatable parameters of a hosted plugin. `nil` until the plugin has loaded once.
     public var pluginParams: [PluginParam]?
+    /// The track a sidechain effect (a compressor) listens to instead of its own input. `nil`: its own input.
+    public var sidechain: TrackID?
 
     public init(id: DeviceID = DeviceID(), format: String, identifier: String, name: String,
-                bypassed: Bool = false, state: Data? = nil, params: [String: Double] = [:]) {
+                bypassed: Bool = false, state: Data? = nil, params: [String: Double] = [:], sidechain: TrackID? = nil) {
         self.id = id
         self.format = format
         self.identifier = identifier
@@ -468,9 +470,10 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
         self.bypassed = bypassed
         self.state = state
         self.params = params
+        self.sidechain = sidechain
     }
 
-    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params, pluginParams }
+    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params, pluginParams, sidechain }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -482,6 +485,7 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
         state = try c.decodeIfPresent(Data.self, forKey: .state)
         params = try c.decodeIfPresent([String: Double].self, forKey: .params) ?? [:]
         pluginParams = try c.decodeIfPresent([PluginParam].self, forKey: .pluginParams)
+        sidechain = try c.decodeIfPresent(TrackID.self, forKey: .sidechain)
     }
 }
 

@@ -102,6 +102,8 @@ public enum Command: Codable, Sendable {
     /// Sets a built-in parameter. `nil` returns it to the default.
     case setDeviceParam(track: TrackID, device: DeviceID, key: String, value: Double?)
     case setDeviceBypass(track: TrackID, device: DeviceID, bypassed: Bool)
+    /// The track a sidechain effect listens to. `nil`: its own input.
+    case setDeviceSidechain(track: TrackID, device: DeviceID, source: TrackID?)
 
     /// Replaces the whole launch list. The list is sorted by tick and track.
     case setLaunches(launches: [Launch])
@@ -604,6 +606,21 @@ extension Project {
                 let old = t.devices[i].bypassed
                 t.devices[i].bypassed = bypassed
                 return .setDeviceBypass(track: trackID, device: id, bypassed: old)
+            }
+
+        case .setDeviceSidechain(let trackID, let id, let source):
+            if let source {
+                guard source != trackID else { throw CommandError.invalidValue("a sidechain cannot listen to its own track") }
+                guard let s = track(source), s.kind != .master else { throw CommandError.trackNotFound(source) }
+            }
+            return try withTrack(trackID) { t in
+                guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
+                guard t.devices[i].format == "builtin", BuiltInEffects.spec(t.devices[i].identifier)?.sidechain == true else {
+                    throw CommandError.invalidValue("\(t.devices[i].name) has no sidechain input")
+                }
+                let old = t.devices[i].sidechain
+                t.devices[i].sidechain = source
+                return .setDeviceSidechain(track: trackID, device: id, source: old)
             }
 
         case .setLaunches(let list):

@@ -66,6 +66,20 @@ public struct EffectParam: Sendable, Hashable {
     }
 }
 
+/// A titled group of knobs on a device panel, like the sections of an instrument. `row` places it: the
+/// groups of one row sit side by side, the rows under each other.
+public struct EffectGroup: Sendable, Hashable {
+    public var title: String
+    public var keys: [String]
+    public var row: Int
+
+    public init(_ title: String, _ keys: [String], row: Int = 0) {
+        self.title = title
+        self.keys = keys
+        self.row = row
+    }
+}
+
 public struct EffectSpec: Sendable, Hashable {
     public var id: String
     public var name: String
@@ -73,6 +87,16 @@ public struct EffectSpec: Sendable, Hashable {
     /// An instrument makes sound from notes and takes no audio in. It sits on a MIDI track, where the
     /// first one that is not bypassed plays; the effects after it shape its sound.
     public var isInstrument = false
+    /// The knobs in titled groups. Empty: one row of knobs.
+    public var groups: [EffectGroup] = []
+    /// The effect can listen to another track (`DeviceSlot.sidechain`): a compressor ducks to it.
+    public var sidechain = false
+    /// A special panel instead of knobs: "eq" draws the curve of a multi-band EQ.
+    public var view = ""
+    /// Bands of a multi-band EQ. Zero for every other device.
+    public var bands = 0
+    /// A dynamics device reports its gain reduction in `DSPEffect.meters`; the card shows it.
+    public var isDynamics: Bool { id == "compressor" || id == "limiter" || id == "multiband" }
 
     /// The knobs drawn on the device: the switch and the note value of a synced knob live inside that knob.
     public var shownParams: [EffectParam] {
@@ -118,7 +142,7 @@ public enum BuiltInEffects {
             // The LFO moves the cutoff up and down by up to four octaves each way.
             EffectParam("lfoAmount", "LFO", 0, 1, 0),
         ] + EffectParam.synced("lfoRate", "Rate", 0.05, 20, 1, unit: "Hz", division: "1/4")),
-        EffectSpec(id: "eq3", name: "EQ Three", params: [
+        EffectSpec(id: "eq3", name: "Tone EQ", params: [
             EffectParam("low", "Low", -18, 18, 0, unit: "dB"),
             EffectParam("mid", "Mid", -18, 18, 0, unit: "dB"),
             EffectParam("midFreq", "Mid Freq", 200, 8_000, 1_000, unit: "Hz", log: true),
@@ -134,19 +158,116 @@ public enum BuiltInEffects {
             EffectParam("damping", "Damping", 0, 1, 0.5),
             EffectParam("mix", "Dry/Wet", 0, 1, 0.25),
         ]),
-        EffectSpec(id: "compressor", name: "Compressor", params: [
+        tapeEcho,
+        compressor,
+        limiter,
+        multiband,
+    ] + (1...8).map(eq)
+
+    /// Band types of the multi-band EQs, in the order of the "type" choice.
+    public static let eqTypes = ["Low Cut", "Low Shelf", "Bell", "Notch", "High Shelf", "High Cut"]
+
+    /// EQ One to EQ Eight (ids "peq1"..."peq8"): the same EQ with one to eight bands, so a track that needs
+    /// one bell does not pay for eight. ("eq3" is the older fixed three-knob Tone EQ.) Every band has a type, a frequency, a gain and a Q, and can be off. The bands start as bells
+    /// spread over the spectrum, flat: a new EQ changes nothing until a band moves.
+    static func eq(bands n: Int) -> EffectSpec {
+        var params: [EffectParam] = []
+        for i in 1...n {
+            // Log-spaced from 80 Hz to 8 kHz; one band sits at 1 kHz.
+            let f = n == 1 ? 1_000.0 : 80 * pow(100, Double(i - 1) / Double(n - 1))
+            params.append(EffectParam("b\(i).on", "On", 0, 1, 1, choices: ["Off", "On"]))
+            params.append(EffectParam("b\(i).type", "Type", 0, 5, 2, choices: eqTypes))
+            params.append(EffectParam("b\(i).freq", "Freq", 10, 22_000, (f * 10).rounded() / 10, unit: "Hz", log: true))
+            params.append(EffectParam("b\(i).gain", "Gain", -24, 24, 0, unit: "dB"))
+            params.append(EffectParam("b\(i).q", "Q", 0.1, 18, 0.71, log: true))
+        }
+        params.append(EffectParam("gain", "Output", -24, 24, 0, unit: "dB"))
+        let names = ["One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight"]
+        var spec = EffectSpec(id: "peq\(n)", name: "EQ \(names[n - 1])", params: params)
+        spec.view = "eq"
+        spec.bands = n
+        return spec
+    }
+
+    /// A tape echo: a delay with the tape's wow and flutter, its tone (the loop loses highs and lows with
+    /// every pass), its saturation, and a feedback that can run away into self-oscillation (the saturation
+    /// keeps it in check). The time runs free or follows the tempo in note values.
+    static let tapeEcho: EffectSpec = {
+        var spec = EffectSpec(id: "tapeEcho", name: "Tape Echo", params:
+            EffectParam.synced("timeMs", "Time", 10, 2_000, 375, unit: "ms", division: "1/8.", longest: "1/1") + [
+            EffectParam("feedback", "Feedback", 0, 1.2, 0.45),
+            EffectParam("wow", "Wow", 0, 1, 0.25),
+            EffectParam("flutter", "Flutter", 0, 1, 0.15),
+            EffectParam("tone", "Tone", 500, 16_000, 4_500, unit: "Hz", log: true),
+            EffectParam("lowCut", "Low Cut", 20, 800, 120, unit: "Hz", log: true),
+            EffectParam("drive", "Saturation", 0, 1, 0.3),
+            EffectParam("spread", "Spread", 0, 1, 0.2),
+            EffectParam("mix", "Dry/Wet", 0, 1, 0.3),
+        ])
+        spec.groups = [EffectGroup("Tape", ["timeMs", "feedback", "spread"]), EffectGroup("Motor", ["wow", "flutter"]),
+                       EffectGroup("Tone", ["tone", "lowCut", "drive"], row: 1), EffectGroup("Out", ["mix"], row: 1)]
+        return spec
+    }()
+
+    /// A compressor with a soft knee, a parallel mix, and a sidechain: its own input, or another track
+    /// (`DeviceSlot.sidechain`), through a low cut, so a kick on the sidechain ducks a bass without the bass's
+    /// own lows pumping it.
+    static let compressor: EffectSpec = {
+        var spec = EffectSpec(id: "compressor", name: "Compressor", params: [
             EffectParam("threshold", "Threshold", -60, 0, -18, unit: "dB"),
             EffectParam("ratio", "Ratio", 1, 20, 4),
+            EffectParam("knee", "Knee", 0, 24, 6, unit: "dB"),
             EffectParam("attack", "Attack", 0.1, 100, 10, unit: "ms", log: true),
             EffectParam("release", "Release", 10, 1_000, 120, unit: "ms", log: true),
+            EffectParam("scLowCut", "SC Low Cut", 20, 2_000, 20, unit: "Hz", log: true),
             EffectParam("makeup", "Makeup", 0, 24, 0, unit: "dB"),
-        ]),
-        EffectSpec(id: "limiter", name: "Limiter", params: [
+            EffectParam("mix", "Dry/Wet", 0, 1, 1),
+        ])
+        spec.groups = [EffectGroup("Detect", ["threshold", "ratio", "knee"]), EffectGroup("Time", ["attack", "release"]),
+                       EffectGroup("Sidechain", ["scLowCut"], row: 1), EffectGroup("Out", ["makeup", "mix"], row: 1)]
+        spec.sidechain = true
+        return spec
+    }()
+
+    /// A brick-wall limiter: the look-ahead sees a peak before it arrives, so the gain is down when it comes.
+    static let limiter: EffectSpec = {
+        var spec = EffectSpec(id: "limiter", name: "Limiter", params: [
             EffectParam("gain", "Gain", 0, 24, 0, unit: "dB"),
             EffectParam("ceiling", "Ceiling", -12, 0, -0.3, unit: "dB"),
+            EffectParam("lookahead", "Lookahead", 0, 10, 2, unit: "ms"),
             EffectParam("release", "Release", 10, 500, 80, unit: "ms", log: true),
-        ]),
-    ]
+        ])
+        spec.groups = [EffectGroup("Limit", ["gain", "ceiling"]), EffectGroup("Time", ["lookahead", "release"])]
+        return spec
+    }()
+
+    /// A three-band compressor: Linkwitz-Riley crossovers split the sound, each band has its own compressor,
+    /// and the bands add up flat when nothing compresses. The sidechain, own or another track, is split the
+    /// same way, so a band reacts to its own range of the sidechain.
+    static let multiband: EffectSpec = {
+        func band(_ key: String, _ name: String, threshold: Double) -> [EffectParam] {
+            [EffectParam("\(key).threshold", "Threshold", -60, 0, threshold, unit: "dB"),
+             EffectParam("\(key).ratio", "Ratio", 1, 20, 3),
+             EffectParam("\(key).attack", "Attack", 0.1, 100, key == "low" ? 20 : key == "mid" ? 10 : 3, unit: "ms", log: true),
+             EffectParam("\(key).release", "Release", 10, 1_000, key == "low" ? 200 : key == "mid" ? 120 : 60, unit: "ms", log: true),
+             EffectParam("\(key).gain", "Gain", -12, 12, 0, unit: "dB")]
+        }
+        var spec = EffectSpec(id: "multiband", name: "Multiband Compressor", params: [
+            EffectParam("lowX", "Low / Mid", 40, 1_000, 200, unit: "Hz", log: true),
+            EffectParam("highX", "Mid / High", 1_000, 12_000, 2_500, unit: "Hz", log: true),
+        ] + band("low", "Low", threshold: -20) + band("mid", "Mid", threshold: -18) + band("high", "High", threshold: -16) + [
+            EffectParam("scLowCut", "SC Low Cut", 20, 2_000, 20, unit: "Hz", log: true),
+            EffectParam("makeup", "Makeup", 0, 24, 0, unit: "dB"),
+            EffectParam("mix", "Dry/Wet", 0, 1, 1),
+        ])
+        spec.groups = [EffectGroup("Crossover", ["lowX", "highX"]),
+                       EffectGroup("Low", ["low.threshold", "low.ratio", "low.attack", "low.release", "low.gain"]),
+                       EffectGroup("Mid", ["mid.threshold", "mid.ratio", "mid.attack", "mid.release", "mid.gain"], row: 1),
+                       EffectGroup("High", ["high.threshold", "high.ratio", "high.attack", "high.release", "high.gain"], row: 2),
+                       EffectGroup("Sidechain · Out", ["scLowCut", "makeup", "mix"], row: 2)]
+        spec.sidechain = true
+        return spec
+    }()
 
     /// The spec of a built-in device: an effect from `all` or an instrument from `BuiltInInstruments.all`.
     public static func spec(_ id: String) -> EffectSpec? {

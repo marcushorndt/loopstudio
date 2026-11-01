@@ -457,6 +457,11 @@ public final class LiveEngine: @unchecked Sendable {
         locked { renderer?.instance(device) as? DSPInstrument }
     }
 
+    /// The built-in effect that runs for a device, for its meters. `nil` while no plan holds it.
+    public func builtInEffect(_ device: DeviceID) -> DSPEffect? {
+        locked { renderer?.instance(device) }
+    }
+
     /// The keys a track holds now (see `Renderer.heldMask`). For the key lights.
     public func heldNotes(track: TrackID) -> (low: UInt64, high: UInt64) {
         locked { renderer?.heldMask(track: track) ?? (0, 0) }

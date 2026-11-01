@@ -351,22 +351,12 @@ struct PianoRoll: View {
         .allowsHitTesting(false)
     }
 
-    /// The preview switch at the head of the toolbar, with its name, so it is found at a glance.
+    /// The preview switch at the head of the toolbar.
     private var previewToggle: some View {
-        let on = model.previewNotes
-        return Button { model.previewNotes.toggle() } label: {
-            HStack(spacing: 4) {
-                Image(systemName: on ? "speaker.wave.2.fill" : "speaker.slash").font(.system(size: 10, weight: .medium))
-                Text("Preview").font(.system(size: 10, weight: .medium))
-            }
-            .padding(.horizontal, 7).frame(height: 20)
-            .foregroundStyle(on ? tint : Theme.dim)
-            .background(on ? tint.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
-            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.5) : Theme.line, lineWidth: 1))
-            .contentShape(Rectangle())
+        toolButton(model.previewNotes ? "speaker.wave.2.fill" : "speaker.slash", on: model.previewNotes,
+                   help: "Preview: play a note when it is tapped, created, moved with the arrow keys, or dragged to another key; a tap on a key plays it too") {
+            model.previewNotes.toggle()
         }
-        .buttonStyle(.plain)
-        .hint("Preview: play a note when it is tapped, created, moved with the arrow keys, or dragged to another key; a tap on a key plays it too")
     }
 
     private func toolButton(_ symbol: String, on: Bool, help: String, action: @escaping () -> Void) -> some View {

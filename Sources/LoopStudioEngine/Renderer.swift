@@ -29,8 +29,8 @@ public final class Renderer {
     private let held: UnsafeMutablePointer<UInt8>
     /// The same for the session notes and the live notes that went to a hardware destination. A hosted
     /// instrument releases its own notes; hardware gets an explicit note-off for each one on stop.
-    private let hwSession: UnsafeMutablePointer<UInt8>
-    private let hwLive: UnsafeMutablePointer<UInt8>
+    private let sessionHeld: UnsafeMutablePointer<UInt8>
+    private let liveHeld: UnsafeMutablePointer<UInt8>
     /// The session frame at which notes released after this block (a loop wrap) sound on hardware.
     private var releaseFrame = MIDIOutQueue.now
     /// Tracks whose sound after the fader is recorded (resampling), each with the ring it goes to.
@@ -177,10 +177,10 @@ public final class Renderer {
         peaks.initialize(repeating: 0, count: 2 * max(1, nodeCount))
         held = .allocate(capacity: max(1, nodeCount) * 2048)
         held.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
-        hwSession = .allocate(capacity: max(1, nodeCount) * 2048)
-        hwSession.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
-        hwLive = .allocate(capacity: max(1, nodeCount) * 2048)
-        hwLive.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
+        sessionHeld = .allocate(capacity: max(1, nodeCount) * 2048)
+        sessionHeld.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
+        liveHeld = .allocate(capacity: max(1, nodeCount) * 2048)
+        liveHeld.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
         portCount = plan.outputPorts.count
         portBuffers = .allocate(capacity: max(1, portCount) * 2 * maxBlock)
         portBuffers.initialize(repeating: 0, count: max(1, portCount) * 2 * maxBlock)
@@ -192,8 +192,8 @@ public final class Renderer {
         buffers.deallocate()
         peaks.deallocate()
         held.deallocate()
-        hwSession.deallocate()
-        hwLive.deallocate()
+        sessionHeld.deallocate()
+        liveHeld.deallocate()
         portBuffers.deallocate()
         scratchIn.deallocate(); scratchOut.deallocate(); inPointers.deallocate(); outPointers.deallocate()
     }
@@ -228,11 +228,11 @@ public final class Renderer {
             if let target = nodes[i].midiOut, let out = midiOut {
                 if host != 0 { out.push(target, host: host, status, data1, data2) }
                 else { out.push(target, frame: MIDIOutQueue.now, status, data1, data2) }
-                let kind = status & 0xF0
-                if kind == 0x90 || kind == 0x80 {
-                    let k = Int(status & 0x0F) << 7 | Int(data1 & 127), live = hwLive + i * 2048
-                    if kind == 0x90 && data2 > 0 { live[k] &+= 1 } else if live[k] > 0 { live[k] -= 1 }
-                }
+            }
+            let kind = status & 0xF0
+            if kind == 0x90 || kind == 0x80 {
+                let k = Int(status & 0x0F) << 7 | Int(data1 & 127), live = liveHeld + i * 2048
+                if kind == 0x90 && data2 > 0 { live[k] &+= 1 } else if live[k] > 0 { live[k] -= 1 }
             }
             return
         }
@@ -244,13 +244,13 @@ public final class Renderer {
             noteSink(i)?.silenceNotes()
             if let target = nodes[i].midiOut, let out = midiOut {
                 releaseAll(held + i * 2048, target, out, frame: MIDIOutQueue.now)
-                releaseAll(hwSession + i * 2048, target, out, frame: MIDIOutQueue.now)
-                releaseAll(hwLive + i * 2048, target, out, frame: MIDIOutQueue.now)
+                releaseAll(sessionHeld + i * 2048, target, out, frame: MIDIOutQueue.now)
+                releaseAll(liveHeld + i * 2048, target, out, frame: MIDIOutQueue.now)
             }
         }
         held.update(repeating: 0, count: max(1, nodeCount) * 2048)
-        hwSession.update(repeating: 0, count: max(1, nodeCount) * 2048)
-        hwLive.update(repeating: 0, count: max(1, nodeCount) * 2048)
+        sessionHeld.update(repeating: 0, count: max(1, nodeCount) * 2048)
+        liveHeld.update(repeating: 0, count: max(1, nodeCount) * 2048)
     }
 
     /// Note-offs on hardware for every count in `base`, then zero.
@@ -260,6 +260,21 @@ public final class Renderer {
             out.push(target, frame: frame, 0x80 | UInt8(k >> 7), UInt8(k & 127), 0)
             base[k] = 0
         }
+    }
+
+    /// The keys a track holds now, from its clips and from live playing, as two 64-bit masks (pitches 0...63
+    /// and 64...127), all channels together. For the key lights of the piano roll and the pads.
+    public func heldMask(track: TrackID) -> (low: UInt64, high: UInt64) {
+        var low: UInt64 = 0, high: UInt64 = 0
+        let order = plan.trackOrder
+        for i in 0..<min(order.count, nodeCount) where order[i] == track {
+            let a = held + i * 2048, b = sessionHeld + i * 2048, c = liveHeld + i * 2048
+            for k in 0..<2048 where a[k] > 0 || b[k] > 0 || c[k] > 0 {
+                let pitch = k & 127
+                if pitch < 64 { low |= 1 << UInt64(pitch) } else { high |= 1 << UInt64(pitch - 64) }
+            }
+        }
+        return (low, high)
     }
 
     /// Releases only the arrangement notes that are still on. Called when the loop wraps,
@@ -295,17 +310,20 @@ public final class Renderer {
                 off(k, unitToo: !(keep && unitKept), hwToo: !(keep && hwKept))
                 base[k] = 0
             }
-            let session = old.hwSession + i * 2048
+            // Session notes: the same rule. A note that was moved or deleted while it sounded ends here.
+            let session = old.sessionHeld + i * 2048
             for k in 0..<2048 where session[k] > 0 {
-                let keep = hwKept && Self.hasNoteOff(nodes[j].sessionMidi, key: k, from: sessionFrame)
-                if keep { hwSession[j * 2048 + k] &+= session[k] }
-                off(k, unitToo: false, hwToo: !keep)
+                let ahead = (unitKept || hwKept) && Self.hasNoteOff(nodes[j].sessionMidi, key: k, from: sessionFrame)
+                let keepUnit = unitKept && ahead, keepHw = hwKept && ahead
+                if keepUnit || keepHw { sessionHeld[j * 2048 + k] &+= session[k] }
+                off(k, unitToo: !keepUnit, hwToo: !keepHw)
                 session[k] = 0
             }
-            let live = old.hwLive + i * 2048
+            // Live notes: the player releases them, as long as the instrument or the destination stays.
+            let live = old.liveHeld + i * 2048
             for k in 0..<2048 where live[k] > 0 {
-                if hwKept { hwLive[j * 2048 + k] &+= live[k] }
-                off(k, unitToo: false, hwToo: !hwKept)
+                if unitKept || hwKept { liveHeld[j * 2048 + k] &+= live[k] }
+                off(k, unitToo: !unitKept, hwToo: !hwKept)
                 live[k] = 0
             }
         }
@@ -481,7 +499,7 @@ public final class Renderer {
                 }
                 if arrangement < frames { releaseNotes(of: i, frame: startFrame + sessionOffset + Int64(arrangement)) }
                 send(sink, out, target, node.sessionMidi, startFrame: startFrame + sessionOffset, sessionShift: 0, frames: frames,
-                     held: out != nil ? hwSession + i * 2048 : nil)
+                     held: sessionHeld + i * 2048)
             }
             if let instrument = node.instrument {
                 if let slot = instrumentSlots[i] { scheduleAutomation(slot, startFrame: startFrame, frames: frames) }

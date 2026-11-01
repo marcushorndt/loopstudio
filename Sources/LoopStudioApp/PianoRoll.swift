@@ -113,7 +113,8 @@ struct PianoRoll: View {
                     }
                     .offset(y: scrollY).zIndex(1)
                     HStack(alignment: .top, spacing: 0) {
-                        Keys(rowHeight: rowHeight, names: model.drumNames(ofTrack: model.project.findClip(clip.id)?.0), highlight: heldPitch, tint: tint) { pitch in
+                        Keys(rowHeight: rowHeight, names: model.drumNames(ofTrack: model.project.findClip(clip.id)?.0), highlight: heldPitch,
+                             lit: litKeys, tint: tint) { pitch in
                             // A tap on a key marks every note on it (Shift or Command adds) and plays it.
                             let extend = NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command)
                             let onKey = Set(clip.notes.filter { $0.pitch == pitch })
@@ -161,6 +162,7 @@ struct PianoRoll: View {
                                             y: CGFloat(highPitch - Int(note.pitch)) * rowHeight)
                                     .allowsHitTesting(false)
                             }
+                            litNotes
                             ClipPlayhead(clip: clip.id, period: clip.length) { CGFloat($0.quarters) * pxPerBeat }
                         }
                         .frame(width: width, height: height)
@@ -314,6 +316,39 @@ struct PianoRoll: View {
         }
         model.setNotes(clip.id, notes)
         if !all { model.selectedNotes = moved }
+    }
+
+    /// The track that plays this clip, for its key lights.
+    private var trackID: TrackID? { model.project.findClip(clip.id)?.0 }
+
+    /// The keys the track holds now: from this clip, another clip of the track, or live playing.
+    private var litKeys: (low: UInt64, high: UInt64) {
+        guard let trackID else { return (0, 0) }
+        return model.engine.heldNotes(track: trackID)
+    }
+
+    private static func isLit(_ mask: (low: UInt64, high: UInt64), _ pitch: Int) -> Bool {
+        pitch < 64 ? mask.low & (1 << UInt64(pitch)) != 0 : mask.high & (1 << UInt64(pitch - 64)) != 0
+    }
+
+    /// The notes that sound now light up: a note on a lit key with the clip's playhead inside it.
+    private var litNotes: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !model.transportPlaying)) { _ in
+            Canvas { ctx, _ in
+                guard let offset = model.clipPlayOffset(clip.id) else { return }
+                let at = offset.rawValue % max(1, clip.length.rawValue)
+                let mask = litKeys
+                for note in clip.notes where Self.isLit(mask, Int(note.pitch)) {
+                    let start = note.tick.rawValue, end = start + note.length.rawValue
+                    guard at >= start, at < end else { continue }
+                    let x = CGFloat(Double(start) / Double(Tick.perQuarter)) * pxPerBeat
+                    let w = max(4, CGFloat(Double(note.length.rawValue) / Double(Tick.perQuarter)) * pxPerBeat)
+                    let y = CGFloat(highPitch - Int(note.pitch)) * rowHeight
+                    ctx.fill(Path(roundedRect: CGRect(x: x, y: y, width: w, height: rowHeight - 1), cornerRadius: 2), with: .color(.white.opacity(0.55)))
+                }
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     /// The preview switch at the head of the toolbar, with its name, so it is found at a glance.
@@ -478,15 +513,21 @@ private struct Keys: View {
     var names: [Int: String] = [:]
     /// The key of a dragged note lights up in the tint.
     var highlight: Int? = nil
+    /// The keys the track plays now (two 64-bit masks) light up too.
+    var lit: (low: UInt64, high: UInt64) = (0, 0)
     var tint: Color = .accentColor
     let play: (UInt8) -> Void
+
+    private func isLit(_ pitch: Int) -> Bool {
+        pitch < 64 ? lit.low & (1 << UInt64(pitch)) != 0 : lit.high & (1 << UInt64(pitch - 64)) != 0
+    }
 
     var body: some View {
         Canvas { ctx, size in
             for pitch in lowPitch...highPitch {
                 let y = CGFloat(highPitch - pitch) * rowHeight
                 let black = [1, 3, 6, 8, 10].contains(pitch % 12)
-                let color = pitch == highlight ? tint : (black ? Color(white: 0.12) : Color(white: 0.82))
+                let color = pitch == highlight ? tint : isLit(pitch) ? tint.opacity(black ? 0.85 : 0.6) : (black ? Color(white: 0.12) : Color(white: 0.82))
                 ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: rowHeight)), with: .color(color))
                 ctx.fill(Path(CGRect(x: 0, y: y + rowHeight - 0.5, width: size.width, height: 0.5)), with: .color(.black.opacity(0.4)))
                 if let name = names[pitch], rowHeight >= 9 {

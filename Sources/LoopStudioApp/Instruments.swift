@@ -89,33 +89,29 @@ struct AcidBassView: View {
 
     private func knob(_ key: String) -> some View { ParamKnob(track: track, device: device, spec: spec, key: key, tint: acidTint) }
 
-    /// Two columns of two rows: the scope over the output on the left; the oscillator beside the accent and
-    /// slide, with the wide filter group under them, on the right.
+    /// The scope, the oscillator and accent/slide in the top row, the wide filter group under them, and the
+    /// output at the right, as on every instrument.
     var body: some View {
         HStack(alignment: .top, spacing: groupGap) {
             VStack(alignment: .leading, spacing: groupGap) {
-                AcidScope(device: device)
-                    .frame(width: 150, height: 80)
-                    .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line.opacity(0.7), lineWidth: 1))
-                    .hint("The filter as it sounds: the curve follows the envelope and the accent. Orange: the cutoff knob.")
-                KnobSection(title: "Out") { knob("drive"); knob("volume") }
-                    .frame(width: 150, alignment: .leading)
-            }
-            VStack(alignment: .leading, spacing: groupGap) {
                 HStack(alignment: .top, spacing: groupGap) {
+                    AcidScope(device: device)
+                        .frame(width: 150, height: 80)
+                        .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line.opacity(0.7), lineWidth: 1))
+                        .hint("The filter as it sounds: the curve follows the envelope and the accent. Orange: the cutoff knob.")
                     KnobSection(title: "Oscillator") { knob("wave"); knob("tune"); knob("sub") }
                     KnobSection(title: "Accent · Slide") { knob("accent"); knob("slide") }
                         .hint("Accent: a note at velocity \(BuiltInInstruments.accentVelocity) or more is louder, with a filter kick. Slide: a note that overlaps the one before glides to it.")
                 }
                 KnobSection(title: "Filter") { knob("cutoff"); knob("resonance"); knob("envMod"); knob("keyTrack"); knob("decay") }
             }
+            KnobSection(title: "Out") { knob("drive"); knob("volume") }
         }
     }
 }
 
-/// The filter response of the Acid Bass, drawn live: the knob curve dimmed, the sounding curve on top.
-private struct AcidScope: View {
+struct AcidScope: View {
     @Environment(AppModel.self) private var model
     let device: DeviceSlot
 
@@ -186,11 +182,11 @@ struct Drum808View: View {
 
     private func knob(_ key: String) -> some View { ParamKnob(track: track, device: device, spec: spec, key: key, tint: drumTint) }
 
-    /// The pads on the left. On the right two rows: the pad's own knobs (and a second group when the pad
-    /// has more, like the clap's tail and noise), then the pad's random knobs beside the kit knobs.
+    /// The pads on the left. Then two rows: the pad's own knobs (and a second group when the pad has more,
+    /// like the clap's tail and noise), the pad's random knobs under them. The kit output sits at the right.
     var body: some View {
         HStack(alignment: .top, spacing: groupGap) {
-            DrumPadGrid(device: device, selected: $selected) { note in model.auditionNote(note, on: track.id) }
+            DrumPadGrid(track: track, device: device, selected: $selected) { note in model.auditionNote(note, on: track.id) }
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: groupGap) {
                 HStack(alignment: .top, spacing: groupGap) {
@@ -203,36 +199,54 @@ struct Drum808View: View {
                             .id(pad.key + "-more")
                     }
                 }
-                HStack(alignment: .top, spacing: groupGap) {
-                    if !pad.random.isEmpty {
-                        KnobSection(title: "Random") { ForEach(pad.random, id: \.self) { knob($0) } }
-                            .id(pad.key + "-random")
-                            .hint("Chance per clap: its timing and level, its shape, its tune, its filter, its place left or right")
-                    }
-                    KnobSection(title: "Kit") { ForEach(BuiltInInstruments.drumKitParams, id: \.self) { knob($0) } }
+                if !pad.random.isEmpty {
+                    KnobSection(title: "Random") { ForEach(pad.random, id: \.self) { knob($0) } }
+                        .id(pad.key + "-random")
+                        .hint("Chance per clap: its timing and level, its shape, its tune, its filter, its place left or right")
                 }
             }
+            KnobSection(title: "Kit · Out") { ForEach(BuiltInInstruments.drumKitParams, id: \.self) { knob($0) } }
         }
     }
 }
 
-/// The twelve pads, four per row. A pad lights when it plays. Click one to hear it and to see its knobs.
+/// The afterglow of the pad lights: a hit lights the pad in full and fades over a quarter second.
+private final class PadFlashes {
+    private var last: [Date?] = Array(repeating: nil, count: 16)
+
+    func level(pad: Int, lit: Bool, voice: Double, at now: Date) -> Double {
+        if lit { last[pad] = now }
+        let glow = last[pad].map { max(0, 1 - now.timeIntervalSince($0) / 0.25) } ?? 0
+        return max(glow, min(1, voice))
+    }
+
+    static func isSet(_ mask: (low: UInt64, high: UInt64), _ pitch: Int) -> Bool {
+        pitch < 64 ? mask.low & (1 << UInt64(pitch)) != 0 : mask.high & (1 << UInt64(pitch - 64)) != 0
+    }
+}
+
 private struct DrumPadGrid: View {
     @Environment(AppModel.self) private var model
+    let track: Track
     let device: DeviceSlot
     @Binding var selected: Int
     let play: (UInt8) -> Void
+    /// When each pad last got a note, from the clips or live: the light holds for a moment, so a short hit shows.
+    @State private var flashes = PadFlashes()
 
     var body: some View {
         let synth = model.engine.builtInInstrument(device.id)
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: synth == nil)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: synth == nil)) { context in
+            let held = model.engine.heldNotes(track: track.id)
+            let now = context.date
             Grid(horizontalSpacing: 3, verticalSpacing: 3) {
                 ForEach(0..<3, id: \.self) { row in
                     GridRow {
                         ForEach(0..<4, id: \.self) { column in
                             let i = row * 4 + column
                             let pad = BuiltInInstruments.drumPads[i]
-                            let level = Double(synth?.telemetryValue(i) ?? 0)
+                            let lit = pad.notes.contains { PadFlashes.isSet(held, Int($0)) }
+                            let level = flashes.level(pad: i, lit: lit, voice: Double(synth?.telemetryValue(i) ?? 0), at: now)
                             padButton(pad, index: i, level: level)
                         }
                     }

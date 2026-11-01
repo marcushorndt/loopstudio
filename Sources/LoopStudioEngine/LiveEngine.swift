@@ -457,6 +457,11 @@ public final class LiveEngine: @unchecked Sendable {
         locked { renderer?.instance(device) as? DSPInstrument }
     }
 
+    /// The keys a track holds now (see `Renderer.heldMask`). For the key lights.
+    public func heldNotes(track: TrackID) -> (low: UInt64, high: UInt64) {
+        locked { renderer?.heldMask(track: track) ?? (0, 0) }
+    }
+
     /// The peak of a node since the last call, left and right. For meters.
     public func takePeaks(node: Int) -> (left: Float, right: Float) {
         locked {

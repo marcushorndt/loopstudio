@@ -150,13 +150,29 @@ public struct MIDINote: Hashable, Codable, Sendable {
     public var pitch: UInt8
     public var velocity: UInt8
     public var channel: UInt8
+    /// A muted note stays in the clip but does not play. Like a deactivated note in Live (the 0 key).
+    public var muted: Bool
 
-    public init(tick: Tick, length: Tick, pitch: UInt8, velocity: UInt8 = 100, channel: UInt8 = 0) {
+    public init(tick: Tick, length: Tick, pitch: UInt8, velocity: UInt8 = 100, channel: UInt8 = 0, muted: Bool = false) {
         self.tick = tick
         self.length = length
         self.pitch = min(pitch, 127)
         self.velocity = min(max(velocity, 1), 127)
         self.channel = min(channel, 15)
+        self.muted = muted
+    }
+
+    private enum CodingKeys: String, CodingKey { case tick, length, pitch, velocity, channel, muted }
+
+    /// Projects from before notes could be muted have no `muted` key.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tick = try c.decode(Tick.self, forKey: .tick)
+        length = try c.decode(Tick.self, forKey: .length)
+        pitch = try c.decode(UInt8.self, forKey: .pitch)
+        velocity = try c.decode(UInt8.self, forKey: .velocity)
+        channel = try c.decode(UInt8.self, forKey: .channel)
+        muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
     }
 }
 
@@ -173,6 +189,8 @@ public struct MIDIClip: Hashable, Codable, Sendable, Identifiable {
     /// Length of one cycle of the clip automation. `nil`: linked to the clip length (it loops with the clip).
     /// Set, it runs on its own: a 16-bar curve over a 1-bar loop.
     public var automationLength: Tick?
+    /// A timing and accent template the clip plays with. The notes stay; `playedNotes` has them moved.
+    public var groove: GrooveSetting?
 
     public init(id: ClipID = ClipID(), start: Tick = 0, length: Tick, loop: Bool = false, notes: [MIDINote] = []) {
         self.id = id

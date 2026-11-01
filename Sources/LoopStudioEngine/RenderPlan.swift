@@ -563,7 +563,8 @@ public struct RenderPlan {
             var pass: Int64 = 0
             repeat {
                 let base = origin.rawValue + length * pass
-                for n in c.notes where n.tick.rawValue < length {
+                // The groove of the clip moves the notes here; the clip keeps them straight.
+                for n in c.playedNotes where n.tick.rawValue < length {
                     let on = base + n.tick.rawValue
                     if on >= limit.rawValue { continue }
                     let off = min(base + min(n.tick.rawValue + n.length.rawValue, length), limit.rawValue)

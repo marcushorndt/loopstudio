@@ -95,6 +95,7 @@ extension AppModel {
         case .noteLonger: nudgeNotes(length: noteStep)
         case .noteShorter: nudgeNotes(length: -noteStep)
         case .snapNotes: snapNotes.toggle(); status = snapNotes ? "Notes snap to the grid" : "Snap off: notes land on the exact tick"
+        case .selectAll: selectAll()
         case .launchSelected: launchSelection()
         case .sessionView: viewMode = .session
         case .arrangementView: viewMode = .arrangement
@@ -425,7 +426,41 @@ extension AppModel {
     }
 
     /// Key 0: turns the selected audio clips off or on together. The first clip decides the direction.
+    /// Marks every note of the open MIDI clip; without one, every clip of the arrangement (or the session slots
+    /// of the selected track).
+    func selectAll() {
+        if let id = selectedClip, case .midi(let m)? = project.findClip(id)?.1, !m.notes.isEmpty {
+            selectedNotes = Set(m.notes)
+            status = "\(m.notes.count) notes marked"
+            return
+        }
+        if viewMode == .arrangement {
+            selectedClips = Set(orderedTracks.flatMap { $0.clips.map(\.id) })
+            status = "\(selectedClips.count) clips marked"
+        } else if let t = selectedTrack, let track = project.track(t) {
+            selectedClips = Set(track.slots.compactMap { $0?.clip.id })
+            status = "\(selectedClips.count) slots of \(track.name) marked"
+        }
+    }
+
+    /// Marked notes: mutes them, or unmutes them when the first one is muted. A muted note stays but does not play.
+    func toggleMarkedNotesMute() {
+        guard let m = markedMIDIClip else { return }
+        let marked = m.notes.filter { selectedNotes.contains($0) }
+        guard let first = marked.first else { return }
+        let mute = !first.muted
+        var changed: Set<MIDINote> = []
+        let notes = m.notes.map { n -> MIDINote in
+            guard selectedNotes.contains(n) else { return n }
+            var x = n; x.muted = mute; changed.insert(x); return x
+        }
+        setNotes(m.id, notes)
+        selectedNotes = changed
+        status = mute ? "\(changed.count) notes deactivated (0 brings them back)" : "\(changed.count) notes active"
+    }
+
     func deactivateSelected() {
+        if markedMIDIClip != nil { toggleMarkedNotesMute(); return }
         var ids = selectedClips
         if let c = selectedClip { ids.insert(c) }
         let clips = ids.compactMap { project.findClip($0)?.1 }.compactMap { clip -> AudioClip? in

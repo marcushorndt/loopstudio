@@ -326,7 +326,8 @@ public enum StandardTools {
             "Division" note value follows the song tempo when the switch is 1; the division is an index into "divisions". \
             An instrument goes first on a MIDI track and plays the track's notes. "acid" is a 303-style mono bass: a note \
             at velocity 100 or more is accented, overlapping notes slide. "drum808" is an 808-style kit; "pads" lists each \
-            pad with the MIDI notes that play it and the keys of its knobs.
+            pad with the MIDI notes that play it and the keys of its knobs. "grooves" lists the timing and accent \
+            templates a MIDI clip can play with (setClipGroove; commitGroove burns one into the notes).
             """,
             inputSchema: Schema.object(), annotations: .read
         ) { _ in
@@ -350,6 +351,10 @@ public enum StandardTools {
             return .object(["effects": .array(BuiltInEffects.all.map(describe)),
                             "instruments": .array(BuiltInInstruments.all.map(describe)),
                             "pads": .object(["drum808": .array(pads)]),
+                            "grooves": .array(Groove.all.map { g in
+                                .object(["id": .string(g.id), "name": .string(g.name), "group": .string(g.group),
+                                         "step": .number(Double(g.step)), "steps": .number(Double(g.timing.count))])
+                            }),
                             "divisions": .array(NoteDivision.all.map { .string($0.name) })])
         })
 
@@ -573,7 +578,10 @@ public enum StandardTools {
                                 points: [AutomationPoint(tick: 0, value: -1, bend: 0.5), AutomationPoint(tick: 1920, value: 1)])),
             ("setClipAutomationLength (unlink: a 16-bar curve over a 1-bar loop; null links it again)",
              .setClipAutomationLength(clip: ClipID(uuid(4)), length: 61_440)),
-            ("setMIDINotes", .setMIDINotes(clip: ClipID(uuid(9)), notes: [MIDINote(tick: 0, length: 480, pitch: 60, velocity: 100)])),
+            ("setMIDINotes (muted: the note stays but does not play)", .setMIDINotes(clip: ClipID(uuid(9)), notes: [MIDINote(tick: 0, length: 480, pitch: 60, velocity: 100)])),
+            ("setClipGroove (a template from effect_catalog \"grooves\"; timing and velocity 0...1; null plays straight)",
+             .setClipGroove(clip: ClipID(uuid(9)), groove: GrooveSetting(groove: "swing16-58", timing: 1, velocity: 0.5))),
+            ("commitGroove (burns the groove into the notes)", .commitGroove(clip: ClipID(uuid(9)))),
             ("insertDevice (built-in effect)", .insertDevice(track: track.id, device: BuiltInEffects.makeSlot("reverb")!, index: nil)),
             ("removeDevice", .removeDevice(track: track.id, device: DeviceID(uuid(10)))),
             ("moveDevice", .moveDevice(track: track.id, device: DeviceID(uuid(10)), to: 0)),

@@ -47,6 +47,8 @@ struct PianoRoll: View {
     @State private var band: CGRect?
     /// The marking before a Shift or Command band drag began; the band adds to it.
     @State private var bandBase: Set<MIDINote> = []
+    /// The pitch a dragged note is over: its row and key light up.
+    @State private var heldPitch: Int?
 
     /// The grid step at this zoom. Snap off still shows it, but notes land on single ticks.
     private var division: Int64 { adaptiveGrid(pxPerBeat: pxPerBeat, bar: model.barTicks) }
@@ -94,7 +96,7 @@ struct PianoRoll: View {
                     model.drawMode.toggle()
                 }
                 toolButton(model.previewNotes ? "speaker.wave.2.fill" : "speaker.slash", on: model.previewNotes,
-                           help: "Preview: play a note when it is created or moved") {
+                           help: "Preview: play a note when it is tapped, created, or dragged to another key; a tap on a key plays it too") {
                     model.previewNotes.toggle()
                 }
                 Text("X").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
@@ -114,7 +116,13 @@ struct PianoRoll: View {
                     }
                     .offset(y: scrollY).zIndex(1)
                     HStack(alignment: .top, spacing: 0) {
-                        Keys(rowHeight: rowHeight, names: model.drumNames(ofTrack: model.project.findClip(clip.id)?.0)) { if model.previewNotes { model.auditionNote($0) } }
+                        Keys(rowHeight: rowHeight, names: model.drumNames(ofTrack: model.project.findClip(clip.id)?.0), highlight: heldPitch, tint: tint) { pitch in
+                            // A tap on a key marks every note on it (Shift or Command adds) and plays it.
+                            let extend = NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command)
+                            let onKey = Set(clip.notes.filter { $0.pitch == pitch })
+                            model.selectedNotes = extend ? model.selectedNotes.union(onKey) : onKey
+                            if model.previewNotes { model.auditionNote(pitch) }
+                        }
                             .frame(width: keysWidth, height: height)
                         ZStack(alignment: .topLeading) {
                             Canvas { ctx, size in drawGrid(&ctx, size) }
@@ -125,7 +133,22 @@ struct PianoRoll: View {
                                 .onTapGesture { model.selectedNotes = [] }
                                 .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { if !model.drawMode { add(at: $0.location) } })
                             ForEach(Array(clip.notes.enumerated()), id: \.offset) { index, note in
-                                NoteView(clip: clip, index: index, note: note, tint: tint, pxPerBeat: pxPerBeat, rowHeight: rowHeight, grid: grid) { lastLength = $0 }
+                                NoteView(clip: clip, index: index, note: note, tint: tint, pxPerBeat: pxPerBeat, rowHeight: rowHeight, grid: grid,
+                                         rememberLength: { lastLength = $0 }, held: { heldPitch = $0 })
+                            }
+                            if clip.groove != nil {
+                                // Where the groove plays each note: a faint outline at the moved place.
+                                Canvas { ctx, _ in
+                                    for n in clip.playedNotes {
+                                        let x = CGFloat(Double(n.tick.rawValue) / Double(Tick.perQuarter)) * pxPerBeat
+                                        let w = max(4, CGFloat(Double(n.length.rawValue) / Double(Tick.perQuarter)) * pxPerBeat)
+                                        let y = CGFloat(highPitch - Int(n.pitch)) * rowHeight
+                                        ctx.stroke(Path(roundedRect: CGRect(x: x + 0.5, y: y + 0.5, width: w - 1, height: rowHeight - 2), cornerRadius: 2),
+                                                   with: .color(.white.opacity(0.35 + 0.4 * Double(n.velocity) / 127)), style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                                    }
+                                }
+                                .frame(width: width, height: height)
+                                .allowsHitTesting(false)
                             }
                             if let band {
                                 Rectangle().fill(Color.white.opacity(0.08))
@@ -255,8 +278,9 @@ struct PianoRoll: View {
                 let x = CGFloat(Double(note.tick.rawValue) / Double(Tick.perQuarter)) * pxPerBeat
                 let h = CGFloat(note.velocity) / 127 * (size.height - top)
                 let on = model.selectedNotes.contains(note)
-                ctx.fill(Path(CGRect(x: x - 0.5, y: size.height - h, width: 2, height: h)), with: .color(on ? .white : tint.opacity(0.75)))
-                ctx.fill(Path(ellipseIn: CGRect(x: x - 3, y: size.height - h - 3, width: 7, height: 7)), with: .color(on ? .white : tint))
+                let color: Color = on ? .white : (note.muted ? tint.opacity(0.3) : tint)
+                ctx.fill(Path(CGRect(x: x - 0.5, y: size.height - h, width: 2, height: h)), with: .color(color.opacity(0.75)))
+                ctx.fill(Path(ellipseIn: CGRect(x: x - 3, y: size.height - h - 3, width: 7, height: 7)), with: .color(color))
             }
         }
         .contentShape(Rectangle())
@@ -314,6 +338,10 @@ struct PianoRoll: View {
             let black = [1, 3, 6, 8, 10].contains(pitch % 12)
             ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: rowHeight)), with: .color(black ? .black.opacity(0.28) : .white.opacity(0.03)))
             if pitch % 12 == 0 { ctx.fill(Path(CGRect(x: 0, y: y + rowHeight - 1, width: size.width, height: 1)), with: .color(.white.opacity(0.12))) }
+        }
+        // The row a dragged note is over.
+        if let p = heldPitch {
+            ctx.fill(Path(CGRect(x: 0, y: CGFloat(highPitch - p) * rowHeight, width: size.width, height: rowHeight)), with: .color(tint.opacity(0.18)))
         }
         // Lines on the grid of this zoom; beats and bars stand out.
         let step = division, bar = max(Tick.perQuarter, model.barTicks)
@@ -433,6 +461,9 @@ private struct Keys: View {
     let rowHeight: CGFloat
     /// Names for the keys of a drum kit ("Kick", "Snare"), by pitch. Empty for a keyboard.
     var names: [Int: String] = [:]
+    /// The key of a dragged note lights up in the tint.
+    var highlight: Int? = nil
+    var tint: Color = .accentColor
     let play: (UInt8) -> Void
 
     var body: some View {
@@ -440,7 +471,8 @@ private struct Keys: View {
             for pitch in lowPitch...highPitch {
                 let y = CGFloat(highPitch - pitch) * rowHeight
                 let black = [1, 3, 6, 8, 10].contains(pitch % 12)
-                ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: rowHeight)), with: .color(black ? Color(white: 0.12) : Color(white: 0.82)))
+                let color = pitch == highlight ? tint : (black ? Color(white: 0.12) : Color(white: 0.82))
+                ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: rowHeight)), with: .color(color))
                 ctx.fill(Path(CGRect(x: 0, y: y + rowHeight - 0.5, width: size.width, height: 0.5)), with: .color(.black.opacity(0.4)))
                 if let name = names[pitch], rowHeight >= 9 {
                     ctx.draw(Text(name).font(.system(size: min(9, rowHeight - 2), weight: .medium)).foregroundStyle(black ? .white : .black),
@@ -466,6 +498,8 @@ private struct NoteView: View {
     /// The snap step in ticks; 1 when snap is off.
     let grid: Int64
     let rememberLength: (Int64) -> Void
+    /// Reports the pitch under a drag, `nil` when it ends; the roll lights the row and the key.
+    let held: (Int?) -> Void
     @State private var move: CGSize = .zero
     /// What a drag on the note does. Decided from the modifier keys when the drag begins.
     private enum DragMode { case move, copy, velocity(targets: [MIDINote], start: [UInt8]) }
@@ -497,9 +531,10 @@ private struct NoteView: View {
                     .offset(x: px(target.tick), y: CGFloat(highPitch - target.pitch) * rowHeight)
                     .allowsHitTesting(false)
             }
+            // A muted note is hollow: an outline in the tint, dim inside.
             RoundedRectangle(cornerRadius: 2)
-                .fill(tint.opacity(0.45 + 0.55 * Double(note.velocity) / 127))
-                .overlay(RoundedRectangle(cornerRadius: 2).stroke(selected ? Color.white : .black.opacity(0.5), lineWidth: selected ? 1.5 : 0.5))
+                .fill(note.muted ? tint.opacity(0.12) : tint.opacity(0.45 + 0.55 * Double(note.velocity) / 127))
+                .overlay(RoundedRectangle(cornerRadius: 2).stroke(selected ? Color.white : (note.muted ? tint.opacity(0.7) : .black.opacity(0.5)), lineWidth: selected ? 1.5 : (note.muted ? 1 : 0.5)))
                 .frame(width: w, height: rowHeight - 1)
                 .opacity(dragging ? 0.6 : 1)
                 .overlay(alignment: .leading) { edge { startEdge = px(newStart($0) - note.tick.rawValue) } end: { resize(start: $0) } }
@@ -525,10 +560,16 @@ private struct NoteView: View {
                             return
                         }
                         move = g.translation
-                        target = landing(g.translation)
+                        let t = landing(g.translation)
+                        if t.pitch != target?.pitch {
+                            held(t.pitch)
+                            // The drag has reached another key: play it, so the ear follows the hand.
+                            if model.previewNotes, target != nil || t.pitch != Int(note.pitch) { model.auditionNote(UInt8(t.pitch), velocity: note.velocity) }
+                        }
+                        target = t
                     }
                     .onEnded { g in
-                        defer { move = .zero; target = nil; dragMode = nil }
+                        defer { move = .zero; target = nil; dragMode = nil; held(nil) }
                         guard let mode = dragMode, target != nil else { return }
                         let (tick, pitch) = landing(g.translation)
                         let group = selected && model.selectedNotes.count > 1
@@ -539,20 +580,21 @@ private struct NoteView: View {
                         } else {
                             replace { $0.tick = Tick(tick); $0.pitch = UInt8(pitch) }
                         }
-                        if model.previewNotes { model.auditionNote(UInt8(pitch)) }
                     })
         }
         .onTapGesture {
             if model.drawMode { delete(); return }
             let extend = NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command)
             if extend { model.selectedNotes.formSymmetricDifference([note]) } else { model.selectedNotes = [note] }
+            if model.previewNotes { model.auditionNote(note.pitch, velocity: note.velocity) }
         }
         .simultaneousGesture(TapGesture(count: 2).onEnded { if !model.drawMode { delete() } })
         .contextMenu {
             Button("Delete", role: .destructive) { delete() }
             Menu("Velocity") { ForEach([32, 64, 96, 127], id: \.self) { v in Button("\(v)") { replace { $0.velocity = UInt8(v) } } } }
+            Button(note.muted ? "Activate" : "Deactivate") { replace { $0.muted.toggle() } }
             Divider()
-            Text("Drag: move · Option drag: copy · Control drag up/down: velocity").font(.caption)
+            Text("Drag: move · Option drag: copy · Control drag up/down: velocity · 0: deactivate").font(.caption)
         }
     }
 

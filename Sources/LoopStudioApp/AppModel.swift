@@ -1634,8 +1634,8 @@ final class AppModel {
     }
 
     /// A short note, for clicking in the piano roll.
-    func auditionNote(_ pitch: UInt8) {
-        noteOn(pitch)
+    func auditionNote(_ pitch: UInt8, velocity: UInt8 = 100) {
+        noteOn(pitch, velocity: velocity)
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(260))
             noteOff(pitch)

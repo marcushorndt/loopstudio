@@ -11,7 +11,7 @@ enum AppAction: String, CaseIterable, Identifiable {
     case insertScene, deleteScene, duplicateScene
     case toggleKeyboardMIDI, midiLearn
     case moveUp, moveDown, moveLeft, moveRight, launchSelected
-    case noteOctaveUp, noteOctaveDown, noteLonger, noteShorter, snapNotes
+    case noteOctaveUp, noteOctaveDown, noteLonger, noteShorter, snapNotes, selectAll
     case sessionView, arrangementView, switchView, toggleDetail, toggleAutomation, showShortcuts
 
     var id: String { rawValue }
@@ -27,7 +27,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .insertScene, .deleteScene, .duplicateScene: .scene
         case .toggleKeyboardMIDI, .midiLearn: .transport
         case .moveUp, .moveDown, .moveLeft, .moveRight, .launchSelected: .navigate
-        case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .snapNotes: .edit
+        case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .snapNotes, .selectAll: .edit
         case .sessionView, .arrangementView, .switchView, .toggleDetail, .toggleAutomation, .showShortcuts: .view
         }
     }
@@ -47,7 +47,8 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .duplicate: "Duplicate"
         case .deleteSelection: "Delete"
         case .splitAtPlayhead: "Split at Playhead"
-        case .deactivateClip: "Activate / Deactivate Clip"
+        case .deactivateClip: "Activate / Deactivate Clip or Marked Notes"
+        case .selectAll: "Select All (notes of the open clip, else the clips)"
         case .drawMode: "Draw Mode (Pen)"
         case .record: "Arm Recording"
         case .toggleMetronome: "Metronome On/Off"
@@ -132,6 +133,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .noteShorter: KeyBinding("\u{F702}", .shift)
         case .noteLonger: KeyBinding("\u{F703}", .shift)
         case .snapNotes: KeyBinding("4", .command)
+        case .selectAll: KeyBinding("a", .command)
         case .launchSelected: KeyBinding("\r", [])
         case .sessionView: KeyBinding("1", .command)
         case .arrangementView: KeyBinding("2", .command)

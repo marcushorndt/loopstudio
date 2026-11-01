@@ -61,6 +61,10 @@ public enum Command: Codable, Sendable {
     case setDummyAutomation(clip: ClipID, target: ParameterAddress, points: [AutomationPoint])
     /// Replaces the notes of a MIDI clip. Notes are kept sorted by time, then pitch.
     case setMIDINotes(clip: ClipID, notes: [MIDINote])
+    /// The groove a MIDI clip plays with. `nil` plays the notes straight.
+    case setClipGroove(clip: ClipID, groove: GrooveSetting?)
+    /// Burns the groove of a MIDI clip into its notes: they move and take their accents, the setting goes.
+    case commitGroove(clip: ClipID)
     /// Gain, fades and mute of an audio clip.
     case setAudioClip(clip: ClipID, gainDb: Double, fadeInMs: Double, fadeOutMs: Double, muted: Bool)
     /// Puts a clip (with its follow actions) into a session slot, or empties the slot with `nil`.
@@ -347,6 +351,25 @@ extension Project {
             c.notes = notes.sorted { ($0.tick, $0.pitch) < ($1.tick, $1.pitch) }
             try withTrack(trackID) { t in try t.replaceClip(.midi(c)) }
             return .setMIDINotes(clip: id, notes: old)
+
+        case .setClipGroove(let id, let groove):
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            guard case .midi(var c) = clip else { throw CommandError.invalidValue("only MIDI clips have a groove") }
+            if let groove, Groove.named(groove.groove) == nil { throw CommandError.invalidValue("unknown groove \(groove.groove)") }
+            let old = c.groove
+            c.groove = groove
+            try withTrack(trackID) { t in try t.replaceClip(.midi(c)) }
+            return .setClipGroove(clip: id, groove: old)
+
+        case .commitGroove(let id):
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            guard case .midi(var c) = clip else { throw CommandError.invalidValue("only MIDI clips have a groove") }
+            guard c.groove != nil else { throw CommandError.invalidValue("the clip has no groove") }
+            let before = c
+            c.notes = c.playedNotes.sorted { ($0.tick, $0.pitch) < ($1.tick, $1.pitch) }
+            c.groove = nil
+            try withTrack(trackID) { t in try t.replaceClip(.midi(c)) }
+            return .setClip(clip: .midi(before))
 
         case .setClipAutomationLength(let id, let length):
             guard let (trackID, found) = findClip(id) else { throw CommandError.clipNotFound(id) }

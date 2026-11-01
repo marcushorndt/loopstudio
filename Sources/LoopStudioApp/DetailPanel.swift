@@ -230,6 +230,7 @@ private struct ClipPanel: View {
                 Toggle("Loop", isOn: Binding(get: { m.loop }, set: { model.apply(.setClipLoop(clip: m.id, loop: $0)) }))
                 Stepper("Length  \(beatsText(m.length))", onIncrement: { resize(m.id, m.start, m.length, by: 4) },
                         onDecrement: { resize(m.id, m.start, m.length, by: -4) })
+                GrooveControls(clip: m)
                 Text("Double-click the grid to add a note. Drag to move, drag an edge to resize. B turns the pen on.")
                     .font(.caption).foregroundStyle(Theme.dim)
             case .dummy:

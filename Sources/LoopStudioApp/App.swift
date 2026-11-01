@@ -41,6 +41,7 @@ struct LoopStudioApp: App {
                 AppAction.paste.button(model)
                 AppAction.duplicate.button(model)
                 AppAction.deleteSelection.button(model)
+                AppAction.selectAll.button(model)
                 AppAction.splitAtPlayhead.button(model)
             }
             CommandMenu("Transport") {

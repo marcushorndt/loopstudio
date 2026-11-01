@@ -171,7 +171,8 @@ private func frame(_ seconds: Double) -> Int { Int(seconds * rate) }
     let notes = BuiltInInstruments.drumPads.flatMap(\.notes)
     #expect(Set(notes).count == notes.count, "no note plays two pads")
     for pad in BuiltInInstruments.drumPads {
-        for key in pad.params + pad.random { #expect(BuiltInInstruments.drums.param(key) != nil, "\(pad.key) uses \(key)") }
+        for key in pad.params + pad.random + pad.more { #expect(BuiltInInstruments.drums.param(key) != nil, "\(pad.key) uses \(key)") }
+        #expect(pad.more.isEmpty == pad.moreTitle.isEmpty, "a second group of \(pad.name) has a title")
         #expect(pad.params.last?.hasSuffix(".level") == true, "the last knob of \(pad.name) is its level")
     }
     for key in BuiltInInstruments.drumKitParams { #expect(BuiltInInstruments.drums.param(key) != nil) }

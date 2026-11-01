@@ -36,7 +36,7 @@ extension AppModel {
         case .backToArrangement, .captureSession: arrangementOverridden
         case .renameTrack: selectedTrack != nil || selectedClip != nil
         case .groupTracks, .duplicateTrack: selectedTrack != nil
-        case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter: markedMIDIClip != nil
+        case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .noteOtherGridLeft, .noteOtherGridRight: markedMIDIClip != nil
         case .exportAudio: !exporting
         default: true
         }
@@ -94,6 +94,8 @@ extension AppModel {
         case .noteOctaveDown: nudgeNotes(pitch: -12)
         case .noteLonger: nudgeNotes(length: noteStep)
         case .noteShorter: nudgeNotes(length: -noteStep)
+        case .noteOtherGridLeft: nudgeNotes(time: -otherNoteStep, toGrid: !snapNotes)
+        case .noteOtherGridRight: nudgeNotes(time: otherNoteStep, toGrid: !snapNotes)
         case .snapNotes: snapNotes.toggle(); status = snapNotes ? "Notes snap to the grid" : "Snap off: notes land on the exact tick"
         case .selectAll: selectAll()
         case .launchSelected: launchSelection()
@@ -133,7 +135,7 @@ extension AppModel {
     func moveSelection(rows: Int, tracks: Int) {
         // Marked notes in the open clip take the arrow keys: up and down transpose, left and right move in time.
         if markedMIDIClip != nil {
-            nudgeNotes(pitch: -rows, time: Int64(tracks) * noteStep)
+            nudgeNotes(pitch: -rows, time: Int64(tracks) * noteStep, toGrid: snapNotes)
             return
         }
         let columns = viewMode == .session ? orderedTracks + [project.master] : orderedTracks
@@ -153,8 +155,11 @@ extension AppModel {
         selectedClip = row < track.slots.count && track.kind != .master ? track.slots[row]?.clip.id : nil
     }
 
-    /// The step of the arrow keys on notes: the grid of the piano roll at its zoom.
-    var noteStep: Int64 { max(1, noteGrid) }
+    /// The step of the arrow keys on notes: the grid of the piano roll at its zoom with snap on, a 1/128
+    /// note with snap off. `otherNoteStep` is the one the switch does not point at (Command and an arrow).
+    var noteStep: Int64 { snapNotes ? max(1, noteGrid) : fineNoteStep }
+    var otherNoteStep: Int64 { snapNotes ? fineNoteStep : max(1, noteGrid) }
+    private var fineNoteStep: Int64 { Tick.perQuarter / 32 }
 
     /// The open MIDI clip, when notes in it are marked.
     var markedMIDIClip: MIDIClip? {
@@ -164,8 +169,9 @@ extension AppModel {
 
     /// Moves the marked notes: `pitch` in semitones, `time` in ticks, `length` in ticks. Notes stay in the
     /// clip and the key range, a note never gets shorter than a sixty-fourth, and the marking follows them.
-    /// A held key repeats into one undo step per key.
-    func nudgeNotes(pitch: Int = 0, time: Int64 = 0, length: Int64 = 0) {
+    /// A held key repeats into one undo step per key. With `toGrid`, a group off the grid lands on the next
+    /// grid line in the pressed direction first, then walks the grid.
+    func nudgeNotes(pitch: Int = 0, time: Int64 = 0, length: Int64 = 0, toGrid: Bool = false) {
         guard let m = markedMIDIClip else { return }
         let marked = m.notes.filter { selectedNotes.contains($0) }
         guard !marked.isEmpty else { return }
@@ -173,7 +179,8 @@ extension AppModel {
         let lowest = marked.map { Int($0.pitch) }.min()!, highest = marked.map { Int($0.pitch) }.max()!
         let dp = min(max(pitch, -lowest), 127 - highest)
         let first = marked.map(\.tick.rawValue).min()!, last = marked.map(\.tick.rawValue).max()!
-        let dt = min(max(time, -first), max(0, m.length.rawValue - noteStep) - last)
+        let step = toGrid ? snappedTimeStep(time, from: first) : time
+        let dt = min(max(step, -first), max(0, m.length.rawValue - abs(time)) - last)
         guard dp != 0 || dt != 0 || length != 0 else { return }
         var moved: Set<MIDINote> = []
         let notes = m.notes.map { n -> MIDINote in
@@ -190,6 +197,17 @@ extension AppModel {
         setNotes(m.id, notes, key: key)
         selectedNotes = moved
         if previewNotes, let note = moved.min(by: { ($0.tick, $0.pitch) < ($1.tick, $1.pitch) }), dp != 0 { auditionNote(note.pitch) }
+    }
+
+    /// The time step of an arrow key for a group whose first note sits at `first`: a group off the grid
+    /// lands on the next grid line in the pressed direction on the first press, and walks the grid from
+    /// there. On the grid already, the step is the plain grid step.
+    func snappedTimeStep(_ time: Int64, from first: Int64) -> Int64 {
+        let grid = max(1, noteGrid)
+        guard time != 0, grid > 1 else { return time }
+        let off = first % grid
+        guard off != 0 else { return time }
+        return time > 0 ? grid - off : -off
     }
 
     /// The selection sits on the row of stop buttons.

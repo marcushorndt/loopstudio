@@ -79,6 +79,7 @@ struct PianoRoll: View {
     var body: some View {
         VStack(spacing: 4) {
             HStack(spacing: 8) {
+                previewToggle
                 Text("\(clip.notes.count) notes").font(.caption).foregroundStyle(Theme.dim)
                 if !marked.isEmpty {
                     Text("\(marked.count) marked · vel \(velocityText)").font(.caption).foregroundStyle(Theme.dim)
@@ -87,17 +88,13 @@ struct PianoRoll: View {
                 Button("Quantize") { quantize() }
                     .controlSize(.small).disabled(clip.notes.isEmpty)
                     .hint("Quantize: move the marked notes (or all notes) to the nearest grid step (\(gridName(division, bar: model.barTicks)))")
-                toolButton("grid", on: model.snapNotes, help: "Snap to grid (⌘4). The grid follows the zoom: now \(gridName(division, bar: model.barTicks)). Off, notes land on the exact tick. Command during a drag does the opposite of this switch.") {
+                toolButton("grid", on: model.snapNotes, help: "Snap to grid (⌘4). The grid follows the zoom: now \(gridName(division, bar: model.barTicks)). Off, notes land on the exact tick. Command during a drag, or Command with an arrow key, does the opposite of this switch.") {
                     model.perform(.snapNotes)
                 }
                 Text(gridName(division, bar: model.barTicks)).font(.system(size: 9, design: .monospaced)).foregroundStyle(model.snapNotes ? tint : Theme.dim)
                     .frame(width: 30, alignment: .leading)
                 toolButton("pencil", on: model.drawMode, help: "Draw mode (B): click or drag to draw notes, click a note to delete it") {
                     model.drawMode.toggle()
-                }
-                toolButton(model.previewNotes ? "speaker.wave.2.fill" : "speaker.slash", on: model.previewNotes,
-                           help: "Preview: play a note when it is tapped, created, or dragged to another key; a tap on a key plays it too") {
-                    model.previewNotes.toggle()
                 }
                 Text("X").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
                 Slider(value: $zoom, in: 1...8).controlSize(.mini).frame(width: 90)
@@ -317,6 +314,24 @@ struct PianoRoll: View {
         }
         model.setNotes(clip.id, notes)
         if !all { model.selectedNotes = moved }
+    }
+
+    /// The preview switch at the head of the toolbar, with its name, so it is found at a glance.
+    private var previewToggle: some View {
+        let on = model.previewNotes
+        return Button { model.previewNotes.toggle() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: on ? "speaker.wave.2.fill" : "speaker.slash").font(.system(size: 10, weight: .medium))
+                Text("Preview").font(.system(size: 10, weight: .medium))
+            }
+            .padding(.horizontal, 7).frame(height: 20)
+            .foregroundStyle(on ? tint : Theme.dim)
+            .background(on ? tint.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(on ? tint.opacity(0.5) : Theme.line, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .hint("Preview: play a note when it is tapped, created, moved with the arrow keys, or dragged to another key; a tap on a key plays it too")
     }
 
     private func toolButton(_ symbol: String, on: Bool, help: String, action: @escaping () -> Void) -> some View {

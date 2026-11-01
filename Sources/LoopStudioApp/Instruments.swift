@@ -38,7 +38,8 @@ struct ParamKnob: View {
     }
 }
 
-/// A named group of knobs on an instrument, like the sections printed on a hardware panel.
+/// A named group of knobs on an instrument, like the sections printed on a hardware panel: a title and a
+/// faint box. The panels place these in a grid of two rows, wide and narrow groups side by side.
 struct KnobSection<Content: View>: View {
     let title: String
     @ViewBuilder var content: () -> Content
@@ -46,15 +47,17 @@ struct KnobSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(title.uppercased()).font(.system(size: 8.5, weight: .semibold)).tracking(0.8).foregroundStyle(Theme.dim)
-                .padding(.leading, 4).padding(.bottom, 2)
+                .lineLimit(1).padding(.leading, 6).padding(.top, 3)
             HStack(alignment: .top, spacing: 0) { content() }
+                .padding(.horizontal, 2).padding(.bottom, 2)
         }
+        .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line.opacity(0.7), lineWidth: 1))
     }
 }
 
-private struct SectionDivider: View {
-    var body: some View { Rectangle().fill(Theme.line).frame(width: 1).padding(.vertical, 8).padding(.horizontal, 4) }
-}
+/// The gap between the groups of a panel.
+private let groupGap: CGFloat = 6
 
 /// The panel of a built-in instrument: a view of its own per instrument, a plain knob row for any other.
 struct InstrumentView: View {
@@ -86,21 +89,27 @@ struct AcidBassView: View {
 
     private func knob(_ key: String) -> some View { ParamKnob(track: track, device: device, spec: spec, key: key, tint: acidTint) }
 
+    /// Two columns of two rows: the scope over the output on the left; the oscillator beside the accent and
+    /// slide, with the wide filter group under them, on the right.
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            AcidScope(device: device)
-                .frame(width: 150, height: 92)
-                .padding(.top, 2)
-                .hint("The filter as it sounds: the curve follows the envelope and the accent. Orange: the cutoff knob.")
-            SectionDivider()
-            KnobSection(title: "Oscillator") { knob("wave"); knob("tune"); knob("sub") }
-            SectionDivider()
-            KnobSection(title: "Filter") { knob("cutoff"); knob("resonance"); knob("envMod"); knob("keyTrack"); knob("decay") }
-            SectionDivider()
-            KnobSection(title: "Accent · Slide") { knob("accent"); knob("slide") }
-                .hint("Accent: a note at velocity \(BuiltInInstruments.accentVelocity) or more is louder, with a filter kick. Slide: a note that overlaps the one before glides to it.")
-            SectionDivider()
-            KnobSection(title: "Out") { knob("drive"); knob("volume") }
+        HStack(alignment: .top, spacing: groupGap) {
+            VStack(alignment: .leading, spacing: groupGap) {
+                AcidScope(device: device)
+                    .frame(width: 150, height: 80)
+                    .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line.opacity(0.7), lineWidth: 1))
+                    .hint("The filter as it sounds: the curve follows the envelope and the accent. Orange: the cutoff knob.")
+                KnobSection(title: "Out") { knob("drive"); knob("volume") }
+                    .frame(width: 150, alignment: .leading)
+            }
+            VStack(alignment: .leading, spacing: groupGap) {
+                HStack(alignment: .top, spacing: groupGap) {
+                    KnobSection(title: "Oscillator") { knob("wave"); knob("tune"); knob("sub") }
+                    KnobSection(title: "Accent · Slide") { knob("accent"); knob("slide") }
+                        .hint("Accent: a note at velocity \(BuiltInInstruments.accentVelocity) or more is louder, with a filter kick. Slide: a note that overlaps the one before glides to it.")
+                }
+                KnobSection(title: "Filter") { knob("cutoff"); knob("resonance"); knob("envMod"); knob("keyTrack"); knob("decay") }
+            }
         }
     }
 }
@@ -177,23 +186,32 @@ struct Drum808View: View {
 
     private func knob(_ key: String) -> some View { ParamKnob(track: track, device: device, spec: spec, key: key, tint: drumTint) }
 
+    /// The pads on the left. On the right two rows: the pad's own knobs (and a second group when the pad
+    /// has more, like the clap's tail and noise), then the pad's random knobs beside the kit knobs.
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
+        HStack(alignment: .top, spacing: groupGap) {
             DrumPadGrid(device: device, selected: $selected) { note in model.auditionNote(note, on: track.id) }
                 .padding(.top, 2)
-            SectionDivider()
-            KnobSection(title: "\(pad.name) · \(MIDIControl.noteName(pad.notes[0]))") {
-                ForEach(pad.params, id: \.self) { knob($0) }
+            VStack(alignment: .leading, spacing: groupGap) {
+                HStack(alignment: .top, spacing: groupGap) {
+                    KnobSection(title: "\(pad.name) · \(MIDIControl.noteName(pad.notes[0]))") {
+                        ForEach(pad.params, id: \.self) { knob($0) }
+                    }
+                    .id(pad.key)
+                    if !pad.more.isEmpty {
+                        KnobSection(title: pad.moreTitle) { ForEach(pad.more, id: \.self) { knob($0) } }
+                            .id(pad.key + "-more")
+                    }
+                }
+                HStack(alignment: .top, spacing: groupGap) {
+                    if !pad.random.isEmpty {
+                        KnobSection(title: "Random") { ForEach(pad.random, id: \.self) { knob($0) } }
+                            .id(pad.key + "-random")
+                            .hint("Chance per clap: its timing and level, its shape, its tune, its filter, its place left or right")
+                    }
+                    KnobSection(title: "Kit") { ForEach(BuiltInInstruments.drumKitParams, id: \.self) { knob($0) } }
+                }
             }
-            .id(pad.key)
-            if !pad.random.isEmpty {
-                SectionDivider()
-                KnobSection(title: "Random") { ForEach(pad.random, id: \.self) { knob($0) } }
-                    .id(pad.key + "-random")
-                    .hint("Chance per clap: its timing and level, its tune, its filter, its place left or right")
-            }
-            SectionDivider()
-            KnobSection(title: "Kit") { ForEach(BuiltInInstruments.drumKitParams, id: \.self) { knob($0) } }
         }
     }
 }

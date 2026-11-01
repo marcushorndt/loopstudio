@@ -11,7 +11,7 @@ enum AppAction: String, CaseIterable, Identifiable {
     case insertScene, deleteScene, duplicateScene
     case toggleKeyboardMIDI, midiLearn
     case moveUp, moveDown, moveLeft, moveRight, launchSelected
-    case noteOctaveUp, noteOctaveDown, noteLonger, noteShorter, snapNotes, selectAll
+    case noteOctaveUp, noteOctaveDown, noteLonger, noteShorter, noteOtherGridLeft, noteOtherGridRight, snapNotes, selectAll
     case sessionView, arrangementView, switchView, toggleDetail, toggleAutomation, showShortcuts
 
     var id: String { rawValue }
@@ -27,7 +27,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .insertScene, .deleteScene, .duplicateScene: .scene
         case .toggleKeyboardMIDI, .midiLearn: .transport
         case .moveUp, .moveDown, .moveLeft, .moveRight, .launchSelected: .navigate
-        case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .snapNotes, .selectAll: .edit
+        case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .noteOtherGridLeft, .noteOtherGridRight, .snapNotes, .selectAll: .edit
         case .sessionView, .arrangementView, .switchView, .toggleDetail, .toggleAutomation, .showShortcuts: .view
         }
     }
@@ -74,8 +74,10 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .toggleKeyboardMIDI: "Computer Keyboard as MIDI Keys"
         case .moveUp: "Select Up (marked notes: a semitone up)"
         case .moveDown: "Select Down (marked notes: a semitone down)"
-        case .moveLeft: "Select Left (marked notes: a grid step earlier)"
-        case .moveRight: "Select Right (marked notes: a grid step later)"
+        case .moveLeft: "Select Left (marked notes: a step earlier; snap on: on the grid, off: a 1/128)"
+        case .moveRight: "Select Right (marked notes: a step later; snap on: on the grid, off: a 1/128)"
+        case .noteOtherGridLeft: "Marked Notes Earlier on the Other Grid (snap off: the grid, on: a 1/128)"
+        case .noteOtherGridRight: "Marked Notes Later on the Other Grid (snap off: the grid, on: a 1/128)"
         case .noteOctaveUp: "Marked Notes an Octave Up"
         case .noteOctaveDown: "Marked Notes an Octave Down"
         case .noteLonger: "Marked Notes a Grid Step Longer"
@@ -132,6 +134,8 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .noteOctaveDown: KeyBinding("\u{F701}", .shift)
         case .noteShorter: KeyBinding("\u{F702}", .shift)
         case .noteLonger: KeyBinding("\u{F703}", .shift)
+        case .noteOtherGridLeft: KeyBinding("\u{F702}", .command)
+        case .noteOtherGridRight: KeyBinding("\u{F703}", .command)
         case .snapNotes: KeyBinding("4", .command)
         case .selectAll: KeyBinding("a", .command)
         case .launchSelected: KeyBinding("\r", [])
@@ -150,7 +154,8 @@ extension AppAction {
     /// True for the arrow keys: holding one moves on at the key repeat rate.
     var repeats: Bool {
         switch self {
-        case .moveUp, .moveDown, .moveLeft, .moveRight, .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter: true
+        case .moveUp, .moveDown, .moveLeft, .moveRight, .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter,
+             .noteOtherGridLeft, .noteOtherGridRight: true
         default: false
         }
     }
@@ -268,8 +273,9 @@ final class KeyMonitor {
             }
             guard event.type == .keyDown else { return event }
             // A held arrow key repeats, so it moves fast through the grid. Other shortcuts act once per press.
+            // The arrow keys go through the monitor with every modifier: a menu shortcut never repeats.
             for action in AppAction.allCases where !event.isARepeat || action.repeats {
-                if let b = action.binding, b.isPlain, b.matches(event), model.isEnabled(action) {
+                if let b = action.binding, b.isPlain || action.repeats, b.matches(event), model.isEnabled(action) {
                     model.perform(action)
                     return nil
                 }

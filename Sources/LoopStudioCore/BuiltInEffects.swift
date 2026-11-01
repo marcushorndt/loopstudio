@@ -255,6 +255,9 @@ public enum BuiltInInstruments {
         public var pan: Double
         /// Knobs that add chance to the pad, shown in their own section. Empty for most pads.
         public var random: [String] = []
+        /// A second group of knobs beside the first, with its own title. Empty for most pads.
+        public var moreTitle: String = ""
+        public var more: [String] = []
     }
 
     /// The pads in display order: four per row, three rows.
@@ -262,8 +265,9 @@ public enum BuiltInInstruments {
         DrumPad(key: "bd", name: "Kick", notes: [36, 35], params: ["bd.tune", "bd.decay", "bd.tone", "bd.level"], pan: 0),
         DrumPad(key: "sd", name: "Snare", notes: [38, 40], params: ["sd.tune", "sd.snappy", "sd.decay", "sd.level"], pan: 0),
         DrumPad(key: "cp", name: "Clap", notes: [39],
-                params: ["cp.count", "cp.space", "cp.tune", "cp.filter", "cp.tail", "cp.decay", "cp.noise", "cp.noiseFilter", "cp.noiseDecay", "cp.level"], pan: 0.25,
-                random: ["cp.random", "cp.shape", "cp.tuneRandom", "cp.filterRandom", "cp.panRandom"]),
+                params: ["cp.count", "cp.space", "cp.tune", "cp.filter", "cp.level"], pan: 0.25,
+                random: ["cp.random", "cp.shape", "cp.tuneRandom", "cp.filterRandom", "cp.panRandom"],
+                moreTitle: "Tail · Noise", more: ["cp.tail", "cp.decay", "cp.noise", "cp.noiseFilter", "cp.noiseDecay"]),
         DrumPad(key: "rs", name: "Rimshot", notes: [37], params: ["rs.tune", "rs.level"], pan: -0.3),
         DrumPad(key: "lt", name: "Low Tom", notes: [41, 43], params: ["lt.tune", "tom.decay", "tom.level"], pan: -0.5),
         DrumPad(key: "mt", name: "Mid Tom", notes: [45, 47], params: ["mt.tune", "tom.decay", "tom.level"], pan: 0),

@@ -18,7 +18,7 @@ public enum StandardTools {
 
     // MARK: Registry
 
-    public static func registry(session: ProjectSession) -> ToolRegistry {
+    public static func registry(session: any EditSession) -> ToolRegistry {
         var r = ToolRegistry()
 
         r.add(Tool(
@@ -426,7 +426,7 @@ public enum StandardTools {
 
     // MARK: Resources
 
-    public static func resources(session: ProjectSession) -> MCPServer.Resources {
+    public static func resources(session: any EditSession) -> MCPServer.Resources {
         MCPServer.Resources(
             list: {
                 guard await session.isOpen else { return [] }
@@ -479,7 +479,7 @@ public enum StandardTools {
         }
     }
 
-    static func summary(_ session: ProjectSession) async throws -> JSONValue {
+    static func summary(_ session: any EditSession) async throws -> JSONValue {
         let project = try await session.project()
         return .object([
             "path": .string(await session.path ?? ""),

@@ -2,6 +2,13 @@
 
 `loopstudio mcp` is a Model Context Protocol server. It speaks JSON-RPC 2.0 over stdin and stdout, one message per line. Logs go to stderr. Nothing else is written to stdout.
 
+## Two modes: the running app, or project files
+
+- **The app is running:** `loopstudio mcp` finds the app's socket and forwards every message to it. The agent then edits the project that is open on screen. Each change shows and sounds at once, lands in the app's undo history, and autosaves like a click. The app adds the tools `app_status`, `transport` and `launch`. `project_open` and `project_new` switch the app to another project.
+- **No app:** `loopstudio mcp` works on project files on its own, with the same tools (minus the three app tools). Open such a project in the app afterwards.
+
+`--files` forces the file mode even when the app runs. `--live` insists on the app and fails when it is not running. The socket is `~/Library/Application Support/LoopStudio/mcp.sock` (override with `LOOPSTUDIO_SOCKET`); it is owned by the user with mode 600. The app's status line reports when the socket could not be opened.
+
 ## Set up
 
 Build once:
@@ -48,6 +55,9 @@ To open a project at start, add `"--project", "/path/to/MyProject.loopstudio"` t
 | `io_resolve` | reads | Preview how ports map to the connected sound cards. |
 | `follow_simulate` | reads | Run the follow-action dice many times and count outcomes. |
 | `tempo_convert` | reads | Ticks, seconds and frames, using the tempo map. |
+| `app_status` | reads | App only: transport, position, tempo, open project, selection, session clips that play, Link peers, status line. |
+| `transport` | changes | App only: `play`, `stop`, `pause`, `continue`, `seek` (with `tick`). |
+| `launch` | changes | App only: start a slot (`track` + `slot`), a `scene`, or stop clips (`stopTrack`, `stopAll`). |
 
 `command_apply` takes every edit the app can do: tracks and routing (`setOutput`, `setSends`, `setInputTrack`, `setMonitor`, `setSendsOnly`), clips and session slots, follow actions, devices and their parameters, MIDI notes, automation on tracks and in dummy clips, warping (`setAssetTempo`, `setClipWarp`), tempo, loop and launches. `command_examples` shows a valid JSON for each.
 

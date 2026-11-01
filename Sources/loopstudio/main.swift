@@ -14,7 +14,7 @@ func usage() -> Never {
       loopstudio units
       loopstudio devices
       loopstudio midi
-      loopstudio mcp [--project <project.loopstudio>]
+      loopstudio mcp [--project <project.loopstudio>] [--files | --live]
     """)
     exit(2)
 }
@@ -45,6 +45,22 @@ case "midi":
     }
 case "mcp":
     // MCP server on stdin and stdout. Logs go to stderr only.
+    // With the app running, its socket takes the messages: the agent then edits the project on screen.
+    // --files works on project files on its own; --live insists on the app.
+    let wantFiles = args.contains("--files"), wantLive = args.contains("--live")
+    if !wantFiles, let client = SocketClient() {
+        FileHandle.standardError.write(Data("forwarding to the running LoopStudio app at \(SocketTransport.defaultPath)\n".utf8))
+        while let line = readLine(strippingNewline: true) {
+            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            if let response = client.send(line) { print(response); fflush(stdout) }
+            else if SocketClient.isRequest(line) { FileHandle.standardError.write(Data("the app closed the connection\n".utf8)); exit(1) }
+        }
+        exit(0)
+    }
+    if wantLive {
+        FileHandle.standardError.write(Data("LoopStudio is not running: nothing listens at \(SocketTransport.defaultPath)\n".utf8))
+        exit(1)
+    }
     let session = ProjectSession()
     if let i = args.firstIndex(of: "--project"), i + 1 < args.count {
         do { try await session.open(at: URL(fileURLWithPath: args[i + 1])) }

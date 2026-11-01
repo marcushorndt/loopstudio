@@ -5,15 +5,7 @@ import LoopStudioProject
 /// The one open project: its store, its folder, its journal.
 /// Every tool goes through here, so a script, an agent and the UI cannot disagree about the state.
 public actor ProjectSession {
-    public struct Opened: Sendable {
-        public var path: String
-        /// Commands replayed from the journal after a crash.
-        public var recoveredCommands: Int
-        public var recoveryFailed: Bool
-        public var journalTailDropped: Bool
-        public var issues: [ProjectIssue]
-        public var migratedFrom: Int?
-    }
+    public typealias Opened = SessionOpened
 
     private var store: ProjectStore?
     private var url: URL?

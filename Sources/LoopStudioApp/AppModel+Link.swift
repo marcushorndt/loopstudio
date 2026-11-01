@@ -42,6 +42,14 @@ extension AppModel {
         }
     }
 
+    /// A tempo the project got in another way than the tempo field (a project opened, a command from an
+    /// agent, an undo) goes to the Link session, so the session does not pull the project back to its old tempo.
+    func pushTempoToLink() {
+        guard linkEnabled, abs(bpm - linkTempoKnown) >= 0.005 else { return }
+        linkTempoKnown = bpm
+        link.setTempo(bpm, atMicros: link.nowMicros)
+    }
+
     /// One poll of the session.
     func linkTick() {
         let snap = link.snapshot()

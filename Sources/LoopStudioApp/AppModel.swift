@@ -531,6 +531,9 @@ final class AppModel {
             createDemo()
         }
         if ProcessInfo.processInfo.environment["LOOPSTUDIO_SELFTEST"] != nil { runSelfTest() }
+        // The MCP socket: `loopstudio mcp` forwards an agent to this running app.
+        liveControl.start(model: self)
+        if let problem = liveControl.problem { status = "Agent socket off: \(problem)" }
         // Quitting within the autosave delay must not lose the last edit.
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.saveOnQuit() }
@@ -548,6 +551,7 @@ final class AppModel {
 
     /// Keeps the SIGTERM handler alive.
     private var termSource: DispatchSourceSignal?
+    @ObservationIgnored let liveControl = LiveControl()
 
     /// Launches scene 1, then prints what the engine plays. Used to check the live path without ears.
     private func runSelfTest() {
@@ -1297,21 +1301,25 @@ final class AppModel {
     // MARK: Editing
 
     func apply(_ command: Command, key: String? = nil) {
-        do {
-            let inverse = try command.apply(to: &project)
-            try? journal?.append(command)
-            if let key, let last = lastKey, last.0 == key, Date().timeIntervalSince(last.1) < 0.8, !undoStack.isEmpty {
-                lastKey = (key, Date()) // same gesture: keep the first inverse
-            } else {
-                undoStack.append(inverse)
-                lastKey = key.map { ($0, Date()) }
-            }
-            redoStack.removeAll()
-            changed()
-        } catch {
-            status = "Not possible: \(error)"
-        }
+        do { try tryApply(command, key: key) } catch { status = "Not possible: \(error)" }
     }
+
+    /// The edit, or the reason it is not possible. The MCP bridge reports the reason to the agent.
+    func tryApply(_ command: Command, key: String? = nil) throws {
+        let inverse = try command.apply(to: &project)
+        try? journal?.append(command)
+        if let key, let last = lastKey, last.0 == key, Date().timeIntervalSince(last.1) < 0.8, !undoStack.isEmpty {
+            lastKey = (key, Date()) // same gesture: keep the first inverse
+        } else {
+            undoStack.append(inverse)
+            lastKey = key.map { ($0, Date()) }
+        }
+        redoStack.removeAll()
+        changed()
+    }
+
+    /// Counts the edits, so an agent can tell whether the project changed since it looked.
+    private(set) var revision = 0
 
     func undo() {
         guard let inverse = undoStack.popLast() else { return }
@@ -1332,7 +1340,9 @@ final class AppModel {
     private func changed() {
         canUndo = !undoStack.isEmpty
         canRedo = !redoStack.isEmpty
+        revision += 1
         dirty = true
+        pushTempoToLink()
         if let c = selectedClip, project.findClip(c) == nil { selectedClip = nil }
         selectedClips = selectedClips.filter { project.findClip($0) != nil }
         session.followMovedSlots(in: project)
@@ -2063,6 +2073,28 @@ final class AppModel {
         save()
     }
 
+    struct ControlError: Error, CustomStringConvertible { let description: String }
+
+    /// `project_new` from an agent: a new project at the path, opened in the app.
+    func createProject(at url: URL, name: String, sampleRate: Double) throws {
+        guard url.pathExtension == "loopstudio" else { throw ControlError(description: "path must end with .loopstudio") }
+        guard !FileManager.default.fileExists(atPath: url.appendingPathComponent("project.json").path) else {
+            throw ControlError(description: "a project already exists at \(url.path)")
+        }
+        try ProjectPackage.write(Project(name: name, sampleRate: sampleRate), to: url)
+        try openForControl(url)
+    }
+
+    /// `project_open` from an agent: like a click in the Projects list, but a failure is reported.
+    func openForControl(_ url: URL) throws {
+        guard url.pathExtension == "loopstudio" else { throw ControlError(description: "path must end with .loopstudio") }
+        guard FileManager.default.fileExists(atPath: url.appendingPathComponent("project.json").path) else {
+            throw ControlError(description: "no project at \(url.path)")
+        }
+        open(url)
+        guard packageURL.standardizedFileURL == url.standardizedFileURL else { throw ControlError(description: status) }
+    }
+
     func open(_ url: URL) {
         // Unsaved edits of the current project go to disk first; the pending autosave belongs to it.
         if dirty && url != packageURL { save() }
@@ -2148,6 +2180,7 @@ final class AppModel {
         engine.seek(to: 0)
         project = new
         packageURL = url
+        pushTempoToLink()
         journal = try? Journal(url: url.appendingPathComponent("journal.jsonl"), durable: false)
         bank = AudioBank.live()
         warpTask?.cancel()

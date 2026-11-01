@@ -26,6 +26,7 @@ extension AppModel {
         linkTask?.cancel()
         linkTask = nil
         linkAnnounceTask?.cancel()
+        linkDrifts = []
         setLinkPeers(0)
         linkLog.notice("Link \(self.linkEnabled ? "on" : "off", privacy: .public), start/stop sync \(self.linkStartStop ? "on" : "off", privacy: .public)")
         guard linkEnabled else { return }
@@ -125,20 +126,28 @@ extension AppModel {
         let ourBeat = Double(project.tempoMap.tick(atFrame: Frame(frameAt), sampleRate: sampleRate).rawValue) / Double(Tick.perQuarter)
         var drift = (linkBeat - ourBeat).truncatingRemainder(dividingBy: q)
         if drift > q / 2 { drift -= q } else if drift < -q / 2 { drift += q }
-        if abs(drift) > 0.5 {
-            linkLog.notice("drift \(drift, privacy: .public) beats: jump onto the grid")
-            seek(to: Tick(max(0, Int64(((ourBeat + drift) * Double(Tick.perQuarter)).rounded()))))
+        // One reading can be off by tens of milliseconds (a Bluetooth output stamps its buffers unevenly).
+        // Act on the median of the last second, and jump only when the whole second says so.
+        linkDrifts.append(drift)
+        if linkDrifts.count > 10 { linkDrifts.removeFirst(linkDrifts.count - 10) }
+        let sorted = linkDrifts.sorted()
+        let median = sorted[sorted.count / 2]
+        if abs(median) > 0.5, linkDrifts.count >= 5, linkDrifts.suffix(5).allSatisfy({ abs($0) > 0.5 }) {
+            linkLog.notice("drift \(median, privacy: .public) beats: jump onto the grid")
+            linkDrifts = []
+            seek(to: Tick(max(0, Int64(((ourBeat + median) * Double(Tick.perQuarter)).rounded()))))
             return
         }
         let current = bpm
-        if abs(drift) > 1.0 / 64 {
-            let factor = max(0.995, min(1.005, 1 + drift * 0.25))
+        if abs(median) > 1.0 / 64 {
+            // A gentle pull of at most a third of a percent: a jittery reading cannot swing the tempo.
+            let factor = max(0.997, min(1.003, 1 + median * 0.05))
             let target = ((linkTempo * factor) * 100).rounded() / 100
             if abs(target - current) >= 0.01 {
-                linkLog.notice("drift \(Int(drift * 1000), privacy: .public) mbeat: nudge \(current, privacy: .public) -> \(target, privacy: .public)")
+                linkLog.notice("drift \(Int(median * 1000), privacy: .public) mbeat: nudge \(current, privacy: .public) -> \(target, privacy: .public)")
                 followTempo(target)
             }
-        } else if abs(drift) < 1.0 / 256, abs(current - linkTempo) >= 0.005 {
+        } else if abs(median) < 1.0 / 256, abs(current - linkTempo) >= 0.005 {
             linkLog.notice("drift gone: tempo back to \(linkTempo, privacy: .public)")
             followTempo(linkTempo)
         }

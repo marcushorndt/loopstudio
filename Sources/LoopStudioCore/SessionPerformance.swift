@@ -39,6 +39,13 @@ public struct SessionPerformance: Sendable {
         public var clip: ClipID?
         /// When the clip began, on the session clock that ran before the stop.
         public var start: Tick
+
+        public init(track: TrackID, slot: Int?, clip: ClipID?, start: Tick) {
+            self.track = track
+            self.slot = slot
+            self.clip = clip
+            self.start = start
+        }
     }
 
     public private(set) var launches: [Launch] = []
@@ -171,6 +178,27 @@ public struct SessionPerformance: Sendable {
             add(Launch(track: k.track, slot: k.slot, tick: tick), in: project)
         }
         return true
+    }
+
+    /// What each launched track does now, as `Kept` entries: while the transport runs, the clip that plays
+    /// at `session`; after a stop, what the stop kept. For saving the state with the project.
+    public func snapshot(at session: Tick) -> [Kept] {
+        if !kept.isEmpty { return kept }
+        var seen: Set<TrackID> = []
+        return launches.compactMap { launch -> Kept? in
+            guard seen.insert(launch.track).inserted else { return nil }
+            let now = plays(of: launch.track, at: session).now
+            return Kept(track: launch.track, slot: now?.slot, clip: now?.clip, start: now?.startTick ?? session)
+        }
+    }
+
+    /// A saved state comes back as kept: the next Play starts these clips from the first bar, as after a stop.
+    public mutating func restore(_ entries: [Kept]) {
+        guard !entries.isEmpty else { return }
+        launches = []
+        clips = []
+        kept = entries
+        keptAt = (0, 0)
     }
 
     /// A launch while the transport is stopped starts that clip only, not what played before the stop.

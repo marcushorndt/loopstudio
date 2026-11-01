@@ -544,6 +544,11 @@ public struct Track: Hashable, Codable, Sendable, Identifiable {
     /// bottom, and whether they were folded away. View state, saved with the project. Not an edit: no undo.
     public var automationLanes: [ParameterAddress]?
     public var automationFolded: Bool?
+    /// The session clip that played, or was ready to play, when the project was saved, so the next Play
+    /// after a reopen starts it again. `keptStop`: the track was stopped in the session instead (silent).
+    /// Not an edit: no undo.
+    public var keptClip: ClipID?
+    public var keptStop: Bool?
     /// MIDI tracks: a hardware destination that gets the notes. `nil` means none.
     public var midiOutput: MIDIOutputSelection?
     public var monitorMode: MonitorMode { monitor ?? .auto }

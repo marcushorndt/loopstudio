@@ -426,6 +426,8 @@ final class AppModel {
     @ObservationIgnored var linkAnnounceTask: Task<Void, Never>?
     /// The session tempo as this app last saw or set it. The project may differ by a drift nudge.
     @ObservationIgnored var linkTempoKnown = 0.0
+    /// The last phase readings against the Link session, newest last. See `keepLinkPhase`.
+    @ObservationIgnored var linkDrifts: [Double] = []
     /// A play or pause that came from a peer: do not send it back to the session.
     @ObservationIgnored var linkFollowing = false
     func setLinkPeers(_ n: Int) { if linkPeers != n { linkPeers = n } }
@@ -1998,8 +2000,32 @@ final class AppModel {
         }
     }
 
+    /// Writes which session clip each track plays (or holds ready) into the project, so a reopen can
+    /// bring the clips back as ready. Not an edit.
+    private func captureSessionState() {
+        let snapshot = session.snapshot(at: sessionTick)
+        for i in project.tracks.indices {
+            let entry = snapshot.first { $0.track == project.tracks[i].id }
+            project.tracks[i].keptClip = entry?.clip
+            project.tracks[i].keptStop = entry != nil && entry?.slot == nil ? true : nil
+        }
+    }
+
+    /// The saved session state comes back: the clips that played are ready, Play starts them.
+    private func restoreSessionState() {
+        let entries = project.tracks.compactMap { t -> SessionPerformance.Kept? in
+            if let clip = t.keptClip, let row = t.slots.firstIndex(where: { $0?.clip.id == clip }) {
+                return SessionPerformance.Kept(track: t.id, slot: row, clip: clip, start: 0)
+            }
+            if t.keptStop == true { return SessionPerformance.Kept(track: t.id, slot: nil, clip: nil, start: 0) }
+            return nil
+        }
+        session.restore(entries)
+    }
+
     func save() {
         captureStates()
+        captureSessionState()
         do {
             try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
             try ProjectPackage.write(projectForSaving(), to: packageURL)
@@ -2131,8 +2157,10 @@ final class AppModel {
         undoStack = []; redoStack = []
         canUndo = false; canRedo = false
         selectedClip = nil; selectedTrack = nil
-        // The arms come back as they were saved, and so do the open automation lanes and the MIDI mappings.
+        // The arms come back as they were saved, and so do the open automation lanes, the MIDI mappings and
+        // the session clips that played: they wait as ready, Play starts them.
         armedTracks = Set(new.tracks.filter { $0.armed == true }.map(\.id))
+        restoreSessionState()
         var lanes: [TrackID: [ParameterAddress]] = [:]
         var folded: Set<TrackID> = []
         for t in new.allTracks {

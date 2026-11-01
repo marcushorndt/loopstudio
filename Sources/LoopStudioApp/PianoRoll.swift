@@ -87,7 +87,7 @@ struct PianoRoll: View {
                 Button("Quantize") { quantize() }
                     .controlSize(.small).disabled(clip.notes.isEmpty)
                     .hint("Quantize: move the marked notes (or all notes) to the nearest grid step (\(gridName(division, bar: model.barTicks)))")
-                toolButton("grid", on: model.snapNotes, help: "Snap to grid (⌘4). The grid follows the zoom: now \(gridName(division, bar: model.barTicks)). Off, notes land on the exact tick.") {
+                toolButton("grid", on: model.snapNotes, help: "Snap to grid (⌘4). The grid follows the zoom: now \(gridName(division, bar: model.barTicks)). Off, notes land on the exact tick. Command during a drag does the opposite of this switch.") {
                     model.perform(.snapNotes)
                 }
                 Text(gridName(division, bar: model.barTicks)).font(.system(size: 9, design: .monospaced)).foregroundStyle(model.snapNotes ? tint : Theme.dim)
@@ -133,7 +133,7 @@ struct PianoRoll: View {
                                 .onTapGesture { model.selectedNotes = [] }
                                 .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { if !model.drawMode { add(at: $0.location) } })
                             ForEach(Array(clip.notes.enumerated()), id: \.offset) { index, note in
-                                NoteView(clip: clip, index: index, note: note, tint: tint, pxPerBeat: pxPerBeat, rowHeight: rowHeight, grid: grid,
+                                NoteView(clip: clip, index: index, note: note, tint: tint, pxPerBeat: pxPerBeat, rowHeight: rowHeight, step: division, snap: model.snapNotes,
                                          rememberLength: { lastLength = $0 }, held: { heldPitch = $0 })
                             }
                             if clip.groove != nil {
@@ -495,8 +495,14 @@ private struct NoteView: View {
     let tint: Color
     let pxPerBeat: CGFloat
     let rowHeight: CGFloat
-    /// The snap step in ticks; 1 when snap is off.
-    let grid: Int64
+    /// The grid step in ticks, and whether notes snap to it.
+    let step: Int64
+    let snap: Bool
+    /// Command held when a drag began: that drag snaps when the grid is off, and runs free when it is on.
+    @State private var invert = false
+    @State private var edgeDragging = false
+    /// The snap step of the current drag; 1 means free.
+    private var grid: Int64 { snap != invert ? step : 1 }
     let rememberLength: (Int64) -> Void
     /// Reports the pitch under a drag, `nil` when it ends; the roll lights the row and the key.
     let held: (Int?) -> Void
@@ -555,6 +561,7 @@ private struct NoteView: View {
                     .onChanged { g in
                         if dragMode == nil {
                             let flags = NSEvent.modifierFlags
+                            invert = flags.contains(.command)
                             if flags.contains(.control) {
                                 // Control: the note stays, the drag up or down changes the velocity.
                                 let group = selected && model.selectedNotes.count > 1 ? clip.notes.filter { model.selectedNotes.contains($0) } : [note]
@@ -579,7 +586,7 @@ private struct NoteView: View {
                         target = t
                     }
                     .onEnded { g in
-                        defer { move = .zero; target = nil; dragMode = nil; held(nil) }
+                        defer { move = .zero; target = nil; dragMode = nil; invert = false; held(nil) }
                         guard let mode = dragMode, target != nil else { return }
                         let (tick, pitch) = landing(g.translation)
                         let group = selected && model.selectedNotes.count > 1
@@ -604,7 +611,7 @@ private struct NoteView: View {
             Menu("Velocity") { ForEach([32, 64, 96, 127], id: \.self) { v in Button("\(v)") { replace { $0.velocity = UInt8(v) } } } }
             Button(note.muted ? "Activate" : "Deactivate") { replace { $0.muted.toggle() } }
             Divider()
-            Text("Drag: move · Option drag: copy · Control drag up/down: velocity · 0: deactivate").font(.caption)
+            Text("Drag: move · Option drag: copy · Control drag up/down: velocity · Command: the other grid · 0: deactivate").font(.caption)
         }
     }
 
@@ -656,8 +663,15 @@ private struct NoteView: View {
     private func edge(_ changed: @escaping (CGFloat) -> Void, end: @escaping (CGFloat) -> Void) -> some View {
         Rectangle().fill(.clear).frame(width: 6).contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                .onChanged { changed($0.translation.width) }
-                .onEnded { end($0.translation.width) })
+                .onChanged { g in
+                    if !edgeDragging { edgeDragging = true; invert = NSEvent.modifierFlags.contains(.command) }
+                    changed(g.translation.width)
+                }
+                .onEnded { g in
+                    end(g.translation.width)
+                    edgeDragging = false
+                    invert = false
+                })
             .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
     }
 

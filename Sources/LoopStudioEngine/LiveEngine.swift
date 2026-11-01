@@ -78,6 +78,16 @@ public final class LiveEngine: @unchecked Sendable {
     /// The session frame that sounds at host time `anchorHost`. Updated every block, for MIDI timestamps.
     private var anchorHost: UInt64 = 0
     private var anchorFrame: Int64 = 0
+    /// The stamp of the last buffer, smoothed. Bluetooth and other devices without a hardware clock stamp
+    /// their buffers unevenly: one lands tens of milliseconds early or late and the next makes up for it.
+    /// The smoothed time expects each buffer one buffer after the last and lets a stamp pull it only a
+    /// little; a stamp far off (a stall, a new device) re-anchors at once. Audio thread only.
+    private var smoothedHost: UInt64 = 0
+    private var lastBlockFrames = 0
+    /// Frames between the render of a buffer and its sound at the output: the device's latency plus its
+    /// safety offset, at the engine rate (160 ms over Bluetooth). Part of the anchor, so "the frame that
+    /// sounds at this host time" is true for MIDI stamps and for Link.
+    private var outputLatency: Int64 = 0
     /// Count up when a control thread moves the clocks (a seek) or the transport state (play, pause,
     /// count-in). The audio thread writes back only what nobody changed while it rendered.
     private var clockGeneration: UInt64 = 0
@@ -140,14 +150,43 @@ public final class LiveEngine: @unchecked Sendable {
         }
         sourceNode = node
         try engine.start()
+        refreshOutputLatency()
         // A sound card that changes its format or goes away stops the engine. It starts again on the new setup.
         if configObserver == nil {
             configObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
                 guard let self, !self.engine.isRunning else { return }
                 try? self.engine.start()
+                self.refreshOutputLatency()
                 self.onConfigurationChange?()
             }
         }
+    }
+
+    /// Reads how late the output device plays what the engine renders, for the clock anchor.
+    private func refreshOutputLatency() {
+        guard let unit = engine.outputNode.audioUnit else { return }
+        var device: AudioObjectID = 0
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &device, &size) == noErr,
+              device != 0 else { return }
+        let scope = kAudioObjectPropertyScopeOutput
+        let latency = HAL.value(device, kAudioDevicePropertyLatency, scope: scope, as: UInt32.self, zero: 0) ?? 0
+        let safety = HAL.value(device, kAudioDevicePropertySafetyOffset, scope: scope, as: UInt32.self, zero: 0) ?? 0
+        let deviceRate = HAL.value(device, kAudioDevicePropertyNominalSampleRate, as: Double.self, zero: 0) ?? 0
+        let atEngineRate = deviceRate > 0 ? Double(latency + safety) * sampleRate / deviceRate : Double(latency + safety)
+        locked { outputLatency = Int64(atEngineRate.rounded()) }
+    }
+
+    /// See `smoothedHost`. Audio thread only.
+    private func smoothHost(_ stamp: UInt64, frames: Int) -> UInt64 {
+        defer { lastBlockFrames = frames }
+        guard smoothedHost != 0, lastBlockFrames > 0 else { smoothedHost = stamp; return stamp }
+        let expected = smoothedHost &+ HostClock.ticks(fromSeconds: Double(lastBlockFrames) / sampleRate)
+        let delta = Int64(bitPattern: stamp &- expected)
+        // A quarter second: more than any jitter, less than a stall worth a new anchor.
+        if abs(delta) > Int64(HostClock.ticks(fromSeconds: 0.25)) { smoothedHost = stamp; return stamp }
+        smoothedHost = expected &+ UInt64(bitPattern: delta / 32)
+        return smoothedHost
     }
 
     /// Called on the main queue after the sound card setup changed and the engine started again.
@@ -166,7 +205,7 @@ public final class LiveEngine: @unchecked Sendable {
         if let node = sourceNode { engine.detach(node); sourceNode = nil }
         // Readers on other threads (MIDI time stamps) take the lock, so the rate changes under it too.
         locked {
-            position = 0; sessionPosition = 0; playing = false; countInRemaining = 0; anchorHost = 0; sampleRate = rate
+            position = 0; sessionPosition = 0; playing = false; countInRemaining = 0; anchorHost = 0; smoothedHost = 0; sampleRate = rate
             clockGeneration &+= 1; stateGeneration &+= 1
         }
         midiOut.ticksPerFrame = Double(HostClock.ticks(fromSeconds: 1)) / rate
@@ -213,6 +252,7 @@ public final class LiveEngine: @unchecked Sendable {
             graphChannels = multi ? channels : 2
         }
         setRoutes(channels: multi ? channels : 2, left: left, right: right, ports: ports)
+        defer { refreshOutputLatency() }
         if multi {
             // Channel n of the engine is channel n of the card.
             let map = (0..<Int32(channels)).map { $0 }
@@ -447,10 +487,13 @@ public final class LiveEngine: @unchecked Sendable {
         // 1. Take the control state. Plain copies and reference counts only; nothing is allocated or freed.
         os_unfair_lock_lock(lock)
         callbacks &+= 1
-        // A timed start: wait in silence for the frames up to that host time, then play. `host` is when
-        // this buffer sounds, so the wait is exact to the frame.
+        let host = smoothHost(host, frames: frameCount)
+        // When the first frame of this buffer comes out of the speaker.
+        let sounds = host &+ HostClock.ticks(fromSeconds: Double(outputLatency) / sampleRate)
+        // A timed start: wait in silence for the frames up to that host time, then play. `sounds` is when
+        // this buffer is heard, so the wait is exact to the frame.
         if startAtHost != 0 {
-            let wait = HostClock.frames(from: host, to: startAtHost, rate: sampleRate)
+            let wait = HostClock.frames(from: sounds, to: startAtHost, rate: sampleRate)
             if wait > 0 { countInRemaining = wait; countInDone = 0; countInClick = false }
             else { playing = true; stampPending = true }
             startAtHost = 0
@@ -532,14 +575,14 @@ public final class LiveEngine: @unchecked Sendable {
                 countInRemaining -= Int64(n)
                 if countInRemaining <= 0 {
                     countInRemaining = 0; playing = true
-                    startHost = host &+ HostClock.ticks(fromSeconds: Double(done + n) / sampleRate)
+                    startHost = sounds &+ HostClock.ticks(fromSeconds: Double(done + n) / sampleRate)
                 }
             }
             done += n
         }
 
-        if stampPending && playing { startHost = host; stampPending = false }
-        let anchorHost = host &+ HostClock.ticks(fromSeconds: Double(done) / sampleRate)
+        if stampPending && playing { startHost = sounds; stampPending = false }
+        let anchorHost = sounds &+ HostClock.ticks(fromSeconds: Double(done) / sampleRate)
         let anchorFrame = sessionPosition
         while done < frameCount {
             var n = min(frameCount - done, renderer.maxBlock)

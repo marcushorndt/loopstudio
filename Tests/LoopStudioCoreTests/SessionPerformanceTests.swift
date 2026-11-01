@@ -123,3 +123,38 @@ private func horizon() -> Tick { bars(40) }
     p.timeSignatures.append(TimeSignatureChange(tick: bars(2), signature: TimeSignature(3, 4)))
     #expect(p.barBoundary(atOrBefore: bars(2) + Tick(2880 + 10)) == bars(2) + Tick(2880))
 }
+
+/// Saved with the project: what plays comes back as ready, and Play starts it from the first bar.
+@Test func aSnapshotComesBackAsReadyAndPlaysAgain() {
+    let (p, a, b) = project()
+    var s = SessionPerformance()
+    s.add(Launch(track: a.id, slot: 1, tick: 0), in: p)
+    s.add(Launch(track: b.id, slot: 0, tick: 0), in: p)
+    s.add(Launch(track: b.id, slot: nil, tick: 500), in: p)
+    s.simulate(p, horizon: horizon())
+    // While the transport runs (the dummy clips last one bar): track a plays slot 1, track b was stopped.
+    let snap = s.snapshot(at: 1000)
+    #expect(snap.count == 2)
+    #expect(snap.first { $0.track == a.id }?.slot == 1)
+    #expect(snap.first { $0.track == b.id }?.slot == nil)
+    // After a stop, the snapshot is what the stop kept.
+    s.stop(at: 1000, timeline: 1000, trackOrder: [a.id, b.id])
+    #expect(s.snapshot(at: 5000).map(\.slot) == s.kept.map(\.slot))
+
+    // A fresh performance (a reopened project) takes the entries as ready.
+    var fresh = SessionPerformance()
+    fresh.restore(snap)
+    #expect(fresh.readySlot(of: a.id) == 1)
+    #expect(fresh.readySlot(of: b.id) == nil)
+    #expect(fresh.isEmpty, "nothing plays until Play")
+    let resumed = fresh.resume(at: 0, in: p)
+    #expect(resumed)
+    fresh.simulate(p, horizon: horizon())
+    #expect(fresh.plays(of: a.id, at: 0).now?.slot == 1)
+    #expect(fresh.plays(of: b.id, at: 0).now == nil, "the stopped track stays silent")
+    // Nothing saved: nothing changes.
+    var empty = SessionPerformance()
+    empty.restore([])
+    let resumedEmpty = empty.resume(at: 0, in: p)
+    #expect(empty.kept.isEmpty && !resumedEmpty)
+}

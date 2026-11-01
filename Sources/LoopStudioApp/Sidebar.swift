@@ -21,7 +21,7 @@ struct SidebarView: View {
             switch model.sidebarTab {
             case .audio: AudioBrowser(search: search)
             case .effects: UnitList(title: "Audio Effects", match: "effect", units: units, loaded: unitsLoaded, search: search, builtIn: BuiltInEffects.all)
-            case .instruments: UnitList(title: "Instruments", match: "instrument", units: units, loaded: unitsLoaded, search: search, builtIn: [])
+            case .instruments: UnitList(title: "Instruments", match: "instrument", units: units, loaded: unitsLoaded, search: search, builtIn: BuiltInInstruments.all)
             case .projects: ProjectList()
             }
         }
@@ -178,15 +178,20 @@ struct UnitList: View {
             if !builtIn.isEmpty {
                 Section("LoopStudio") {
                     ForEach(builtIn.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }, id: \.id) { spec in
-                        Label(spec.name, systemImage: "slider.horizontal.3")
+                        Label(spec.name, systemImage: spec.isInstrument ? "pianokeys" : "slider.horizontal.3")
                             .contentShape(Rectangle())
                             .onTapGesture(count: 2) { model.addEffect(spec.id) }
                             .draggable("fx:\(spec.id)")
                             .contextMenu {
                                 Button("Add to Selected Track") { model.addEffect(spec.id) }
-                                Menu("Add to Track") { ForEach(model.project.tracks.filter { $0.kind != .master }, id: \.id) { t in Button(t.name) { model.addEffect(spec.id, to: t.id) } } }
+                                Menu("Add to Track") {
+                                    let tracks = model.project.tracks.filter { spec.isInstrument ? $0.kind == .midi : $0.kind != .master }
+                                    ForEach(tracks, id: \.id) { t in Button(t.name) { model.addEffect(spec.id, to: t.id) } }
+                                    if spec.isInstrument { Button("New MIDI Track") { model.addEffect(spec.id, to: nil); } }
+                                }
                             }
-                            .hint("Double-click to add to the selected track, or drag it onto a track.")
+                            .hint(spec.isInstrument ? "Double-click to put it on the selected MIDI track, or on a new one. Drag it onto a track."
+                                  : "Double-click to add to the selected track, or drag it onto a track.")
                     }
                 }
             }

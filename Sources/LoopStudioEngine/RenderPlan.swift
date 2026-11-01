@@ -80,6 +80,13 @@ struct MIDIEvent {
     var data2: UInt8
 }
 
+/// A built-in instrument on a MIDI track. The renderer makes (or keeps) its `DSPInstrument`.
+struct SynthPlan {
+    var device: DeviceID
+    var kind: String
+    var params: [String: Double]
+}
+
 struct SendPlan {
     var target: Int
     var gain: Float
@@ -106,8 +113,12 @@ struct NodePlan {
     var panAuto: AutoLane? = nil
     /// A hosted instrument and the notes it plays, sorted by frame (note-off before note-on on the same frame).
     var instrument: AudioUnitEffect? = nil
-    /// Automated parameters of the instrument, keyed like an effect's ("au.<address>").
+    /// Automated parameters of the instrument, keyed like an effect's ("au.<address>", or a built-in key).
     var instrumentAuto: [String: AutoLane] = [:]
+    /// A built-in instrument instead of a hosted one. A track has one or the other.
+    var synth: SynthPlan? = nil
+    /// The running built-in instrument. The renderer sets it on its own copy of the node; the plan has none.
+    var synthUnit: DSPInstrument? = nil
     var midi: [MIDIEvent] = []
     /// Notes of the session clips, in session frames.
     var sessionMidi: [MIDIEvent] = []
@@ -373,16 +384,18 @@ public struct RenderPlan {
             }
             if t.kind == .midi || t.kind == .group || t.kind == .returnTrack { /* summing nodes or not rendered yet */ }
 
-            var (chain, instrument, instrumentDevice) = effects(of: t, units: units, warnings: &warnings)
+            var (chain, instrument, synth, instrumentDevice) = effects(of: t, units: units, warnings: &warnings)
             chain = chain.map { var e = $0; e.auto = autoParams(e.device, of: t); return e }
             let instrumentAuto = instrumentDevice.map { autoParams($0, of: t) } ?? [:]
+            if t.kind != .midi { synth = nil } // an instrument on an audio track stays silent
             var midi: [MIDIEvent] = [], sessionMidi: [MIDIEvent] = []
             let midiOut = t.kind == .midi ? midiOutputs[t.id] : nil
-            if t.kind == .midi && !silent && (instrument != nil || midiOut != nil) {
+            let plays = instrument != nil || synth != nil
+            if t.kind == .midi && !silent && (plays || midiOut != nil) {
                 midi = midiEvents(of: t, session: nil, map: map, rate: rate, endFrame: &endFrame)
                 var ignored: Int64 = 0
                 sessionMidi = midiEvents(of: t, session: session, map: map, rate: rate, endFrame: &ignored, arrangement: false)
-            } else if t.kind == .midi && !t.clips.isEmpty && instrument == nil && midiOut == nil {
+            } else if t.kind == .midi && !t.clips.isEmpty && !plays && midiOut == nil {
                 if let out = t.midiOutput {
                     warnings.append("MIDI track \"\(t.name)\" sends to \(out.destinationName ?? "a MIDI device") that is not connected")
                 } else {
@@ -397,7 +410,7 @@ public struct RenderPlan {
                 sends: t.sends.filter { keeps(t.id, $0.target) }.compactMap { s in index[s.target].map {
                     SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader,
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
-                effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, instrumentAuto: instrumentAuto, midi: midi, sessionMidi: sessionMidi,
+                effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, instrumentAuto: instrumentAuto, synth: synth, midi: midi, sessionMidi: sessionMidi,
                 midiOut: midiOut, arrangementEnd: arrangementEnds[t.id]))
             if let input {
                 nodes[nodes.count - 1].input = (input.channels.first, input.channels.stereo ? input.channels.first + 1 : nil)
@@ -509,19 +522,27 @@ public struct RenderPlan {
         }
     }
 
+    /// The effect chain of a track, and its instrument: the first one that is not bypassed, hosted or built in.
     private static func effects(of track: Track, units: [DeviceID: AudioUnitEffect],
-                                warnings: inout [String]) -> ([EffectPlan], AudioUnitEffect?, DeviceID?) {
+                                warnings: inout [String]) -> ([EffectPlan], AudioUnitEffect?, SynthPlan?, DeviceID?) {
         var plans: [EffectPlan] = []
         var instrument: AudioUnitEffect?
+        var synth: SynthPlan?
         var instrumentDevice: DeviceID?
         for d in track.devices {
             if d.format == "builtin" {
-                guard BuiltInEffects.spec(d.identifier) != nil else { continue }
+                guard let spec = BuiltInEffects.spec(d.identifier) else { continue }
+                if spec.isInstrument {
+                    if instrumentDevice == nil && !d.bypassed {
+                        synth = SynthPlan(device: d.id, kind: d.identifier, params: d.params); instrumentDevice = d.id
+                    }
+                    continue
+                }
                 plans.append(EffectPlan(device: d.id, kind: d.identifier, params: d.params, bypassed: d.bypassed))
             } else if d.format == "audiounit" {
                 guard let unit = units[d.id] else { warnings.append("\(d.name) on \"\(track.name)\" is not loaded"); continue }
                 if unit.isInstrument {
-                    if instrument == nil && !d.bypassed { instrument = unit; instrumentDevice = d.id }
+                    if instrumentDevice == nil && !d.bypassed { instrument = unit; instrumentDevice = d.id }
                 } else {
                     plans.append(EffectPlan(device: d.id, kind: "audiounit", params: [:], bypassed: d.bypassed, unit: unit))
                 }
@@ -529,7 +550,7 @@ public struct RenderPlan {
                 warnings.append("\(d.name) on \"\(track.name)\" uses an unsupported plugin format")
             }
         }
-        return (plans, instrument, instrumentDevice)
+        return (plans, instrument, synth, instrumentDevice)
     }
 
     /// Note on and off events for a MIDI track: arrangement clips plus the session clips that play.

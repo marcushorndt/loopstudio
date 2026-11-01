@@ -72,6 +72,11 @@ struct TrackMenuItems: View {
         if !isMaster, !track.slots.allSatisfy({ $0 == nil }) {
             Button("Stop Track Clips") { model.stopClips(of: track) }.disabled(!model.transportPlaying)
         }
+        if track.kind == .midi {
+            Menu("Add Instrument") {
+                ForEach(BuiltInInstruments.all, id: \.id) { spec in Button(spec.name) { model.addEffect(spec.id, to: track.id) } }
+            }
+        }
         if !isMaster {
             Menu("Add Effect") {
                 ForEach(BuiltInEffects.all, id: \.id) { spec in Button(spec.name) { model.addEffect(spec.id, to: track.id) } }

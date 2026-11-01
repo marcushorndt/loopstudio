@@ -71,7 +71,8 @@ struct PianoRoll: View {
                     }
                     .offset(y: scrollY).zIndex(1)
                     HStack(alignment: .top, spacing: 0) {
-                        Keys(rowHeight: rowHeight) { if model.previewNotes { model.auditionNote($0) } }.frame(width: keysWidth, height: height)
+                        Keys(rowHeight: rowHeight, names: model.drumNames(ofTrack: model.project.findClip(clip.id)?.0)) { if model.previewNotes { model.auditionNote($0) } }
+                            .frame(width: keysWidth, height: height)
                         ZStack(alignment: .topLeading) {
                             Canvas { ctx, size in drawGrid(&ctx, size) }
                                 .frame(width: width, height: height)
@@ -304,6 +305,8 @@ final class WheelZoom {
 
 private struct Keys: View {
     let rowHeight: CGFloat
+    /// Names for the keys of a drum kit ("Kick", "Snare"), by pitch. Empty for a keyboard.
+    var names: [Int: String] = [:]
     let play: (UInt8) -> Void
 
     var body: some View {
@@ -313,7 +316,10 @@ private struct Keys: View {
                 let black = [1, 3, 6, 8, 10].contains(pitch % 12)
                 ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: rowHeight)), with: .color(black ? Color(white: 0.12) : Color(white: 0.82)))
                 ctx.fill(Path(CGRect(x: 0, y: y + rowHeight - 0.5, width: size.width, height: 0.5)), with: .color(.black.opacity(0.4)))
-                if pitch % 12 == 0 {
+                if let name = names[pitch], rowHeight >= 9 {
+                    ctx.draw(Text(name).font(.system(size: min(9, rowHeight - 2), weight: .medium)).foregroundStyle(black ? .white : .black),
+                             at: CGPoint(x: 4, y: y + rowHeight / 2), anchor: .leading)
+                } else if pitch % 12 == 0 {
                     ctx.draw(Text("C\(pitch / 12 - 1)").font(.system(size: 9)).foregroundStyle(.black), at: CGPoint(x: size.width - 4, y: y + rowHeight / 2), anchor: .trailing)
                 }
             }

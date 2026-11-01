@@ -200,11 +200,16 @@ struct DeviceChainView: View {
 
     /// The drop target at the end of the chain. It is the only hint when the chain is empty.
     private func emptySlot(_ track: Track) -> some View {
-        let instrument = track.kind == .midi && !track.devices.contains { model.host.units[$0.id]?.isInstrument == true }
+        let instrument = track.kind == .midi && !track.devices.contains { model.isInstrument($0) }
         return VStack(spacing: 6) {
             Image(systemName: "plus").font(.system(size: 14, weight: .medium))
             Text(instrument ? "Drop an instrument\nor an effect here" : "Drop an effect here")
                 .font(.caption).multilineTextAlignment(.center)
+            if instrument {
+                ForEach(BuiltInInstruments.all, id: \.id) { spec in
+                    Button(spec.name) { model.addEffect(spec.id, to: track.id) }.buttonStyle(.link).font(.caption)
+                }
+            }
             Button(instrument ? "Browse Instruments" : "Browse Effects") {
                 model.sidebarTab = instrument ? .instruments : .effects
             }
@@ -239,15 +244,6 @@ private struct DeviceCard: View {
         .frame(width: 170, height: 60, alignment: .topLeading)
     }
 
-    private func knobAutomation(_ param: EffectParam) -> KnobAutomation {
-        let address = ParameterAddress(node: device.id.rawValue, parameter: param.key)
-        return KnobAutomation(
-            hasCurve: track.automation.contains { $0.target == address && !$0.points.isEmpty },
-            laneShown: model.isLaneShown(track, address),
-            toggleLane: { model.toggleLaneAndReveal(track, address) },
-            clear: { model.apply(.setAutomation(track: track.id, target: address, points: [])) })
-    }
-
     var body: some View {
         let spec = device.format == "builtin" ? BuiltInEffects.spec(device.identifier) : nil
         VStack(alignment: .leading, spacing: 6) {
@@ -266,21 +262,12 @@ private struct DeviceCard: View {
                 }
                 .buttonStyle(.plain).hint("Remove")
             }
-            if let spec {
+            if let spec, spec.isInstrument {
+                InstrumentView(track: track, device: device, spec: spec)
+                    .opacity(device.bypassed ? 0.4 : 1)
+            } else if let spec {
                 HStack(alignment: .top, spacing: 2) {
-                    ForEach(spec.shownParams, id: \.key) { free in
-                        // A synced knob shows its note value instead of the free value.
-                        let synced = free.syncable && (device.params[free.syncKey] ?? 0) >= 0.5
-                        let param = synced ? spec.params.first { $0.key == free.divisionKey } ?? free : free
-                        Knob(param: param, value: device.params[param.key] ?? param.def, tint: Theme.accent,
-                             onChange: { model.setDeviceParam(track.id, device.id, param.key, param.clamp($0)) },
-                             onReset: { model.setDeviceParam(track.id, device.id, param.key, nil) },
-                             automation: knobAutomation(param),
-                             sync: free.syncable ? KnobSync(synced: synced, unit: free.unit) {
-                                 model.setDeviceParam(track.id, device.id, free.syncKey, synced ? 0 : 1)
-                             } : nil)
-                        .midiLearnable(.deviceParam(track.id, device.id, param.key))
-                    }
+                    ForEach(spec.shownParams, id: \.key) { ParamKnob(track: track, device: device, spec: spec, key: $0.key) }
                 }
                 .opacity(device.bypassed ? 0.4 : 1)
             } else if device.format == "audiounit" {

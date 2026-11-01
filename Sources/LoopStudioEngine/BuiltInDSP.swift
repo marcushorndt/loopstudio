@@ -49,7 +49,9 @@ public class DSPEffect: @unchecked Sendable {
     public func reset() {}
     public func process(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {}
 
+    /// A built-in device by id: an effect, or an instrument (a `DSPInstrument`).
     public static func make(_ id: String, sampleRate: Double) -> DSPEffect? {
+        if let instrument = DSPInstrument.makeInstrument(id, sampleRate: sampleRate) { return instrument }
         guard let spec = BuiltInEffects.spec(id) else { return nil }
         let effect: DSPEffect
         switch id {

@@ -289,4 +289,10 @@ private func trackIDs(_ r: Client.Result) -> [String] {
     let keys = delay["params"]?.arrayValue?.compactMap { $0["key"]?.stringValue } ?? []
     #expect(keys.contains("timeMs") && keys.contains("timeMsSync") && keys.contains("timeMsDivision"))
     #expect(result.data["divisions"]?.arrayValue?.count == NoteDivision.all.count)
+    // The instruments, and the pad table of the drum kit.
+    let instruments = try #require(result.data["instruments"]?.arrayValue)
+    #expect(instruments.map { $0["id"]?.stringValue } == BuiltInInstruments.all.map { Optional($0.id) })
+    let pads = try #require(result.data["pads"]?["drum808"]?.arrayValue)
+    #expect(pads.count == BuiltInInstruments.drumPads.count)
+    #expect(pads.first?["notes"]?.arrayValue?.first?.intValue == 36, "the kick on C1")
 }

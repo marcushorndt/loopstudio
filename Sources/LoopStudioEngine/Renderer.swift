@@ -89,6 +89,8 @@ public final class Renderer {
     private let instances: [DeviceID: DSPEffect]
     /// The instrument of each node as a slot, so its automation runs like a plugin effect's.
     private let instrumentSlots: [Slot?]
+    /// The built-in instrument of each node as a slot: its knobs and automation run like a built-in effect's.
+    private let synthSlots: [Slot?]
 
     /// With `reusing`, effects that exist in both plans keep their memory (reverb tails, filter state),
     /// so changing a knob does not cut the sound.
@@ -96,30 +98,43 @@ public final class Renderer {
         var made: [DeviceID: DSPEffect] = [:]
         var built: [[Slot]] = []
         var instruments: [Slot?] = []
+        var synths: [Slot?] = []
+        var synthUnits: [DSPInstrument?] = []
+        /// A built-in device: the one the old renderer runs when it is the same device of the same kind, else a new one.
+        func builtIn(_ device: DeviceID, kind: String, params: [String: Double]) -> (DSPEffect, running: Bool)? {
+            if let kept = old?.instances[device], kept.spec.id == kind, kept.sampleRate == plan.sampleRate { return (kept, true) }
+            guard let new = DSPEffect.make(kind, sampleRate: plan.sampleRate) else { return nil }
+            // The audio thread may still run a kept effect, so only that thread may change it.
+            new.configure(params)
+            return (new, false)
+        }
         for node in plan.nodes {
             var chain: [Slot] = []
             for e in node.effects {
                 if let unit = e.unit { chain.append(Slot(effect: nil, unit: unit, bypassed: e.bypassed, auto: e.auto, params: [:])); continue }
-                let effect: DSPEffect
-                var running = false
-                if let kept = old?.instances[e.device], kept.spec.id == e.kind, kept.sampleRate == plan.sampleRate {
-                    effect = kept
-                    running = true
-                } else if let new = DSPEffect.make(e.kind, sampleRate: plan.sampleRate) {
-                    effect = new
-                } else { continue }
-                // The audio thread may still run a kept effect, so only that thread may change it.
-                if !running { effect.configure(e.params) }
-                made[e.device] = effect
-                let slot = Slot(effect: effect, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params)
-                slot.needsConfigure = running
+                guard let found = builtIn(e.device, kind: e.kind, params: e.params) else { continue }
+                made[e.device] = found.0
+                let slot = Slot(effect: found.0, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params)
+                slot.needsConfigure = found.running
                 chain.append(slot)
             }
             built.append(chain)
             instruments.append(node.instrument.map { Slot(effect: nil, unit: $0, bypassed: false, auto: node.instrumentAuto, params: [:]) })
+            // A kept instrument keeps its notes and its tails across the swap.
+            if let s = node.synth, let found = builtIn(s.device, kind: s.kind, params: s.params), let synth = found.0 as? DSPInstrument {
+                made[s.device] = synth
+                let slot = Slot(effect: synth, unit: nil, bypassed: false, auto: node.instrumentAuto, params: s.params)
+                slot.needsConfigure = found.running
+                synths.append(slot)
+                synthUnits.append(synth)
+            } else {
+                synths.append(nil)
+                synthUnits.append(nil)
+            }
         }
         chains = built
         instrumentSlots = instruments
+        synthSlots = synths
         // A connection that keeps its ends and its delay keeps its line, so an edit does not insert
         // a stretch of silence into a compensated path. Only one renderer runs at a time, so sharing is safe.
         var kept: [String: DelayLine] = [:]
@@ -147,6 +162,7 @@ public final class Renderer {
         nodeCount = plan.nodes.count
         nodes = .allocate(capacity: nodeCount)
         nodes.initialize(from: plan.nodes, count: nodeCount)
+        for i in 0..<nodeCount { nodes[i].synthUnit = synthUnits[i] }
         buffers = .allocate(capacity: nodeCount * 2 * maxBlock)
         buffers.initialize(repeating: 0, count: nodeCount * 2 * maxBlock)
         scratchIn = .allocate(capacity: 2 * maxBlock); scratchIn.initialize(repeating: 0, count: 2 * maxBlock)
@@ -184,6 +200,15 @@ public final class Renderer {
 
     var instancesForTesting: [DeviceID: DSPEffect] { instances }
 
+    /// The running built-in device of a slot, for its display. The table never changes after `init`.
+    public func instance(_ device: DeviceID) -> DSPEffect? { instances[device] }
+
+    /// What takes the notes of node `i`: its hosted instrument, else its built-in one.
+    @inline(__always) private func noteSink(_ i: Int) -> (any MIDIReceiver)? {
+        if let unit = nodes[i].instrument { return unit }
+        return nodes[i].synthUnit
+    }
+
     /// Clears every effect's memory (delay lines, reverb tails). Called after a stop or a jump.
     public func reset() {
         for effect in instances.values { effect.reset() }
@@ -199,7 +224,7 @@ public final class Renderer {
     public func sendLive(track: TrackID, _ status: UInt8, _ data1: UInt8, _ data2: UInt8, sampleOffset: Int = 0, host: UInt64 = 0) {
         let order = plan.trackOrder
         for i in 0..<min(order.count, nodeCount) where order[i] == track {
-            nodes[i].instrument?.sendMIDI(status, data1, data2, sampleOffset: sampleOffset)
+            noteSink(i)?.sendMIDI(status, data1, data2, sampleOffset: sampleOffset)
             if let target = nodes[i].midiOut, let out = midiOut {
                 if host != 0 { out.push(target, host: host, status, data1, data2) }
                 else { out.push(target, frame: MIDIOutQueue.now, status, data1, data2) }
@@ -216,7 +241,7 @@ public final class Renderer {
     /// Releases every note of every hosted instrument and every note sent to hardware. Called on stop and on a jump.
     public func silenceNotes() {
         for i in 0..<nodeCount {
-            nodes[i].instrument?.silenceNotes()
+            noteSink(i)?.silenceNotes()
             if let target = nodes[i].midiOut, let out = midiOut {
                 releaseAll(held + i * 2048, target, out, frame: MIDIOutQueue.now)
                 releaseAll(hwSession + i * 2048, target, out, frame: MIDIOutQueue.now)
@@ -249,14 +274,14 @@ public final class Renderer {
     /// held as long as its track keeps the destination: the player releases it.
     func takeOverNotes(from old: Renderer, at frame: Int64, sessionFrame: Int64 = 0) {
         for i in 0..<old.nodeCount {
-            let unit = old.nodes[i].instrument, hw = old.nodes[i].midiOut
+            let unit = old.noteSink(i), hw = old.nodes[i].midiOut
             guard unit != nil || hw != nil else { continue }
             // The node of the same track in this plan, when it is still there.
             var j = -1
             if i < old.plan.trackOrder.count, let track = old.plan.trackOrder[i] {
                 for n in 0..<min(plan.trackOrder.count, nodeCount) where plan.trackOrder[n] == track { j = n; break }
             }
-            let unitKept = j >= 0 && unit != nil && nodes[j].instrument === unit
+            let unitKept = j >= 0 && unit != nil && noteSink(j) === unit
             let hwKept = j >= 0 && hw != nil && nodes[j].midiOut?.endpoint == hw?.endpoint
             let out = midiOut
             @inline(__always) func off(_ k: Int, unitToo: Bool, hwToo: Bool) {
@@ -306,7 +331,7 @@ public final class Renderer {
     /// Ends the arrangement notes that node `i` still holds. `frame`: the session frame of the note-offs on hardware.
     private func releaseNotes(of i: Int, frame: Int64) {
         let base = held + i * 2048
-        let unit = nodes[i].instrument, target = nodes[i].midiOut
+        let unit = noteSink(i), target = nodes[i].midiOut
         guard unit != nil || target != nil else { return }
         let out = midiOut
         for k in 0..<2048 where base[k] > 0 {
@@ -342,7 +367,7 @@ public final class Renderer {
 
     /// Queues the notes of one block. `startFrame` is in the frames of `events`. Hardware gets each note at
     /// its session frame: `sessionShift` is what to add to an event frame for that (0 for session events).
-    private func send(_ unit: AudioUnitEffect?, _ out: MIDIOutQueue?, _ target: MIDIOutTarget?, _ events: [MIDIEvent],
+    private func send(_ unit: (any MIDIReceiver)?, _ out: MIDIOutQueue?, _ target: MIDIOutTarget?, _ events: [MIDIEvent],
                       startFrame: Int64, sessionShift: Int64, frames: Int, held: UnsafeMutablePointer<UInt8>? = nil) {
         // First event at or after the block start (events are sorted by frame).
         var lo = 0, hi = events.count
@@ -449,17 +474,20 @@ public final class Renderer {
             }
             let target = node.midiOut
             let out = target != nil ? midiOut : nil
-            if transport, node.instrument != nil || out != nil {
+            let sink = noteSink(i)
+            if transport, sink != nil || out != nil {
                 if arrangement > 0 {
-                    send(node.instrument, out, target, node.midi, startFrame: startFrame, sessionShift: sessionOffset, frames: arrangement, held: held + i * 2048)
+                    send(sink, out, target, node.midi, startFrame: startFrame, sessionShift: sessionOffset, frames: arrangement, held: held + i * 2048)
                 }
                 if arrangement < frames { releaseNotes(of: i, frame: startFrame + sessionOffset + Int64(arrangement)) }
-                send(node.instrument, out, target, node.sessionMidi, startFrame: startFrame + sessionOffset, sessionShift: 0, frames: frames,
+                send(sink, out, target, node.sessionMidi, startFrame: startFrame + sessionOffset, sessionShift: 0, frames: frames,
                      held: out != nil ? hwSession + i * 2048 : nil)
             }
             if let instrument = node.instrument {
                 if let slot = instrumentSlots[i] { scheduleAutomation(slot, startFrame: startFrame, frames: frames) }
                 play(instrument, into: l, r, frames: frames)
+            } else if let synth = node.synthUnit, let slot = synthSlots[i] {
+                runSynth(synth, slot, l, r, startFrame: startFrame, frames: frames)
             }
             for slot in chains[i] where !slot.bypassed { runSlot(slot, l, r, startFrame: startFrame, frames: frames) }
 
@@ -596,6 +624,27 @@ public final class Renderer {
                 effect.clock(frame: grid + idleShift, beat: beat, quarterSeconds: quarter)
             }
             effect.process(l + offset, r + offset, frames: count)
+        }
+    }
+
+    /// Runs a built-in instrument for one block, like `runSlot` runs a built-in effect: its automated knobs
+    /// are set at every grid step, and it adds its sound to the node.
+    private func runSynth(_ synth: DSPInstrument, _ slot: Slot, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
+                          startFrame: Int64, frames: Int) {
+        if slot.needsConfigure { synth.configure(slot.live); slot.needsConfigure = false }
+        guard !slot.auto.isEmpty || synth.followsTempo else { synth.render(l, r, frames: frames); return }
+        eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
+            var changed = false
+            for (i, (key, lane)) in slot.auto.enumerated() {
+                guard let v = lane.value(at: grid, sessionOffset: sessionOffset).map(Double.init) ?? slot.base[i] else { continue }
+                if slot.live[key] != v { slot.live[key] = v; changed = true }
+            }
+            if changed { synth.configure(slot.live) }
+            if synth.followsTempo {
+                let (beat, quarter) = songPosition(grid + idleShift)
+                synth.clock(frame: grid + idleShift, beat: beat, quarterSeconds: quarter)
+            }
+            synth.render(l + offset, r + offset, frames: count)
         }
     }
 

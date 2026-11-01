@@ -1449,20 +1449,39 @@ final class AppModel {
         let slot = DeviceSlot(format: "audiounit", identifier: identifier, name: name)
         let target = (track ?? selectedTrack).flatMap { project.track($0) }
         if identifier.hasPrefix("aumu") {
-            if let target, target.kind == .midi {
-                apply(.insertDevice(track: target.id, device: slot, index: 0))
-                selectedTrack = target.id
-            } else {
-                // An instrument needs a MIDI track. Make one.
-                let t = Track(name: name, kind: .midi, colorIndex: project.tracks.count, midiInput: MIDIInputSelection())
-                apply(.batch(commands: [.insertTrack(track: t, index: project.tracks.count),
-                                        .insertDevice(track: t.id, device: slot, index: 0)]))
-                selectedTrack = t.id
-            }
+            placeInstrument(slot, on: target)
         } else {
             guard let target = target ?? project.tracks.first else { status = "Add a track first"; return }
             apply(.insertDevice(track: target.id, device: slot, index: nil))
             selectedTrack = target.id
+        }
+        detailTab = .devices
+        detailOpen = true
+    }
+
+    /// True for a device that plays notes: a built-in instrument, or a hosted one (loaded or not).
+    func isInstrument(_ device: DeviceSlot) -> Bool {
+        if device.format == "builtin" { return BuiltInEffects.spec(device.identifier)?.isInstrument == true }
+        return device.identifier.hasPrefix("aumu") || host.units[device.id]?.isInstrument == true
+    }
+
+    /// Puts an instrument on a MIDI track. On a track that has one, it takes that one's place, like a drop in
+    /// Live. Without a MIDI track it makes one, named after the instrument.
+    private func placeInstrument(_ slot: DeviceSlot, on target: Track?) {
+        if let target, target.kind == .midi {
+            if let old = target.devices.firstIndex(where: isInstrument) {
+                apply(.batch(commands: [.removeDevice(track: target.id, device: target.devices[old].id),
+                                        .insertDevice(track: target.id, device: slot, index: old)]))
+                status = "\(slot.name) took the place of \(target.devices[old].name) on \(target.name)"
+            } else {
+                apply(.insertDevice(track: target.id, device: slot, index: 0))
+            }
+            selectedTrack = target.id
+        } else {
+            let t = Track(name: slot.name, kind: .midi, colorIndex: project.tracks.count, midiInput: MIDIInputSelection())
+            apply(.batch(commands: [.insertTrack(track: t, index: project.tracks.count),
+                                    .insertDevice(track: t.id, device: slot, index: 0)]))
+            selectedTrack = t.id
         }
         detailTab = .devices
         detailOpen = true
@@ -1643,7 +1662,11 @@ final class AppModel {
     /// Adds a built-in effect at the end of a track's chain. Without a track it uses the selected one,
     /// then the first audio track.
     func addEffect(_ id: String, to track: TrackID? = nil) {
-        guard let slot = BuiltInEffects.makeSlot(id) else { return }
+        guard let spec = BuiltInEffects.spec(id), let slot = BuiltInEffects.makeSlot(id) else { return }
+        if spec.isInstrument {
+            placeInstrument(slot, on: (track ?? selectedTrack).flatMap { project.track($0) })
+            return
+        }
         guard let target = track ?? selectedTrack ?? project.tracks.first?.id else { status = "Add a track first"; return }
         apply(.insertDevice(track: target, device: slot, index: nil))
         selectedTrack = target

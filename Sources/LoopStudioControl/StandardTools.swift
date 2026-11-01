@@ -319,16 +319,19 @@ public enum StandardTools {
         })
 
         r.add(Tool(
-            name: "effect_catalog", title: "Built-in effects",
+            name: "effect_catalog", title: "Built-in effects and instruments",
             description: """
-            Every built-in effect with its parameters: key, range, default, unit and choices. Use the effect id with \
-            insertDevice (BuiltInEffects id) and the keys with setDeviceParam. A key with a "Sync" switch and a \
-            "Division" note value follows the song tempo when the switch is 1; the division is an index into "divisions".
+            Every built-in effect and instrument with its parameters: key, range, default, unit and choices. Use the id \
+            with insertDevice (format "builtin") and the keys with setDeviceParam. A key with a "Sync" switch and a \
+            "Division" note value follows the song tempo when the switch is 1; the division is an index into "divisions". \
+            An instrument goes first on a MIDI track and plays the track's notes. "acid" is a 303-style mono bass: a note \
+            at velocity 100 or more is accented, overlapping notes slide. "drum808" is an 808-style kit; "pads" lists each \
+            pad with the MIDI notes that play it and the keys of its knobs.
             """,
             inputSchema: Schema.object(), annotations: .read
         ) { _ in
-            let effects = BuiltInEffects.all.map { spec in
-                JSONValue.object([
+            func describe(_ spec: EffectSpec) -> JSONValue {
+                .object([
                     "id": .string(spec.id), "name": .string(spec.name),
                     "params": .array(spec.params.map { p in
                         var o: [String: JSONValue] = ["key": .string(p.key), "name": .string(p.name), "min": .number(p.min),
@@ -339,7 +342,15 @@ public enum StandardTools {
                     }),
                 ])
             }
-            return .object(["effects": .array(effects), "divisions": .array(NoteDivision.all.map { .string($0.name) })])
+            let pads = BuiltInInstruments.drumPads.map { pad in
+                JSONValue.object(["key": .string(pad.key), "name": .string(pad.name),
+                                  "notes": .array(pad.notes.map { .number(Double($0)) }),
+                                  "params": .array(pad.params.map(JSONValue.string))])
+            }
+            return .object(["effects": .array(BuiltInEffects.all.map(describe)),
+                            "instruments": .array(BuiltInInstruments.all.map(describe)),
+                            "pads": .object(["drum808": .array(pads)]),
+                            "divisions": .array(NoteDivision.all.map { .string($0.name) })])
         })
 
         r.add(Tool(

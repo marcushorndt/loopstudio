@@ -411,6 +411,12 @@ public final class LiveEngine: @unchecked Sendable {
         if old !== monitor { retire(old) }
     }
 
+    /// The built-in instrument that runs for a device, for its display (pad lights, the filter position).
+    /// `nil` while no plan holds it.
+    public func builtInInstrument(_ device: DeviceID) -> DSPInstrument? {
+        locked { renderer?.instance(device) as? DSPInstrument }
+    }
+
     /// The peak of a node since the last call, left and right. For meters.
     public func takePeaks(node: Int) -> (left: Float, right: Float) {
         locked {

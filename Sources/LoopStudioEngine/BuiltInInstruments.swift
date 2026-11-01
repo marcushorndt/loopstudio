@@ -547,7 +547,8 @@ final class Drum808DSP: DSPInstrument, @unchecked Sendable {
         var anyOn = false
         for i in 0..<Self.padCount where voices[i].on || voices[i].env > 1e-4 { anyOn = true; break }
         guard anyOn else { return }
-        let vol = volume
+        // The kit sits about 6 dB under full scale at its defaults, so a kick plus hats do not clip the track.
+        let vol = volume * 0.5
         let metallicOn = voices[8].env > 1e-4 || voices[9].env > 1e-4 || voices[9].env2 > 1e-4 || voices[10].env > 1e-4
         for n in 0..<frames {
             // The hats share one source and one high-pass, so the filter ticks once per sample.

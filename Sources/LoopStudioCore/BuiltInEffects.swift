@@ -175,6 +175,8 @@ public enum BuiltInInstruments {
         EffectParam("cutoff", "Cutoff", 60, 18_000, 700, unit: "Hz", log: true),
         EffectParam("resonance", "Resonance", 0, 1, 0.65),
         EffectParam("envMod", "Env Mod", 0, 1, 0.6),
+        // How far the cutoff follows the note: 1 is a full octave per octave, measured from C3.
+        EffectParam("keyTrack", "Key", 0, 1, 0.3),
         EffectParam("decay", "Decay", 50, 3_000, 400, unit: "ms", log: true),
         EffectParam("accent", "Accent", 0, 1, 0.7),
         EffectParam("slide", "Slide", 5, 500, 60, unit: "ms", log: true),

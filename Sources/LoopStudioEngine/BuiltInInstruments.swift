@@ -248,7 +248,7 @@ final class AcidBassDSP: DSPInstrument, @unchecked Sendable {
     // Knobs.
     private var square = false
     private var tune: Float = 0, sub: Float = 0
-    private var cutoff: Float = 700, resonance: Float = 0.65, envMod: Float = 0.6
+    private var cutoff: Float = 700, resonance: Float = 0.65, envMod: Float = 0.6, keyTrack: Float = 0.3
     private var decayMs: Float = 400, accentAmount: Float = 0.7, slideMs: Float = 60
     private var drive: Float = 0.15, gain: Float = 0.5
 
@@ -287,6 +287,7 @@ final class AcidBassDSP: DSPInstrument, @unchecked Sendable {
         square = value(p, "wave") >= 0.5
         tune = value(p, "tune"); sub = value(p, "sub")
         cutoff = value(p, "cutoff"); resonance = value(p, "resonance"); envMod = value(p, "envMod")
+        keyTrack = value(p, "keyTrack")
         decayMs = value(p, "decay"); accentAmount = value(p, "accent"); slideMs = value(p, "slide")
         drive = value(p, "drive"); gain = dbToLinear(value(p, "volume"))
         // The knob decay takes the filter envelope to 10 %. An accented note uses the fixed, short decay.
@@ -378,8 +379,8 @@ final class AcidBassDSP: DSPInstrument, @unchecked Sendable {
                 vca += (0 - vca) * releaseCoefficient
             }
 
-            // The filter follows its envelope, the accent adds a slower sweep.
-            let octaves = envMod * 4.5 * meg + accentLevel * 3 * accentEnv
+            // The filter follows its envelope and, by the key tracking, the note; the accent adds a slower sweep.
+            let octaves = envMod * 4.5 * meg + accentLevel * 3 * accentEnv + keyTrack * (pitch + tune - 48) / 12
             let fc = min(cutoff * exp2f(octaves), rate * 0.45)
             liveCutoff = fc
             ladder.set(cutoff: fc, resonance: res, rate: rate)

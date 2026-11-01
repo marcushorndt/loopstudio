@@ -95,7 +95,7 @@ struct AcidBassView: View {
             SectionDivider()
             KnobSection(title: "Oscillator") { knob("wave"); knob("tune"); knob("sub") }
             SectionDivider()
-            KnobSection(title: "Filter") { knob("cutoff"); knob("resonance"); knob("envMod"); knob("decay") }
+            KnobSection(title: "Filter") { knob("cutoff"); knob("resonance"); knob("envMod"); knob("keyTrack"); knob("decay") }
             SectionDivider()
             KnobSection(title: "Accent · Slide") { knob("accent"); knob("slide") }
                 .hint("Accent: a note at velocity \(BuiltInInstruments.accentVelocity) or more is louder, with a filter kick. Slide: a note that overlaps the one before glides to it.")

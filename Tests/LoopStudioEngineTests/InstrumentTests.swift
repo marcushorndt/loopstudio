@@ -193,6 +193,28 @@ private func frame(_ seconds: Double) -> Int { Int(seconds * rate) }
     #expect(rms(short[frame(0.15)..<frame(0.4)]) < rms(wet[frame(0.15)..<frame(0.4)]) * 0.2)
 }
 
+@Test func theClapNoiseLayerAddsAirWithItsOwnTail() {
+    let body = play("drum808", ["cp.noise": 0, "cp.random": 0], [(0, 0x90, 39, 110)], seconds: 0.5)
+    let airy = play("drum808", ["cp.noise": 1, "cp.noiseFilter": 6_000, "cp.random": 0], [(0, 0x90, 39, 110)], seconds: 0.5)
+    #expect(brightness(airy[..<frame(0.05)]) > brightness(body[..<frame(0.05)]) * 1.3, "white noise over a high-pass is brighter than the body")
+    // The noise tail outlasts the body tail when its decay is longer.
+    let longAir = play("drum808", ["cp.noise": 1, "cp.tail": 1, "cp.decay": 60, "cp.noiseDecay": 1_500, "cp.random": 0], [(0, 0x90, 39, 110)], seconds: 0.6)
+    let shortAir = play("drum808", ["cp.noise": 1, "cp.tail": 1, "cp.decay": 60, "cp.noiseDecay": 40, "cp.random": 0], [(0, 0x90, 39, 110)], seconds: 0.6)
+    #expect(rms(longAir[frame(0.3)..<frame(0.5)]) > rms(shortAir[frame(0.3)..<frame(0.5)]) * 5)
+}
+
+@Test func theShapeKnobMakesTheClapsDiffer() {
+    // With shape, the claps of one burst get different lengths; the burst as a whole still sounds.
+    let same = play("drum808", ["cp.shape": 0, "cp.tuneRandom": 0, "cp.random": 0, "cp.count": 6, "cp.space": 30, "cp.tail": 0, "cp.noise": 0], [(0, 0x90, 39, 110)], seconds: 0.3)
+    let varied = play("drum808", ["cp.shape": 1, "cp.tuneRandom": 0, "cp.random": 0, "cp.count": 6, "cp.space": 30, "cp.tail": 0, "cp.noise": 0], [(0, 0x90, 39, 110)], seconds: 0.3)
+    // Each clap sits in its own 30 ms window; without shape the windows carry the same energy.
+    let windows = { (x: [Float]) in (0..<6).map { rms(x[frame(Double($0) * 0.03)..<frame(Double($0) * 0.03 + 0.03)]) } }
+    let a = windows(same), b = windows(varied)
+    let spread = { (w: [Float]) in (w.max()! - w.min()!) / w.max()! }
+    #expect(spread(a) < 0.25, "\(a)")
+    #expect(spread(b) > spread(a) * 2, "\(b)")
+}
+
 @Test func kickDecayKnobSetsTheLength() {
     let short = play("drum808", ["bd.decay": 100], [(0, 0x90, 36, 110)], seconds: 0.6)
     let long = play("drum808", ["bd.decay": 1_500], [(0, 0x90, 36, 110)], seconds: 0.6)

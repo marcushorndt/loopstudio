@@ -511,6 +511,7 @@ private struct NoteView: View {
     @State private var endEdge: CGFloat = 0
 
     private var selected: Bool { model.selectedNotes.contains(note) }
+    private var copying: Bool { if case .copy? = dragMode { return true } else { return false } }
     private var pxPerTick: CGFloat { pxPerBeat / CGFloat(Tick.perQuarter) }
     private func px(_ ticks: Int64) -> CGFloat { CGFloat(ticks) * pxPerTick }
     /// The shortest note: a grid step, or a 1/128 when the grid is off.
@@ -522,7 +523,16 @@ private struct NoteView: View {
         let w = max(4, px(note.length.rawValue) - startEdge + endEdge)
         let y = CGFloat(highPitch - Int(note.pitch)) * rowHeight
         let dragging = target != nil
+        // Copying: the original stays where it is, a copy follows the pointer.
+        let shift = copying ? .zero : move
         ZStack(alignment: .topLeading) {
+            if copying {
+                RoundedRectangle(cornerRadius: 2).fill(tint.opacity(0.5))
+                    .overlay(RoundedRectangle(cornerRadius: 2).stroke(Color.white.opacity(0.7), lineWidth: 1))
+                    .frame(width: max(4, px(note.length.rawValue)), height: rowHeight - 1)
+                    .offset(x: px(note.tick.rawValue) + move.width, y: y + move.height)
+                    .allowsHitTesting(false)
+            }
             if let target {
                 // The placeholder: where the note lands when the drag ends.
                 RoundedRectangle(cornerRadius: 2).fill(tint.opacity(0.3))
@@ -536,10 +546,10 @@ private struct NoteView: View {
                 .fill(note.muted ? tint.opacity(0.12) : tint.opacity(0.45 + 0.55 * Double(note.velocity) / 127))
                 .overlay(RoundedRectangle(cornerRadius: 2).stroke(selected ? Color.white : (note.muted ? tint.opacity(0.7) : .black.opacity(0.5)), lineWidth: selected ? 1.5 : (note.muted ? 1 : 0.5)))
                 .frame(width: w, height: rowHeight - 1)
-                .opacity(dragging ? 0.6 : 1)
+                .opacity(dragging && !copying ? 0.6 : 1)
                 .overlay(alignment: .leading) { edge { startEdge = px(newStart($0) - note.tick.rawValue) } end: { resize(start: $0) } }
                 .overlay(alignment: .trailing) { edge { endEdge = px(newLength($0) - note.length.rawValue) } end: { resize(end: $0) } }
-                .offset(x: x + move.width, y: y + move.height)
+                .offset(x: x + shift.width, y: y + shift.height)
                 // Global coordinates: the note moves under the pointer, so its own space would shift with it.
                 .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .global)
                     .onChanged { g in

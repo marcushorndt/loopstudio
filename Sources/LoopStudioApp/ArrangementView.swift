@@ -291,8 +291,8 @@ private struct Lane: View {
         .gesture(SpatialTapGesture(count: 2).onEnded { v in
             if track.kind == .midi { model.createMIDIClip(track: track.id, at: xTick(v.location.x, model)) }
         })
-        .dropDestination(for: URL.self) { urls, location in
-            model.dropOnTimeline(urls, track: track.id, at: xTick(location.x, model))
+        .dropDestination(for: DropItem.self) { items, location in
+            model.dropOnTimeline(items, track: track.id, at: xTick(location.x, model))
         }
     }
 }

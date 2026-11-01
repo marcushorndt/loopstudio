@@ -113,7 +113,7 @@ struct SessionView: View {
             .layoutPriority(2)
         }
         .background(Theme.background)
-        .dropDestination(for: URL.self) { urls, _ in model.dropOnNewTrack(urls) }
+        .dropDestination(for: DropItem.self) { items, _ in model.dropOnNewTrack(items) }
         .onChange(of: model.selectedTrack) { _, id in reveal(id, in: tracks) }
         .onChange(of: model.selectedSceneRow) { _, row in reveal(row: row) }
     }
@@ -205,7 +205,7 @@ private struct SlotCell: View {
                 cell(.empty, look: SlotLook(.empty, blink: false))
             }
         }
-        .dropDestination(for: URL.self) { urls, _ in model.dropOnSlot(urls, track: track.id, row: row) }
+        .dropDestination(for: DropItem.self) { items, _ in model.dropOnSlot(items, track: track.id, row: row) }
     }
 
     @ViewBuilder
@@ -367,7 +367,7 @@ private struct NewTrackColumn: View {
             Spacer()
         }
         .frame(width: columnWidth * 0.6, height: CGFloat(rows) * (slotHeight + gap) + 30)
-        .dropDestination(for: URL.self) { urls, _ in model.dropOnNewTrack(urls) }
+        .dropDestination(for: DropItem.self) { items, _ in model.dropOnNewTrack(items) }
     }
 }
 

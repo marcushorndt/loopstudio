@@ -171,10 +171,26 @@ private func frame(_ seconds: Double) -> Int { Int(seconds * rate) }
     let notes = BuiltInInstruments.drumPads.flatMap(\.notes)
     #expect(Set(notes).count == notes.count, "no note plays two pads")
     for pad in BuiltInInstruments.drumPads {
-        for key in pad.params { #expect(BuiltInInstruments.drums.param(key) != nil, "\(pad.key) uses \(key)") }
+        for key in pad.params + pad.random { #expect(BuiltInInstruments.drums.param(key) != nil, "\(pad.key) uses \(key)") }
         #expect(pad.params.last?.hasSuffix(".level") == true, "the last knob of \(pad.name) is its level")
     }
     for key in BuiltInInstruments.drumKitParams { #expect(BuiltInInstruments.drums.param(key) != nil) }
+}
+
+@Test func moreClapsMakeALongerBurst() {
+    let one = play("drum808", ["cp.count": 1, "cp.tail": 0, "cp.random": 0], [(0, 0x90, 39, 110)], seconds: 0.3)
+    let many = play("drum808", ["cp.count": 10, "cp.space": 15, "cp.tail": 0, "cp.random": 0], [(0, 0x90, 39, 110)], seconds: 0.3)
+    // Ten claps 15 ms apart still sound between 60 and 150 ms; one clap is long gone.
+    #expect(rms(one[frame(0.06)..<frame(0.15)]) < rms(many[frame(0.06)..<frame(0.15)]) * 0.2)
+    #expect(peak(one[..<frame(0.02)]) > 0.05, "the single clap itself is as loud")
+}
+
+@Test func theClapTailIsAudibleAndItsDecaySetsTheLength() {
+    let dry = play("drum808", ["cp.tail": 0, "cp.random": 0], [(0, 0x90, 39, 110)], seconds: 0.5)
+    let wet = play("drum808", ["cp.tail": 1, "cp.decay": 1_000, "cp.random": 0], [(0, 0x90, 39, 110)], seconds: 0.5)
+    let short = play("drum808", ["cp.tail": 1, "cp.decay": 80, "cp.random": 0], [(0, 0x90, 39, 110)], seconds: 0.5)
+    #expect(rms(wet[frame(0.15)..<frame(0.4)]) > rms(dry[frame(0.15)..<frame(0.4)]) * 10)
+    #expect(rms(short[frame(0.15)..<frame(0.4)]) < rms(wet[frame(0.15)..<frame(0.4)]) * 0.2)
 }
 
 @Test func kickDecayKnobSetsTheLength() {

@@ -197,8 +197,19 @@ public enum BuiltInInstruments {
         EffectParam("sd.snappy", "Snappy", 0, 1, 0.6),
         EffectParam("sd.decay", "Decay", 50, 1_000, 200, unit: "ms", log: true),
         EffectParam("sd.level", "Level", -24, 6, 0, unit: "dB"),
-        EffectParam("cp.decay", "Decay", 50, 1_500, 300, unit: "ms", log: true),
+        // The clap: a burst of claps (each its own hand), then a tail. The random knobs give each clap its own
+        // timing and level, tune, filter and place in the stereo picture.
+        EffectParam("cp.count", "Claps", 1, 12, 3),
+        EffectParam("cp.space", "Spacing", 4, 60, 10, unit: "ms"),
+        EffectParam("cp.tune", "Tune", 400, 5_000, 1_300, unit: "Hz", log: true),
+        EffectParam("cp.filter", "Filter", 1_000, 18_000, 12_000, unit: "Hz", log: true),
+        EffectParam("cp.tail", "Tail", 0, 1, 0.7),
+        EffectParam("cp.decay", "Decay", 50, 3_000, 600, unit: "ms", log: true),
         EffectParam("cp.level", "Level", -24, 6, 0, unit: "dB"),
+        EffectParam("cp.random", "Timing", 0, 1, 0.2),
+        EffectParam("cp.tuneRandom", "Tune", 0, 1, 0),
+        EffectParam("cp.filterRandom", "Filter", 0, 1, 0),
+        EffectParam("cp.panRandom", "Pan", 0, 1, 0),
         EffectParam("rs.tune", "Tune", -12, 12, 0, unit: "st"),
         EffectParam("rs.level", "Level", -24, 6, 0, unit: "dB"),
         EffectParam("lt.tune", "Tune", -12, 12, 0, unit: "st"),
@@ -237,13 +248,16 @@ public enum BuiltInInstruments {
         public var params: [String]
         /// Where the pad sits in the stereo picture at full spread, -1 (left) to 1 (right).
         public var pan: Double
+        /// Knobs that add chance to the pad, shown in their own section. Empty for most pads.
+        public var random: [String] = []
     }
 
     /// The pads in display order: four per row, three rows.
     public static let drumPads: [DrumPad] = [
         DrumPad(key: "bd", name: "Kick", notes: [36, 35], params: ["bd.tune", "bd.decay", "bd.tone", "bd.level"], pan: 0),
         DrumPad(key: "sd", name: "Snare", notes: [38, 40], params: ["sd.tune", "sd.snappy", "sd.decay", "sd.level"], pan: 0),
-        DrumPad(key: "cp", name: "Clap", notes: [39], params: ["cp.decay", "cp.level"], pan: 0.25),
+        DrumPad(key: "cp", name: "Clap", notes: [39], params: ["cp.count", "cp.space", "cp.tune", "cp.filter", "cp.tail", "cp.decay", "cp.level"], pan: 0.25,
+                random: ["cp.random", "cp.tuneRandom", "cp.filterRandom", "cp.panRandom"]),
         DrumPad(key: "rs", name: "Rimshot", notes: [37], params: ["rs.tune", "rs.level"], pan: -0.3),
         DrumPad(key: "lt", name: "Low Tom", notes: [41, 43], params: ["lt.tune", "tom.decay", "tom.level"], pan: -0.5),
         DrumPad(key: "mt", name: "Mid Tom", notes: [45, 47], params: ["mt.tune", "tom.decay", "tom.level"], pan: 0),

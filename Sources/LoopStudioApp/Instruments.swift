@@ -186,6 +186,12 @@ struct Drum808View: View {
                 ForEach(pad.params, id: \.self) { knob($0) }
             }
             .id(pad.key)
+            if !pad.random.isEmpty {
+                SectionDivider()
+                KnobSection(title: "Random") { ForEach(pad.random, id: \.self) { knob($0) } }
+                    .id(pad.key + "-random")
+                    .hint("Chance per clap: its timing and level, its tune, its filter, its place left or right")
+            }
             SectionDivider()
             KnobSection(title: "Kit") { ForEach(BuiltInInstruments.drumKitParams, id: \.self) { knob($0) } }
         }

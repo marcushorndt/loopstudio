@@ -346,7 +346,8 @@ public enum StandardTools {
             let pads = BuiltInInstruments.drumPads.map { pad in
                 JSONValue.object(["key": .string(pad.key), "name": .string(pad.name),
                                   "notes": .array(pad.notes.map { .number(Double($0)) }),
-                                  "params": .array(pad.params.map(JSONValue.string))])
+                                  "params": .array(pad.params.map(JSONValue.string)),
+                                  "random": .array(pad.random.map(JSONValue.string))])
             }
             return .object(["effects": .array(BuiltInEffects.all.map(describe)),
                             "instruments": .array(BuiltInInstruments.all.map(describe)),

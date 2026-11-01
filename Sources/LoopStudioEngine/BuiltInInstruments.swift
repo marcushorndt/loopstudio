@@ -420,6 +420,12 @@ final class Drum808DSP: DSPInstrument, @unchecked Sendable {
         var t = 0               // frames since the hit
         var vel: Float = 0
         var on = false
+        // The clap: claps still to come, the frame of the next one, and the level and place of the current one.
+        var left = 0
+        var next = 0
+        var lvl: Float = 1
+        var gl: Float = 0.707
+        var gr: Float = 0.707
     }
 
     private static let padCount = 12
@@ -438,6 +444,8 @@ final class Drum808DSP: DSPInstrument, @unchecked Sendable {
     private var bdHz: Float = 55, bdDecay: Float = 0.999, bdTone: Float = 0.4
     private var sdHz: Float = 185, sdSnappy: Float = 0.6, sdDecay: Float = 0.999
     private var cpDecay: Float = 0.999
+    private var cpCount = 3, cpSpaceFrames: Float = 480, cpRandom: Float = 0.2, cpTail: Float = 0.7, cpPan: Float = 0
+    private var cpTuneHz: Float = 1_300, cpTuneRandom: Float = 0, cpFilterHz: Float = 12_000, cpFilterRandom: Float = 0, cpPanRandom: Float = 0
     private var rsHz: Float = 1_700
     private var ltHz: Float = 80, mtHz: Float = 120, htHz: Float = 165, tomDecay: Float = 0.999
     private var cbHz: Float = 587
@@ -450,7 +458,7 @@ final class Drum808DSP: DSPInstrument, @unchecked Sendable {
     private let cbDecayA: Float, cbDecayB: Float, clDecay: Float, chokeDecay: Float
 
     // Filters.
-    private var sdNoise = Biquad(), cpBand = Biquad(), cbBand = Biquad()
+    private var sdNoise = Biquad(), cpBand = Biquad(), cpLow = Biquad(), cbBand = Biquad()
     private var hhHigh = Biquad(), cyBandA = Biquad(), cyBandB = Biquad()
     // The metallic oscillators of the hats and the cymbal: six squares at the 808's frequencies.
     private static let metallicHz: [Float] = [205.3, 304.4, 369.6, 522.7, 540, 800]
@@ -481,7 +489,17 @@ final class Drum808DSP: DSPInstrument, @unchecked Sendable {
         super.init(spec: spec, sampleRate: sampleRate)
         sdNoise.highpass(1_400, q: 0.8, rate: sampleRate)
         cpBand.bandpass(1_300, q: 1.4, rate: sampleRate)
+        cpLow.lowpass(12_000, q: 0.7, rate: sampleRate)
         cbBand.bandpass(2_640, q: 2.2, rate: sampleRate)
+    }
+
+    /// New coefficients for a running filter; its state stays, so the sound does not click.
+    private func retune(_ f: inout Biquad, band hz: Float, q: Double) {
+        var n = Biquad(); n.bandpass(Double(min(max(hz, 20), rate * 0.45)), q: q, rate: Double(rate)); n.z1 = f.z1; n.z2 = f.z2; f = n
+    }
+
+    private func retune(_ f: inout Biquad, low hz: Float) {
+        var n = Biquad(); n.lowpass(Double(min(max(hz, 100), rate * 0.45)), q: 0.7, rate: Double(rate)); n.z1 = f.z1; n.z2 = f.z2; f = n
     }
 
     deinit {
@@ -494,6 +512,13 @@ final class Drum808DSP: DSPInstrument, @unchecked Sendable {
         bdHz = 55 * st("bd.tune"); bdDecay = decayCoefficient(ms: value(p, "bd.decay"), rate: r); bdTone = value(p, "bd.tone")
         sdHz = 185 * st("sd.tune"); sdSnappy = value(p, "sd.snappy"); sdDecay = decayCoefficient(ms: value(p, "sd.decay"), rate: r)
         cpDecay = decayCoefficient(ms: value(p, "cp.decay"), rate: r)
+        cpCount = max(1, Int(value(p, "cp.count").rounded()))
+        cpSpaceFrames = value(p, "cp.space") / 1000 * r
+        cpRandom = value(p, "cp.random"); cpTail = value(p, "cp.tail")
+        cpTuneHz = value(p, "cp.tune"); cpTuneRandom = value(p, "cp.tuneRandom")
+        cpFilterHz = value(p, "cp.filter"); cpFilterRandom = value(p, "cp.filterRandom"); cpPanRandom = value(p, "cp.panRandom")
+        retune(&cpBand, band: cpTuneHz, q: 1.4)
+        retune(&cpLow, low: cpFilterHz)
         rsHz = 1_700 * st("rs.tune")
         ltHz = 80 * st("lt.tune"); mtHz = 120 * st("mt.tune"); htHz = 165 * st("ht.tune")
         tomDecay = decayCoefficient(ms: value(p, "tom.decay"), rate: r)
@@ -510,6 +535,7 @@ final class Drum808DSP: DSPInstrument, @unchecked Sendable {
             let pan = Float(pad.pan) * spread
             let angle = (pan + 1) * 0.25 * Float.pi
             gainL[i] = cosf(angle); gainR[i] = sinf(angle)
+            if i == 2 { cpPan = pan }
         }
         // The hats: the tone knob moves the high-pass from 4 kHz to 11 kHz. The cymbal: two bands around it.
         var f = Biquad(); f.highpass(Double(4_000 * exp2f(value(p, "hh.tone") * 1.5)), q: 1.0, rate: Double(r))
@@ -521,7 +547,7 @@ final class Drum808DSP: DSPInstrument, @unchecked Sendable {
 
     override func clearState() {
         for i in 0..<Self.padCount { voices[i] = Voice(); peak[i] = 0 }
-        sdNoise.reset(); cpBand.reset(); cbBand.reset(); hhHigh.reset(); cyBandA.reset(); cyBandB.reset()
+        sdNoise.reset(); cpBand.reset(); cpLow.reset(); cbBand.reset(); hhHigh.reset(); cyBandA.reset(); cyBandB.reset()
     }
 
     override func noteOn(_ note: UInt8, _ velocity: UInt8) {
@@ -535,6 +561,13 @@ final class Drum808DSP: DSPInstrument, @unchecked Sendable {
         voice.env = 1
         voice.env2 = 1
         voice.penv = 1
+        if i == 2 {
+            // The clap: the first clap falls on this frame, the tail starts with the last one.
+            voice.left = cpCount
+            voice.next = 0
+            voice.env2 = 0
+            voice.penv = 0
+        }
         voices[i] = voice
         // A closed hat chokes the open hat, as the 808's one hat voice does.
         if i == 8, voices[9].on { voices[9].on = false }
@@ -580,8 +613,9 @@ final class Drum808DSP: DSPInstrument, @unchecked Sendable {
                 if v.env < 1e-4, v.env2 < 1e-4 { v.on = false; v.env = 0; v.env2 = 0 }
                 voices[i] = v
                 s *= v.vel * level[i] * vol
-                l[n] += s * gainL[i]
-                r[n] += s * gainR[i]
+                // The clap places each of its claps on its own; every other pad sits where the spread put it.
+                l[n] += s * (i == 2 ? v.gl : gainL[i])
+                r[n] += s * (i == 2 ? v.gr : gainR[i])
             }
         }
     }
@@ -618,17 +652,29 @@ final class Drum808DSP: DSPInstrument, @unchecked Sendable {
         return tanhf((body * 0.6 + snap) * 1.2)
     }
 
+    /// A burst of `cpCount` claps, `cpSpaceFrames` apart, then a tail that starts with the last clap. So the
+    /// whole envelope grows with the count. Each clap is its own hand: the random knobs give it its own level
+    /// and timing, tune (the band the noise sits in), filter and place in the stereo picture.
     private func clap(_ v: inout Voice) -> Float {
-        // Three bursts about ten milliseconds apart, then a tail.
-        if v.t < 3 * clapBurst {
-            if v.t % clapBurst == 0 { v.env2 = 1 }
-            v.env2 *= clapBurstDecay
-        } else {
-            v.env2 *= cpDecay
-            if v.t == 3 * clapBurst { v.env2 = 0.8 }
+        if v.left > 0, v.t >= v.next {
+            v.left -= 1
+            v.env2 = 1
+            v.lvl = 1 - cpRandom * 0.5 * (0.5 + 0.5 * noise.next())
+            let pan = min(max(cpPan + cpPanRandom * noise.next(), -1), 1)
+            let angle = (pan + 1) * 0.25 * Float.pi
+            v.gl = cosf(angle); v.gr = sinf(angle)
+            if cpTuneRandom > 0 { retune(&cpBand, band: cpTuneHz * exp2f(cpTuneRandom * noise.next()), q: 1.4) }
+            if cpFilterRandom > 0 { retune(&cpLow, low: cpFilterHz * exp2f(cpFilterRandom * 1.5 * noise.next())) }
+            let space = cpSpaceFrames * (1 + cpRandom * 0.7 * noise.next())
+            v.next = v.t + max(Int(0.002 * rate), Int(space))
+            if v.left == 0 { v.penv = cpTail }
         }
-        v.env = v.env2 // for the "is it done" check and the pad light
-        return cpBand.tick(noise.next()) * v.env2 * 2.2
+        v.env2 *= clapBurstDecay
+        if v.left == 0 { v.penv *= cpDecay }
+        // The voice stays on while claps are still to come; the pad light follows the louder envelope.
+        v.env = v.left > 0 ? 1 : max(v.env2, v.penv)
+        let amp = v.env2 * v.lvl + v.penv
+        return cpLow.tick(cpBand.tick(noise.next())) * amp * 2.2
     }
 
     private func rimshot(_ v: inout Voice) -> Float {

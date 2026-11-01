@@ -11,6 +11,7 @@ enum AppAction: String, CaseIterable, Identifiable {
     case insertScene, deleteScene, duplicateScene
     case toggleKeyboardMIDI, midiLearn
     case moveUp, moveDown, moveLeft, moveRight, launchSelected
+    case noteOctaveUp, noteOctaveDown, noteLonger, noteShorter, snapNotes
     case sessionView, arrangementView, switchView, toggleDetail, toggleAutomation, showShortcuts
 
     var id: String { rawValue }
@@ -26,6 +27,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .insertScene, .deleteScene, .duplicateScene: .scene
         case .toggleKeyboardMIDI, .midiLearn: .transport
         case .moveUp, .moveDown, .moveLeft, .moveRight, .launchSelected: .navigate
+        case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .snapNotes: .edit
         case .sessionView, .arrangementView, .switchView, .toggleDetail, .toggleAutomation, .showShortcuts: .view
         }
     }
@@ -69,10 +71,15 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .midiLearn: "MIDI Learn"
         case .duplicateScene: "Duplicate Scene"
         case .toggleKeyboardMIDI: "Computer Keyboard as MIDI Keys"
-        case .moveUp: "Select Up"
-        case .moveDown: "Select Down"
-        case .moveLeft: "Select Left"
-        case .moveRight: "Select Right"
+        case .moveUp: "Select Up (marked notes: a semitone up)"
+        case .moveDown: "Select Down (marked notes: a semitone down)"
+        case .moveLeft: "Select Left (marked notes: a grid step earlier)"
+        case .moveRight: "Select Right (marked notes: a grid step later)"
+        case .noteOctaveUp: "Marked Notes an Octave Up"
+        case .noteOctaveDown: "Marked Notes an Octave Down"
+        case .noteLonger: "Marked Notes a Grid Step Longer"
+        case .noteShorter: "Marked Notes a Grid Step Shorter"
+        case .snapNotes: "Snap Notes to Grid"
         case .launchSelected: "Launch Selected Clip or Scene"
         case .sessionView: "Session View"
         case .arrangementView: "Arrangement View"
@@ -120,6 +127,11 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .moveDown: KeyBinding("\u{F701}", [])
         case .moveLeft: KeyBinding("\u{F702}", [])
         case .moveRight: KeyBinding("\u{F703}", [])
+        case .noteOctaveUp: KeyBinding("\u{F700}", .shift)
+        case .noteOctaveDown: KeyBinding("\u{F701}", .shift)
+        case .noteShorter: KeyBinding("\u{F702}", .shift)
+        case .noteLonger: KeyBinding("\u{F703}", .shift)
+        case .snapNotes: KeyBinding("4", .command)
         case .launchSelected: KeyBinding("\r", [])
         case .sessionView: KeyBinding("1", .command)
         case .arrangementView: KeyBinding("2", .command)
@@ -134,7 +146,12 @@ enum AppAction: String, CaseIterable, Identifiable {
 
 extension AppAction {
     /// True for the arrow keys: holding one moves on at the key repeat rate.
-    var repeats: Bool { self == .moveUp || self == .moveDown || self == .moveLeft || self == .moveRight }
+    var repeats: Bool {
+        switch self {
+        case .moveUp, .moveDown, .moveLeft, .moveRight, .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter: true
+        default: false
+        }
+    }
 }
 
 struct KeyBinding {

@@ -36,6 +36,7 @@ extension AppModel {
         case .backToArrangement, .captureSession: arrangementOverridden
         case .renameTrack: selectedTrack != nil || selectedClip != nil
         case .groupTracks, .duplicateTrack: selectedTrack != nil
+        case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter: markedMIDIClip != nil
         case .exportAudio: !exporting
         default: true
         }
@@ -89,6 +90,11 @@ extension AppModel {
         case .moveDown: moveSelection(rows: 1, tracks: 0)
         case .moveLeft: moveSelection(rows: 0, tracks: -1)
         case .moveRight: moveSelection(rows: 0, tracks: 1)
+        case .noteOctaveUp: nudgeNotes(pitch: 12)
+        case .noteOctaveDown: nudgeNotes(pitch: -12)
+        case .noteLonger: nudgeNotes(length: noteStep)
+        case .noteShorter: nudgeNotes(length: -noteStep)
+        case .snapNotes: snapNotes.toggle(); status = snapNotes ? "Notes snap to the grid" : "Snap off: notes land on the exact tick"
         case .launchSelected: launchSelection()
         case .sessionView: viewMode = .session
         case .arrangementView: viewMode = .arrangement
@@ -124,6 +130,11 @@ extension AppModel {
     /// In the Session view the master is the last column (the scene buttons), and the row under the last
     /// slot row holds the stop buttons.
     func moveSelection(rows: Int, tracks: Int) {
+        // Marked notes in the open clip take the arrow keys: up and down transpose, left and right move in time.
+        if markedMIDIClip != nil {
+            nudgeNotes(pitch: -rows, time: Int64(tracks) * noteStep)
+            return
+        }
         let columns = viewMode == .session ? orderedTracks + [project.master] : orderedTracks
         guard !columns.isEmpty else { return }
         let current = selectedTrack.flatMap { id in columns.firstIndex { $0.id == id } } ?? 0
@@ -139,6 +150,45 @@ extension AppModel {
         selectedSceneRow = row
         let track = columns[column]
         selectedClip = row < track.slots.count && track.kind != .master ? track.slots[row]?.clip.id : nil
+    }
+
+    /// The step of the arrow keys on notes: the grid of the piano roll at its zoom.
+    var noteStep: Int64 { max(1, noteGrid) }
+
+    /// The open MIDI clip, when notes in it are marked.
+    var markedMIDIClip: MIDIClip? {
+        guard !selectedNotes.isEmpty, let id = selectedClip, case .midi(let m)? = project.findClip(id)?.1 else { return nil }
+        return m
+    }
+
+    /// Moves the marked notes: `pitch` in semitones, `time` in ticks, `length` in ticks. Notes stay in the
+    /// clip and the key range, a note never gets shorter than a sixty-fourth, and the marking follows them.
+    /// A held key repeats into one undo step per key.
+    func nudgeNotes(pitch: Int = 0, time: Int64 = 0, length: Int64 = 0) {
+        guard let m = markedMIDIClip else { return }
+        let marked = m.notes.filter { selectedNotes.contains($0) }
+        guard !marked.isEmpty else { return }
+        // The whole group stops at the edges, so the chord or the phrase keeps its shape.
+        let lowest = marked.map { Int($0.pitch) }.min()!, highest = marked.map { Int($0.pitch) }.max()!
+        let dp = min(max(pitch, -lowest), 127 - highest)
+        let first = marked.map(\.tick.rawValue).min()!, last = marked.map(\.tick.rawValue).max()!
+        let dt = min(max(time, -first), max(0, m.length.rawValue - noteStep) - last)
+        guard dp != 0 || dt != 0 || length != 0 else { return }
+        var moved: Set<MIDINote> = []
+        let notes = m.notes.map { n -> MIDINote in
+            guard selectedNotes.contains(n) else { return n }
+            var x = n
+            x.pitch = UInt8(Int(n.pitch) + dp)
+            x.tick = Tick(n.tick.rawValue + dt)
+            let room = max(Tick.perQuarter / 16, m.length.rawValue - x.tick.rawValue)
+            x.length = Tick(min(max(Tick.perQuarter / 16, n.length.rawValue + length), room))
+            moved.insert(x)
+            return x
+        }
+        let key = "nudge\(m.id)\(dp != 0 ? "p" : "")\(dt != 0 ? "t" : "")\(length != 0 ? "l" : "")"
+        setNotes(m.id, notes, key: key)
+        selectedNotes = moved
+        if previewNotes, let note = moved.min(by: { ($0.tick, $0.pitch) < ($1.tick, $1.pitch) }), dp != 0 { auditionNote(note.pitch) }
     }
 
     /// The selection sits on the row of stop buttons.

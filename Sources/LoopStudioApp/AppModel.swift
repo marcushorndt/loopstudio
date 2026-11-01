@@ -141,6 +141,12 @@ final class AppModel {
     var previewNotes: Bool = UserDefaults.standard.object(forKey: "previewNotes") as? Bool ?? true {
         didSet { UserDefaults.standard.set(previewNotes, forKey: "previewNotes") }
     }
+    /// The piano roll snaps notes to its grid. Off, a note lands on the exact tick under the pointer. Kept between launches.
+    var snapNotes: Bool = UserDefaults.standard.object(forKey: "snapNotes") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(snapNotes, forKey: "snapNotes") }
+    }
+    /// The grid step of the open piano roll, in ticks. It follows the zoom, and the arrow keys move notes by it.
+    var noteGrid: Int64 = Tick.perQuarter / 4
     /// Columns of the clip panel folded to a thin strip, so the editor gets their room. Kept between launches.
     var foldedSections: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "foldedSections") ?? []) {
         didSet { UserDefaults.standard.set(Array(foldedSections), forKey: "foldedSections") }
@@ -527,7 +533,19 @@ final class AppModel {
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.saveOnQuit() }
         }
+        // `pkill`, a shutdown and the run script send SIGTERM, which AppKit does not turn into a quit: save, then leave.
+        signal(SIGTERM, SIG_IGN)
+        let term = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        term.setEventHandler { [weak self] in
+            MainActor.assumeIsolated { self?.saveOnQuit() }
+            exit(0)
+        }
+        term.resume()
+        termSource = term
     }
+
+    /// Keeps the SIGTERM handler alive.
+    private var termSource: DispatchSourceSignal?
 
     /// Launches scene 1, then prints what the engine plays. Used to check the live path without ears.
     private func runSelfTest() {

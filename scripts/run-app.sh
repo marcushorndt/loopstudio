@@ -31,8 +31,13 @@ PLIST
 # Without one, the ad-hoc signature changes with each build and the permission is asked for again.
 identity="$(security find-identity -v -p codesigning 2>/dev/null | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"')"
 codesign --force --sign "${identity:--}" "$app" >/dev/null 2>&1 || codesign --force --sign - "$app" >/dev/null 2>&1 || true
-# A running copy would only be brought to the front, with the old code. Quit it first.
-pkill -x LoopStudioApp 2>/dev/null && sleep 1
+# A running copy would only be brought to the front, with the old code. Quit it first: a regular quit, so
+# the app saves its project; SIGTERM as the fallback (the app saves on that too).
+if pgrep -x LoopStudioApp >/dev/null 2>&1; then
+    osascript -e 'tell application "LoopStudioApp" to quit' >/dev/null 2>&1
+    for _ in 1 2 3 4 5 6; do pgrep -x LoopStudioApp >/dev/null 2>&1 || break; sleep 0.5; done
+    pkill -x LoopStudioApp 2>/dev/null && sleep 1
+fi
 # Start the binary from this shell, not with `open`: an app that LaunchServices opens needs its own
 # Local Network grant, and on this Mac macOS never shows that prompt (its UserEventAgent cannot reach
 # nehelper: "not platform entitled"), so Link finds no peer on the LAN. A process started from a

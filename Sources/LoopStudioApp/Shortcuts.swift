@@ -248,6 +248,11 @@ final class KeyMonitor {
                 for pitch in held.values { model.noteOff(pitch) }
                 held.removeAll()
             }
+            // Escape leaves a mode that swallows clicks or keys: MIDI Learn first, then the draw mode.
+            if event.type == .keyDown, event.keyCode == 53 {
+                if model.midiLearn { model.toggleMIDILearn(); return nil }
+                if model.drawMode { model.drawMode = false; model.status = "Draw mode off"; return nil }
+            }
             let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
             if model.keyboardMIDI, plain {
                 if let step = Self.piano[typed] {

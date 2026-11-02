@@ -51,13 +51,46 @@ struct KnobSection<Content: View>: View {
             HStack(alignment: .top, spacing: 0) { content() }
                 .padding(.horizontal, 2).padding(.bottom, 2)
         }
+        // Every section is the same height, so the rows of every device line up.
+        .frame(height: DeviceLayout.sectionHeight, alignment: .top)
         .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line.opacity(0.7), lineWidth: 1))
     }
 }
 
-/// The gap between the groups of a panel.
-private let groupGap: CGFloat = 6
+/// The measures every device card shares, so instruments and effects are one height and their top knobs line up.
+enum DeviceLayout {
+    /// The gap between the groups of a panel.
+    static let groupGap: CGFloat = 6
+    /// One `KnobSection`: its title and one row of knobs.
+    static let sectionHeight: CGFloat = 90
+    /// The body of every device: two rows of sections. A display beside the sections takes the same height.
+    static let bodyHeight: CGFloat = sectionHeight * 2 + groupGap
+}
+
+private let groupGap = DeviceLayout.groupGap
+
+/// The knobs of an effect in its titled groups: a row's groups side by side, the rows under each other.
+struct GroupedKnobs: View {
+    let track: Track
+    let device: DeviceSlot
+    let spec: EffectSpec
+
+    var body: some View {
+        let rows = Array(Set(spec.groups.map(\.row))).sorted()
+        VStack(alignment: .leading, spacing: groupGap) {
+            ForEach(rows, id: \.self) { row in
+                HStack(alignment: .top, spacing: groupGap) {
+                    ForEach(spec.groups.filter { $0.row == row }, id: \.self) { group in
+                        KnobSection(title: group.title) {
+                            ForEach(group.keys, id: \.self) { ParamKnob(track: track, device: device, spec: spec, key: $0) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// The panel of a built-in instrument: a view of its own per instrument, a plain knob row for any other.
 struct InstrumentView: View {
@@ -70,7 +103,7 @@ struct InstrumentView: View {
         case "acid": AcidBassView(track: track, device: device, spec: spec)
         case "drum808": Drum808View(track: track, device: device, spec: spec)
         default:
-            HStack(alignment: .top, spacing: 2) {
+            KnobSection(title: spec.name) {
                 ForEach(spec.shownParams, id: \.key) { ParamKnob(track: track, device: device, spec: spec, key: $0.key) }
             }
         }

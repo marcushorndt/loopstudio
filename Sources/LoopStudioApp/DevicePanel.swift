@@ -241,7 +241,7 @@ private struct DeviceCard: View {
                 HStack { ProgressView().controlSize(.small); Text("Loading…").font(.caption).foregroundStyle(Theme.dim) }
             }
         }
-        .frame(width: 170, height: 60, alignment: .topLeading)
+        .frame(width: 170, alignment: .topLeading)
     }
 
     var body: some View {
@@ -264,37 +264,33 @@ private struct DeviceCard: View {
                 }
                 .buttonStyle(.plain).hint("Remove")
             }
-            if let spec, spec.isInstrument {
-                InstrumentView(track: track, device: device, spec: spec)
-                    .opacity(device.bypassed ? 0.4 : 1)
-            } else if let spec, spec.view == "eq" {
-                EQView(track: track, device: device, spec: spec)
-                    .opacity(device.bypassed ? 0.4 : 1)
-            } else if let spec, !spec.groups.isEmpty {
-                // Titled groups in rows, like the instruments: a row's groups side by side, the rows under each other.
-                let rows = Array(Set(spec.groups.map(\.row))).sorted()
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(rows, id: \.self) { row in
-                        HStack(alignment: .top, spacing: 6) {
-                            ForEach(spec.groups.filter { $0.row == row }, id: \.self) { group in
-                                KnobSection(title: group.title) {
-                                    ForEach(group.keys, id: \.self) { ParamKnob(track: track, device: device, spec: spec, key: $0) }
-                                }
-                            }
-                        }
+            // Every body is `DeviceLayout.bodyHeight` tall: instruments and effects share one height, and their
+            // top row of knobs sits on one line.
+            Group {
+                if let spec, spec.isInstrument {
+                    InstrumentView(track: track, device: device, spec: spec)
+                        .opacity(device.bypassed ? 0.4 : 1)
+                } else if let spec, spec.view == "eq" {
+                    EQView(track: track, device: device, spec: spec)
+                        .opacity(device.bypassed ? 0.4 : 1)
+                } else if let spec, spec.id == "multiband" {
+                    MultibandView(track: track, device: device, spec: spec)
+                        .opacity(device.bypassed ? 0.4 : 1)
+                } else if let spec, !spec.groups.isEmpty {
+                    GroupedKnobs(track: track, device: device, spec: spec)
+                        .opacity(device.bypassed ? 0.4 : 1)
+                } else if let spec {
+                    KnobSection(title: spec.name) {
+                        ForEach(spec.shownParams, id: \.key) { ParamKnob(track: track, device: device, spec: spec, key: $0.key) }
                     }
+                    .opacity(device.bypassed ? 0.4 : 1)
+                } else if device.format == "audiounit" {
+                    pluginBody
+                } else {
+                    Text("Unsupported plugin format.").font(.caption).foregroundStyle(Theme.dim).frame(width: 160)
                 }
-                .opacity(device.bypassed ? 0.4 : 1)
-            } else if let spec {
-                HStack(alignment: .top, spacing: 2) {
-                    ForEach(spec.shownParams, id: \.key) { ParamKnob(track: track, device: device, spec: spec, key: $0.key) }
-                }
-                .opacity(device.bypassed ? 0.4 : 1)
-            } else if device.format == "audiounit" {
-                pluginBody
-            } else {
-                Text("Unsupported plugin format.").font(.caption).foregroundStyle(Theme.dim).frame(width: 160, height: 60)
             }
+            .frame(height: DeviceLayout.bodyHeight, alignment: .topLeading)
         }
         .padding(8)
         // The card is as tall as the panel, like a device in Live.

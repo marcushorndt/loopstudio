@@ -259,5 +259,6 @@ final class MultibandDSP: DSPEffect, @unchecked Sendable {
         }
         meters[0] = worstLow; meters[1] = worstMid; meters[2] = worstHigh
         meters[3] = max(worstLow, max(worstMid, worstHigh))
+        spectrum?.write(l, r, frames: frames)
     }
 }

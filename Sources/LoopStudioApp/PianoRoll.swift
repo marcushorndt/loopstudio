@@ -622,6 +622,11 @@ private struct NoteView: View {
                             applyVelocity(model, clip, targets: targets, start: start, delta: delta)
                             return
                         }
+                        // The keys count while the drag runs too: Option pressed later copies, Command pressed
+                        // later switches the grid, and releasing them switches back.
+                        let flags = NSEvent.modifierFlags
+                        invert = flags.contains(.command)
+                        dragMode = flags.contains(.option) ? .copy : .move
                         move = g.translation
                         let t = landing(g.translation)
                         if t.pitch != target?.pitch {
@@ -710,7 +715,8 @@ private struct NoteView: View {
         Rectangle().fill(.clear).frame(width: 6).contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .onChanged { g in
-                    if !edgeDragging { edgeDragging = true; invert = NSEvent.modifierFlags.contains(.command) }
+                    edgeDragging = true
+                    invert = NSEvent.modifierFlags.contains(.command)
                     changed(g.translation.width)
                 }
                 .onEnded { g in

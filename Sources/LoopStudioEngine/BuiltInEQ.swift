@@ -23,6 +23,7 @@ public final class EQDSP: DSPEffect, @unchecked Sendable {
             case 3: f.notch(freq, q: q, rate: rate)
             case 4: f.highShelf(freq, gainDb: gain, rate: rate)
             case 5: f.lowpass(freq, q: q, rate: rate)
+            case 6: f.bandpass(freq, q: q, rate: rate)
             default: f.peaking(freq, gainDb: gain, q: q, rate: rate)
             }
             return f
@@ -81,6 +82,7 @@ public final class EQDSP: DSPEffect, @unchecked Sendable {
         if outGain != 1 {
             for i in 0..<frames { l[i] *= outGain; r[i] *= outGain }
         }
+        spectrum?.write(l, r, frames: frames)
     }
 
     /// The gain of the whole EQ at each frequency in dB, for the curve on the device.

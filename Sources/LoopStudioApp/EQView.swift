@@ -2,9 +2,9 @@ import LoopStudioCore
 import LoopStudioEngine
 import SwiftUI
 
-/// The panel of EQ One to EQ Eight: the curve with one handle per band, and the knobs of the marked band.
-/// Drag a handle: frequency and gain. Option and drag up or down: the Q. Double-click: the band on or off.
-/// Right-click: the type. The knobs under the curve edit the marked band in numbers.
+/// The panel of EQ One to EQ Eight: the curve over the spectrum of its output, one handle per band, and
+/// the knobs of the marked band at the right. Drag a handle: frequency and gain. Hold Option, before or
+/// during the drag: the Q. Double-click: the band on or off. Right-click: the type.
 struct EQView: View {
     @Environment(AppModel.self) private var model
     let track: Track
@@ -15,13 +15,17 @@ struct EQView: View {
 
     private struct Drag {
         var band: Int
+        /// Option held: the vertical movement sets the Q instead of the gain.
+        var q: Bool
+        /// The translation when the mode last changed; the movement counts from here.
+        var anchor: CGSize = .zero
         var startFreq: Double
         var startGain: Double
         var startQ: Double
-        var q: Bool
     }
 
-    private static let width: CGFloat = 380, height: CGFloat = 128
+    private static let width: CGFloat = 360, pickerHeight: CGFloat = 16
+    private static let height = DeviceLayout.bodyHeight - DeviceLayout.groupGap - pickerHeight
     private static let minHz = 20.0, maxHz = 20_000.0, rangeDb = 24.0
     private static let curveHz: [Double] = (0..<96).map { minHz * pow(maxHz / minHz, Double($0) / 95) }
 
@@ -37,7 +41,7 @@ struct EQView: View {
     private func y(_ db: Double) -> CGFloat { Self.height / 2 - CGFloat(db / Self.rangeDb) * Self.height / 2 }
     private func db(_ y: CGFloat) -> Double { Double((Self.height / 2 - y) / (Self.height / 2)) * Self.rangeDb }
 
-    /// A band whose type has no gain (a cut or a notch) sits on the zero line.
+    /// A band whose type has no gain (a cut, a notch or a band pass) sits on the zero line.
     private func hasGain(_ type: Int) -> Bool { type == 1 || type == 2 || type == 4 }
 
     private func handle(_ band: Int) -> CGPoint {
@@ -46,18 +50,24 @@ struct EQView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            curve
+        HStack(alignment: .top, spacing: DeviceLayout.groupGap) {
+            VStack(spacing: DeviceLayout.groupGap) {
+                ZStack {
+                    SpectrumBackdrop(device: device, tint: tint, x: x)
+                    curve
+                }
                 .frame(width: Self.width, height: Self.height)
                 .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line.opacity(0.7), lineWidth: 1))
                 .contentShape(Rectangle())
                 .gesture(dragGesture)
                 .simultaneousGesture(TapGesture(count: 2).onEnded { toggle(selected) })
                 .contextMenu { bandMenu }
-                .hint("Drag a band: frequency and gain. Option and drag up or down: Q. Double-click: band on or off. Right-click: type.")
-            HStack(alignment: .top, spacing: 6) {
+                .hint("Drag a band: frequency and gain. Option, also mid-drag: Q. Double-click: band on or off. Right-click: type. Behind it: the spectrum of the output.")
                 bandPicker
+            }
+            VStack(alignment: .leading, spacing: DeviceLayout.groupGap) {
                 KnobSection(title: "Band \(selected + 1)") {
                     ForEach(["b\(selected + 1).on", "b\(selected + 1).type", "b\(selected + 1).freq", "b\(selected + 1).gain", "b\(selected + 1).q"], id: \.self) {
                         ParamKnob(track: track, device: device, spec: spec, key: $0, tint: tint)
@@ -69,22 +79,24 @@ struct EQView: View {
         }
     }
 
-    /// One button per band: the marked one in the tint, an off band dim.
+    /// One button per band under the curve: the marked one in the tint, an off band dim.
     private var bandPicker: some View {
-        VStack(spacing: 3) {
+        HStack(spacing: 3) {
             ForEach(0..<spec.bands, id: \.self) { i in
                 let on = value("b\(i + 1).on") >= 0.5
                 Button { selected = i } label: {
                     Text("\(i + 1)").font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .frame(width: 20, height: 16)
+                        .frame(maxWidth: .infinity).frame(height: Self.pickerHeight)
                         .foregroundStyle(selected == i ? Theme.text : (on ? Theme.dim : Theme.dim.opacity(0.5)))
                         .background(selected == i ? tint.opacity(0.4) : Color.clear, in: RoundedRectangle(cornerRadius: 3))
                         .overlay(RoundedRectangle(cornerRadius: 3).stroke(on ? tint.opacity(0.6) : Theme.line, lineWidth: 1))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .hint("Band \(i + 1): \(BuiltInEffects.eqTypes[Int(value("b\(i + 1).type"))])\(on ? "" : ", off"). Click to show its knobs.")
             }
         }
+        .frame(width: Self.width)
     }
 
     private var curve: some View {
@@ -143,6 +155,7 @@ struct EQView: View {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { g in
+                let option = NSEvent.modifierFlags.contains(.option)
                 if drag == nil {
                     // The nearest handle within reach takes the drag; a click elsewhere only marks the nearest band.
                     var best = selected, bestDistance = CGFloat.infinity
@@ -153,20 +166,27 @@ struct EQView: View {
                     selected = best
                     guard bestDistance < 16 else { return }
                     let k = "b\(best + 1)."
-                    drag = Drag(band: best, startFreq: value(k + "freq"), startGain: value(k + "gain"), startQ: value(k + "q"),
-                                q: NSEvent.modifierFlags.contains(.option))
+                    drag = Drag(band: best, q: option, startFreq: value(k + "freq"), startGain: value(k + "gain"), startQ: value(k + "q"))
                 }
-                guard let d = drag else { return }
+                guard var d = drag else { return }
                 let k = "b\(d.band + 1)."
+                if option != d.q {
+                    // Option went down or up mid-drag: the movement from here on counts in the new mode.
+                    d.q = option
+                    d.anchor = g.translation
+                    d.startFreq = value(k + "freq"); d.startGain = value(k + "gain"); d.startQ = value(k + "q")
+                    drag = d
+                }
+                let dx = g.translation.width - d.anchor.width, dy = g.translation.height - d.anchor.height
                 if d.q {
                     // Up: narrower. 100 points: a factor of four.
-                    let q = min(max(d.startQ * pow(4, Double(-g.translation.height) / 100), 0.1), 18)
+                    let q = min(max(d.startQ * pow(4, Double(-dy) / 100), 0.1), 18)
                     model.setDeviceParam(track.id, device.id, k + "q", q)
                 } else {
-                    let f = hz(x(d.startFreq) + g.translation.width)
+                    let f = hz(x(d.startFreq) + dx)
                     model.setDeviceParam(track.id, device.id, k + "freq", (f * 10).rounded() / 10)
                     if hasGain(Int(value(k + "type"))) {
-                        let gain = min(max(db(y(d.startGain) + g.translation.height), -Self.rangeDb), Self.rangeDb)
+                        let gain = min(max(db(y(d.startGain) + dy), -Self.rangeDb), Self.rangeDb)
                         model.setDeviceParam(track.id, device.id, k + "gain", (gain * 10).rounded() / 10)
                     }
                 }

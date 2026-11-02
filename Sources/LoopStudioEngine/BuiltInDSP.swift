@@ -18,12 +18,15 @@ public class DSPEffect: @unchecked Sendable {
     /// (`meters[0]`, the bands of the multiband in 0...2). Four floats, allocated once.
     public static let meterCount = 4
     public let meters: UnsafeMutablePointer<Float>
+    /// The output of a device that draws a curve (the EQs, the multiband), for the spectrum behind it.
+    public let spectrum: SpectrumTap?
 
     init(spec: EffectSpec, sampleRate: Double) {
         self.spec = spec
         self.sampleRate = sampleRate
         meters = .allocate(capacity: Self.meterCount)
         meters.initialize(repeating: 0, count: Self.meterCount)
+        spectrum = spec.view == "eq" || spec.id == "multiband" ? SpectrumTap() : nil
     }
 
     deinit { meters.deallocate() }

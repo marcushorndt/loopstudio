@@ -134,30 +134,31 @@ public enum BuiltInEffects {
         EffectSpec(id: "utility", name: "Utility", params: [
             EffectParam("gain", "Gain", -96, 24, 0, unit: "dB"),
             EffectParam("width", "Width", 0, 2, 1),
-        ]),
+        ], groups: [EffectGroup("Gain", ["gain"]), EffectGroup("Stereo", ["width"])]),
         EffectSpec(id: "filter", name: "Auto Filter", params: [
             EffectParam("type", "Type", 0, 2, 0, choices: ["Low-pass", "High-pass", "Band-pass"]),
             EffectParam("cutoff", "Cutoff", 20, 20_000, 1_000, unit: "Hz", log: true),
             EffectParam("resonance", "Resonance", 0.3, 12, 0.707),
             // The LFO moves the cutoff up and down by up to four octaves each way.
             EffectParam("lfoAmount", "LFO", 0, 1, 0),
-        ] + EffectParam.synced("lfoRate", "Rate", 0.05, 20, 1, unit: "Hz", division: "1/4")),
+        ] + EffectParam.synced("lfoRate", "Rate", 0.05, 20, 1, unit: "Hz", division: "1/4"),
+        groups: [EffectGroup("Filter", ["type", "cutoff", "resonance"]), EffectGroup("LFO", ["lfoAmount", "lfoRate"])]),
         EffectSpec(id: "eq3", name: "Tone EQ", params: [
             EffectParam("low", "Low", -18, 18, 0, unit: "dB"),
             EffectParam("mid", "Mid", -18, 18, 0, unit: "dB"),
             EffectParam("midFreq", "Mid Freq", 200, 8_000, 1_000, unit: "Hz", log: true),
             EffectParam("high", "High", -18, 18, 0, unit: "dB"),
-        ]),
+        ], groups: [EffectGroup("Tone", ["low", "mid", "midFreq", "high"])]),
         EffectSpec(id: "delay", name: "Delay", params: EffectParam.synced("timeMs", "Time", 1, 2_000, 375, unit: "ms", division: "1/8.", longest: "1/1") + [
             EffectParam("feedback", "Feedback", 0, 0.95, 0.4),
             EffectParam("pingPong", "Ping Pong", 0, 1, 1, choices: ["Off", "On"]),
             EffectParam("mix", "Dry/Wet", 0, 1, 0.3),
-        ]),
+        ], groups: [EffectGroup("Delay", ["timeMs", "feedback", "pingPong"]), EffectGroup("Out", ["mix"])]),
         EffectSpec(id: "reverb", name: "Reverb", params: EffectParam.synced("preDelayMs", "Pre-Delay", 0, 500, 0, unit: "ms", division: "1/32", longest: "1/4", log: false) + [
             EffectParam("size", "Size", 0, 1, 0.6),
             EffectParam("damping", "Damping", 0, 1, 0.5),
             EffectParam("mix", "Dry/Wet", 0, 1, 0.25),
-        ]),
+        ], groups: [EffectGroup("Room", ["preDelayMs", "size", "damping"]), EffectGroup("Out", ["mix"])]),
         tapeEcho,
         compressor,
         limiter,
@@ -165,7 +166,7 @@ public enum BuiltInEffects {
     ] + (1...8).map(eq)
 
     /// Band types of the multi-band EQs, in the order of the "type" choice.
-    public static let eqTypes = ["Low Cut", "Low Shelf", "Bell", "Notch", "High Shelf", "High Cut"]
+    public static let eqTypes = ["Low Cut", "Low Shelf", "Bell", "Notch", "High Shelf", "High Cut", "Band Pass"]
 
     /// EQ One to EQ Eight (ids "peq1"..."peq8"): the same EQ with one to eight bands, so a track that needs
     /// one bell does not pay for eight. ("eq3" is the older fixed three-knob Tone EQ.) Every band has a type, a frequency, a gain and a Q, and can be off. The bands start as bells
@@ -176,7 +177,7 @@ public enum BuiltInEffects {
             // Log-spaced from 80 Hz to 8 kHz; one band sits at 1 kHz.
             let f = n == 1 ? 1_000.0 : 80 * pow(100, Double(i - 1) / Double(n - 1))
             params.append(EffectParam("b\(i).on", "On", 0, 1, 1, choices: ["Off", "On"]))
-            params.append(EffectParam("b\(i).type", "Type", 0, 5, 2, choices: eqTypes))
+            params.append(EffectParam("b\(i).type", "Type", 0, Double(eqTypes.count - 1), 2, choices: eqTypes))
             params.append(EffectParam("b\(i).freq", "Freq", 10, 22_000, (f * 10).rounded() / 10, unit: "Hz", log: true))
             params.append(EffectParam("b\(i).gain", "Gain", -24, 24, 0, unit: "dB"))
             params.append(EffectParam("b\(i).q", "Q", 0.1, 18, 0.71, log: true))
@@ -262,9 +263,9 @@ public enum BuiltInEffects {
         ])
         spec.groups = [EffectGroup("Crossover", ["lowX", "highX"]),
                        EffectGroup("Low", ["low.threshold", "low.ratio", "low.attack", "low.release", "low.gain"]),
-                       EffectGroup("Mid", ["mid.threshold", "mid.ratio", "mid.attack", "mid.release", "mid.gain"], row: 1),
-                       EffectGroup("High", ["high.threshold", "high.ratio", "high.attack", "high.release", "high.gain"], row: 2),
-                       EffectGroup("Sidechain · Out", ["scLowCut", "makeup", "mix"], row: 2)]
+                       EffectGroup("Mid", ["mid.threshold", "mid.ratio", "mid.attack", "mid.release", "mid.gain"]),
+                       EffectGroup("High", ["high.threshold", "high.ratio", "high.attack", "high.release", "high.gain"], row: 1),
+                       EffectGroup("Sidechain · Out", ["scLowCut", "makeup", "mix"], row: 1)]
         spec.sidechain = true
         return spec
     }()

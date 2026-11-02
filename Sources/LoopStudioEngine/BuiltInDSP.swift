@@ -367,6 +367,10 @@ final class ReverbDSP: DSPEffect, @unchecked Sendable {
     private let combs: UnsafeMutablePointer<Comb>   // 8 left, then 8 right
     private let allPasses: UnsafeMutablePointer<AllPass> // 4 left, then 4 right
     private var feedback: Float = 0.8, damp: Float = 0.2, mix: Float = 0.25
+    private var frozen = false
+    // The wet filters: one pole each, per channel. A low cut is the signal minus its low-pass.
+    private var lowCutCo: Float = 0, highCutCo: Float = 1
+    private var lcL: Float = 0, lcR: Float = 0, hcL: Float = 0, hcR: Float = 0
     /// The pre-delay: the wet sound starts this many frames after the dry sound.
     private let preSize: Int
     private let preBuf: UnsafeMutablePointer<Float>
@@ -405,8 +409,14 @@ final class ReverbDSP: DSPEffect, @unchecked Sendable {
     }
 
     override func configure(_ p: [String: Double]) {
-        feedback = value(p, "size") * 0.28 + 0.7
-        damp = value(p, "damping") * 0.4
+        // Size 0 is a small booth (a short tail), size 1 a hall that rings for seconds.
+        feedback = value(p, "size") * 0.58 + 0.4
+        damp = value(p, "damping") * 0.95
+        frozen = value(p, "freeze") >= 0.5
+        let rate = Float(sampleRate)
+        let lowCut = value(p, "lowCut"), highCut = value(p, "highCut")
+        lowCutCo = lowCut <= 21 ? 0 : 1 - expf(-2 * .pi * lowCut / rate)
+        highCutCo = highCut >= 19_900 ? 1 : 1 - expf(-2 * .pi * highCut / rate)
         mix = value(p, "mix")
         preFreeMs = value(p, "preDelayMs")
         preQuarters = syncedQuarters(p, "preDelayMs")
@@ -425,12 +435,16 @@ final class ReverbDSP: DSPEffect, @unchecked Sendable {
         preBuf.update(repeating: 0, count: preSize)
         for i in 0..<16 { combs[i].buf.update(repeating: 0, count: combs[i].size); combs[i].store = 0 }
         for i in 0..<8 { allPasses[i].buf.update(repeating: 0, count: allPasses[i].size) }
+        lcL = 0; lcR = 0; hcL = 0; hcR = 0
     }
 
     override func process(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
-        let fb = feedback, d = damp, m = mix, pre = preFrames
+        // Frozen: the combs recirculate at unity with no damping, and nothing new goes in.
+        let fb: Float = frozen ? 1 : feedback, d: Float = frozen ? 0 : damp, m = mix, pre = preFrames
+        let gate: Float = frozen ? 0 : 1
+        let lc = lowCutCo, hc = highCutCo
         for i in 0..<frames {
-            var input = (l[i] + r[i]) * 0.015
+            var input = (l[i] + r[i]) * 0.015 * gate
             // The line always runs, so turning the pre-delay on later does not replay old sound.
             preBuf[preWrite] = input
             if pre > 0 {
@@ -449,6 +463,9 @@ final class ReverbDSP: DSPEffect, @unchecked Sendable {
                 outL = step(&allPasses[k], outL)
                 outR = step(&allPasses[4 + k], outR)
             }
+            // The wet filters shape the room: a high cut darkens it, a low cut keeps it out of the bass.
+            if hc < 1 { hcL += (outL - hcL) * hc; hcR += (outR - hcR) * hc; outL = hcL; outR = hcR }
+            if lc > 0 { lcL += (outL - lcL) * lc; lcR += (outR - lcR) * lc; outL -= lcL; outR -= lcR }
             l[i] = l[i] * (1 - m) + outL * 3 * m
             r[i] = r[i] * (1 - m) + outR * 3 * m
         }

@@ -207,6 +207,13 @@ final class MultibandDSP: DSPEffect, @unchecked Sendable {
         }
         band(&low, "low"); band(&mid, "mid"); band(&high, "high")
         gainLow = dbToLinear(value(p, "low.gain")); gainMid = dbToLinear(value(p, "mid.gain")); gainHigh = dbToLinear(value(p, "high.gain"))
+        // Solo: only the soloed bands reach the output. The detectors still run, so the meters show them all.
+        let soloLow = value(p, "low.solo") >= 0.5, soloMid = value(p, "mid.solo") >= 0.5, soloHigh = value(p, "high.solo") >= 0.5
+        if soloLow || soloMid || soloHigh {
+            if !soloLow { gainLow = 0 }
+            if !soloMid { gainMid = 0 }
+            if !soloHigh { gainHigh = 0 }
+        }
         makeup = dbToLinear(value(p, "makeup"))
         mix = value(p, "mix")
         let cut = Double(value(p, "scLowCut"))

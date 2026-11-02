@@ -172,11 +172,7 @@ public enum BuiltInEffects {
             EffectParam("pingPong", "Ping Pong", 0, 1, 1, choices: ["Off", "On"]),
             EffectParam("mix", "Dry/Wet", 0, 1, 0.3),
         ], groups: [EffectGroup("Delay", ["timeMs", "feedback", "pingPong"]), EffectGroup("Out", ["mix"])]),
-        EffectSpec(id: "reverb", name: "Reverb", params: EffectParam.synced("preDelayMs", "Pre-Delay", 0, 500, 0, unit: "ms", division: "1/32", longest: "1/4", log: false) + [
-            EffectParam("size", "Size", 0, 1, 0.6),
-            EffectParam("damping", "Damping", 0, 1, 0.5),
-            EffectParam("mix", "Dry/Wet", 0, 1, 0.25),
-        ], groups: [EffectGroup("Room", ["preDelayMs", "size", "damping"]), EffectGroup("Out", ["mix"])]),
+        reverb,
         tapeEcho,
         compressor,
         limiter,
@@ -207,6 +203,24 @@ public enum BuiltInEffects {
         spec.bands = n
         return spec
     }
+
+    /// A reverb (Freeverb layout): the room's size sets how long the tail rings, the damping how fast its highs
+    /// die. The wet sound passes a low cut and a high cut, so a room can sit under or over the dry sound.
+    /// Freeze holds the tail as it is: nothing new goes in, nothing decays.
+    static let reverb: EffectSpec = {
+        var spec = EffectSpec(id: "reverb", name: "Reverb", params:
+            EffectParam.synced("preDelayMs", "Pre-Delay", 0, 500, 0, unit: "ms", division: "1/32", longest: "1/4", log: false) + [
+            EffectParam("size", "Size", 0, 1, 0.6),
+            EffectParam("damping", "Damping", 0, 1, 0.5),
+            EffectParam("freeze", "Freeze", 0, 1, 0, choices: ["Off", "On"]),
+            EffectParam("lowCut", "Low Cut", 20, 2_000, 20, unit: "Hz", log: true),
+            EffectParam("highCut", "High Cut", 1_000, 20_000, 20_000, unit: "Hz", log: true),
+            EffectParam("mix", "Dry/Wet", 0, 1, 0.25),
+        ])
+        spec.groups = [EffectGroup("Room", ["preDelayMs", "size", "damping"]), EffectGroup("Filter", ["lowCut", "highCut"]),
+                       EffectGroup("Hold", ["freeze"], row: 1), EffectGroup("Out", ["mix"], row: 1)]
+        return spec
+    }()
 
     /// A tape echo: a delay with the tape's wow and flutter, its tone (the loop loses highs and lows with
     /// every pass), its saturation, and a feedback that can run away into self-oscillation (the saturation
@@ -270,7 +284,9 @@ public enum BuiltInEffects {
              EffectParam("\(key).attack", "Attack", 0.1, 100, key == "low" ? 20 : key == "mid" ? 10 : 3, unit: "ms", log: true),
              EffectParam("\(key).release", "Release", 10, 1_000, key == "low" ? 200 : key == "mid" ? 120 : 60, unit: "ms", log: true),
              // After the band's compression: its make-up.
-             EffectParam("\(key).gain", "Makeup", -12, 12, 0, unit: "dB")]
+             EffectParam("\(key).gain", "Makeup", -12, 12, 0, unit: "dB"),
+             // Solo: hear this band alone (the display's S buttons). Not a knob.
+             EffectParam("\(key).solo", "Solo", 0, 1, 0, choices: ["Off", "On"])]
         }
         var spec = EffectSpec(id: "multiband", name: "Multiband Compressor", params: [
             EffectParam("lowX", "Low / Mid", 40, 1_000, 200, unit: "Hz", log: true),

@@ -19,6 +19,15 @@ extension Array where Element == DropItem {
     var files: [URL] { compactMap { if case .file(let url) = $0 { url } else { nil } } }
     /// Only the strings the sidebar drags. Any other text is ignored.
     var devices: [String] { compactMap { if case .device(let s) = $0, s.hasPrefix("fx:") || s.hasPrefix("au:") { s } else { nil } } }
+    /// Session slots dragged by their name: "slot:<track>:<row>".
+    var slots: [(track: TrackID, row: Int)] {
+        compactMap {
+            guard case .device(let s) = $0, s.hasPrefix("slot:") else { return nil }
+            let parts = s.dropFirst(5).split(separator: ":")
+            guard parts.count == 2, let uuid = UUID(uuidString: String(parts[0])), let row = Int(parts[1]) else { return nil }
+            return (TrackID(uuid), row)
+        }
+    }
 }
 
 extension AppModel {
@@ -28,6 +37,7 @@ extension AppModel {
         var used = false
         if !items.files.isEmpty { used = dropOnSlot(items.files, track: track, row: row) || used }
         if !items.devices.isEmpty { used = dropDevices(items.devices, on: track) || used }
+        for s in items.slots { moveSlots(from: s, to: (track, row)); used = true }
         return used
     }
 

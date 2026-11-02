@@ -10,7 +10,7 @@ enum AppAction: String, CaseIterable, Identifiable {
     case insertAudioTrack, insertMIDITrack, insertReturnTrack, insertGroupTrack, groupTracks, renameTrack, duplicateTrack
     case insertScene, deleteScene, duplicateScene
     case toggleKeyboardMIDI, midiLearn
-    case moveUp, moveDown, moveLeft, moveRight, launchSelected
+    case moveUp, moveDown, moveLeft, moveRight, extendUp, extendDown, extendLeft, extendRight, launchSelected
     case noteOctaveUp, noteOctaveDown, noteLonger, noteShorter, noteOtherGridLeft, noteOtherGridRight, snapNotes, selectAll
     case sessionView, arrangementView, switchView, toggleDetail, toggleAutomation, showShortcuts
 
@@ -26,7 +26,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .insertAudioTrack, .insertMIDITrack, .insertReturnTrack, .insertGroupTrack, .groupTracks, .renameTrack, .duplicateTrack: .track
         case .insertScene, .deleteScene, .duplicateScene: .scene
         case .toggleKeyboardMIDI, .midiLearn: .transport
-        case .moveUp, .moveDown, .moveLeft, .moveRight, .launchSelected: .navigate
+        case .moveUp, .moveDown, .moveLeft, .moveRight, .extendUp, .extendDown, .extendLeft, .extendRight, .launchSelected: .navigate
         case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .noteOtherGridLeft, .noteOtherGridRight, .snapNotes, .selectAll: .edit
         case .sessionView, .arrangementView, .switchView, .toggleDetail, .toggleAutomation, .showShortcuts: .view
         }
@@ -76,6 +76,10 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .moveDown: "Select Down (marked notes: a semitone down)"
         case .moveLeft: "Select Left (marked notes: a step earlier; snap on: on the grid, off: a 1/128)"
         case .moveRight: "Select Right (marked notes: a step later; snap on: on the grid, off: a 1/128)"
+        case .extendUp: "Extend the Marking Up (Session clips)"
+        case .extendDown: "Extend the Marking Down (Session clips)"
+        case .extendLeft: "Extend the Marking Left (Session clips)"
+        case .extendRight: "Extend the Marking Right (Session clips)"
         case .noteOtherGridLeft: "Marked Notes Earlier on the Other Grid (snap off: the grid, on: a 1/128)"
         case .noteOtherGridRight: "Marked Notes Later on the Other Grid (snap off: the grid, on: a 1/128)"
         case .noteOctaveUp: "Marked Notes an Octave Up"
@@ -130,6 +134,10 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .moveDown: KeyBinding("\u{F701}", [])
         case .moveLeft: KeyBinding("\u{F702}", [])
         case .moveRight: KeyBinding("\u{F703}", [])
+        case .extendUp: KeyBinding("\u{F700}", .shift)
+        case .extendDown: KeyBinding("\u{F701}", .shift)
+        case .extendLeft: KeyBinding("\u{F702}", .shift)
+        case .extendRight: KeyBinding("\u{F703}", .shift)
         case .noteOctaveUp: KeyBinding("\u{F700}", .shift)
         case .noteOctaveDown: KeyBinding("\u{F701}", .shift)
         case .noteShorter: KeyBinding("\u{F702}", .shift)
@@ -154,8 +162,8 @@ extension AppAction {
     /// True for the arrow keys: holding one moves on at the key repeat rate.
     var repeats: Bool {
         switch self {
-        case .moveUp, .moveDown, .moveLeft, .moveRight, .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter,
-             .noteOtherGridLeft, .noteOtherGridRight: true
+        case .moveUp, .moveDown, .moveLeft, .moveRight, .extendUp, .extendDown, .extendLeft, .extendRight,
+             .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .noteOtherGridLeft, .noteOtherGridRight: true
         default: false
         }
     }

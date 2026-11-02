@@ -37,6 +37,8 @@ extension AppModel {
         case .renameTrack: selectedTrack != nil || selectedClip != nil
         case .groupTracks, .duplicateTrack: selectedTrack != nil
         case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .noteOtherGridLeft, .noteOtherGridRight: markedMIDIClip != nil
+        // Shift and an arrow: the same keys move marked notes an octave or a step, so they come first.
+        case .extendUp, .extendDown, .extendLeft, .extendRight: viewMode == .session && markedMIDIClip == nil
         case .exportAudio: !exporting
         default: true
         }
@@ -98,6 +100,10 @@ extension AppModel {
         case .moveDown: moveSelection(rows: 1, tracks: 0)
         case .moveLeft: moveSelection(rows: 0, tracks: -1)
         case .moveRight: moveSelection(rows: 0, tracks: 1)
+        case .extendUp: extendSelection(rows: -1, tracks: 0)
+        case .extendDown: extendSelection(rows: 1, tracks: 0)
+        case .extendLeft: extendSelection(rows: 0, tracks: -1)
+        case .extendRight: extendSelection(rows: 0, tracks: 1)
         case .noteOctaveUp: nudgeNotes(pitch: 12)
         case .noteOctaveDown: nudgeNotes(pitch: -12)
         case .noteLonger: nudgeNotes(length: noteStep)
@@ -125,13 +131,126 @@ extension AppModel {
         return selectedSceneRow
     }
 
-    /// A click on a session slot, empty or not. The arrow keys go on from it.
-    func selectSlot(track: TrackID, row: Int, clip: ClipID? = nil) {
+    /// A click on a session slot, empty or not. The arrow keys go on from it. `add` (Command) adds the clip
+    /// to the marking or takes it out, with gaps allowed; `range` (Shift) marks the rectangle of slots from
+    /// the last plain click to this one.
+    func selectSlot(track: TrackID, row: Int, clip: ClipID? = nil, add: Bool = false, range: Bool = false) {
+        trackFocused = false
+        selectedNotes = []
+        if range, let anchor = slotAnchor {
+            markSlots(from: anchor, to: (track, row))
+            selectedTrack = track
+            selectedSceneRow = row
+            selectedClip = clip ?? selectedClips.first
+            return
+        }
+        if add, let clip {
+            if selectedClips.contains(clip) {
+                selectedClips.remove(clip)
+                if selectedClip == clip { selectedClip = selectedClips.first }
+            } else {
+                selectedClips.insert(clip)
+                selectedClip = clip
+            }
+            selectedTrack = track
+            selectedSceneRow = row
+            slotAnchor = (track, row)
+            return
+        }
         selectedClip = clip
+        selectedClips = clip.map { [$0] } ?? []
         selectedTrack = track
+        selectedSceneRow = row
+        slotAnchor = (track, row)
+    }
+
+    /// Marks every clip in the rectangle of slots between two slots. Columns are the session's tracks in
+    /// their shown order, so a rectangle can span busses too.
+    func markSlots(from a: (track: TrackID, row: Int), to b: (track: TrackID, row: Int)) {
+        let columns = orderedTracks
+        guard let ca = columns.firstIndex(where: { $0.id == a.track }), let cb = columns.firstIndex(where: { $0.id == b.track }) else { return }
+        var ids = Set<ClipID>()
+        for c in min(ca, cb)...max(ca, cb) {
+            let t = columns[c]
+            for r in min(a.row, b.row)...max(a.row, b.row) where r < t.slots.count {
+                if let s = t.slots[r] { ids.insert(s.clip.id) }
+            }
+        }
+        selectedClips = ids
+        if let current = selectedClip, ids.contains(current) {} else { selectedClip = ids.first }
+        status = ids.isEmpty ? "" : "\(ids.count) clip\(ids.count == 1 ? "" : "s") marked"
+    }
+
+    /// Shift and an arrow key in the Session view: the marking grows from the anchor to the new slot.
+    func extendSelection(rows: Int, tracks: Int) {
+        guard viewMode == .session else { moveSelection(rows: rows, tracks: tracks); return }
+        let columns = orderedTracks
+        guard !columns.isEmpty else { return }
+        let anchor = slotAnchor ?? selectedTrack.map { ($0, selectedSceneRow ?? 0) } ?? (columns[0].id, 0)
+        slotAnchor = anchor
+        let current = selectedTrack.flatMap { id in columns.firstIndex { $0.id == id } } ?? 0
+        let column = min(max(current + tracks, 0), columns.count - 1)
+        let row = min(max((selectedSceneRow ?? anchor.row) + rows, 0), sessionRows - 1)
+        selectedTrack = columns[column].id
         selectedSceneRow = row
         trackFocused = false
         selectedNotes = []
+        markSlots(from: anchor, to: (columns[column].id, row))
+    }
+
+    /// The rubber band over the slot grid (the scrolling tracks, in the grid's own coordinates): every slot
+    /// the rectangle touches is marked.
+    func markSlots(inBand rect: CGRect, columnWidth: CGFloat, slotHeight: CGFloat, gap: CGFloat, headerHeight: CGFloat) {
+        let columns = orderedTracks.filter { $0.kind != .returnTrack }
+        guard !columns.isEmpty else { return }
+        func col(_ x: CGFloat) -> Int { min(max(Int(x / (columnWidth + gap)), 0), columns.count - 1) }
+        func row(_ y: CGFloat) -> Int { min(max(Int((y - headerHeight - gap) / (slotHeight + gap)), 0), sessionRows - 1) }
+        let c0 = col(rect.minX), c1 = col(rect.maxX), r0 = row(rect.minY), r1 = row(rect.maxY)
+        slotAnchor = (columns[c0].id, r0)
+        selectedTrack = columns[c1].id
+        selectedSceneRow = r1
+        trackFocused = false
+        selectedNotes = []
+        markSlots(from: (columns[c0].id, r0), to: (columns[c1].id, r1))
+    }
+
+    /// A slot dragged onto another slot. The dragged clip moves there; when it is part of the marking, the
+    /// whole marking moves by the same offset, so a column of clips can go down a row together. The clips
+    /// keep their IDs, so follow actions and automation stay. A full slot in the way stops the move.
+    func moveSlots(from source: (track: TrackID, row: Int), to destination: (track: TrackID, row: Int)) {
+        guard source.track != destination.track || source.row != destination.row else { return }
+        let columns = orderedTracks
+        guard let cs = columns.firstIndex(where: { $0.id == source.track }), let cd = columns.firstIndex(where: { $0.id == destination.track }),
+              let st = project.track(source.track), source.row < st.slots.count, let sourceSlot = st.slots[source.row] else { return }
+        var moving: [(track: Track, row: Int, slot: SessionSlot)] = []
+        if selectedClips.contains(sourceSlot.clip.id) {
+            for t in columns { for (r, s) in t.slots.enumerated() { if let s, selectedClips.contains(s.clip.id) { moving.append((t, r, s)) } } }
+        } else {
+            moving = [(st, source.row, sourceSlot)]
+        }
+        let dc = cd - cs, dr = destination.row - source.row
+        let movingIDs = Set(moving.map(\.slot.clip.id))
+        var clears: [Command] = [], sets: [Command] = []
+        for m in moving {
+            guard let ci = columns.firstIndex(where: { $0.id == m.track.id }) else { continue }
+            let tc = ci + dc, tr = m.row + dr
+            guard tc >= 0, tc < columns.count, tr >= 0 else { status = "The clips do not fit there"; return }
+            let target = columns[tc]
+            guard target.kind != .master else { status = "The master has no slots"; return }
+            if tr < target.slots.count, let occupied = target.slots[tr], !movingIDs.contains(occupied.clip.id) {
+                status = "Slot \(tr + 1) of \(target.name) is not empty"
+                return
+            }
+            clears.append(.setSlot(track: m.track.id, index: m.row, slot: nil))
+            sets.append(.setSlot(track: target.id, index: tr, slot: m.slot))
+        }
+        do { try tryApply(.batch(commands: clears + sets)) } catch { status = "Cannot move: \(error)"; return }
+        selectedClips = movingIDs
+        selectedClip = sourceSlot.clip.id
+        selectedTrack = destination.track
+        selectedSceneRow = destination.row
+        slotAnchor = destination
+        status = moving.count == 1 ? "" : "\(moving.count) clips moved"
     }
 
     /// The rows the Session view shows: at least 8, and one empty row below the last slot.

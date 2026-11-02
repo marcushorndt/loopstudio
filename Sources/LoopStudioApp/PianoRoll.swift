@@ -63,6 +63,10 @@ struct PianoRoll: View {
     @State private var visibleHeight: CGFloat = 0
     /// A drag in the velocity lane: the notes it changes and their velocities when it began.
     @State private var velocityDrag: (targets: [MIDINote], start: [UInt8])?
+    /// The velocity line tool: a drag across the lane sets the velocities under it along a straight line.
+    @State private var velocityLineTool = false
+    @State private var lineDrag: (start: CGPoint, end: CGPoint)?
+    @State private var quantizeOpen = false
 
     private var beats: Double { max(1, Double(clip.length.rawValue) / Double(Tick.perQuarter)) }
     /// Room past the end of the clip, so the loop can be made longer.
@@ -85,9 +89,13 @@ struct PianoRoll: View {
                     Text("\(marked.count) marked · vel \(velocityText)").font(.caption).foregroundStyle(Theme.dim)
                 }
                 Spacer()
-                Button("Quantize") { quantize() }
+                Button("Quantize…") { quantizeOpen = true }
                     .controlSize(.small).disabled(clip.notes.isEmpty)
-                    .hint("Quantize: move the marked notes (or all notes) to the nearest grid step (\(gridName(division, bar: model.barTicks)))")
+                    .popover(isPresented: $quantizeOpen, arrowEdge: .bottom) { quantizePanel }
+                    .hint("Quantize with an amount, or humanize: the marked notes, or all notes. Grid: \(gridName(division, bar: model.barTicks))")
+                toolButton("line.diagonal", on: velocityLineTool, help: "Velocity line: drag across the velocity lane to set the velocities under the line, for ramps. Option and a drag in the lane does the same.") {
+                    velocityLineTool.toggle()
+                }
                 toolButton("grid", on: model.snapNotes, help: "Snap to grid (⌘4). The grid follows the zoom: now \(gridName(division, bar: model.barTicks)). Off, notes land on the exact tick. Command during a drag, or Command with an arrow key, does the opposite of this switch.") {
                     model.perform(.snapNotes)
                 }
@@ -273,6 +281,9 @@ struct PianoRoll: View {
                 ctx.fill(Path(CGRect(x: x, y: 1, width: 1, height: size.height - 1)), with: .color(.white.opacity(tick % bar == 0 ? 0.2 : 0.08)))
                 tick += Tick.perQuarter
             }
+            if let lineDrag {
+                ctx.stroke(Path { $0.move(to: lineDrag.start); $0.addLine(to: lineDrag.end) }, with: .color(.white.opacity(0.8)), lineWidth: 1)
+            }
             for note in clip.notes {
                 let x = CGFloat(Double(note.tick.rawValue) / Double(Tick.perQuarter)) * pxPerBeat
                 let h = CGFloat(note.velocity) / 127 * (size.height - top)
@@ -285,6 +296,11 @@ struct PianoRoll: View {
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { g in
+                if lineDrag != nil || (velocityDrag == nil && (velocityLineTool || NSEvent.modifierFlags.contains(.option))) {
+                    lineDrag = (g.startLocation, g.location)
+                    applyVelocityLine(from: g.startLocation, to: g.location, laneHeight: laneHeight, top: top)
+                    return
+                }
                 if velocityDrag == nil {
                     // The marker nearest to the pointer, within 6 points; a marked one wins.
                     let near = clip.notes.filter { abs(CGFloat(Double($0.tick.rawValue) / Double(Tick.perQuarter)) * pxPerBeat - g.startLocation.x) <= 6 }
@@ -297,19 +313,105 @@ struct PianoRoll: View {
                 let delta = Int((-g.translation.height / (laneHeight - top) * 127).rounded())
                 applyVelocity(model, clip, targets: d.targets, start: d.start, delta: delta)
             }
-            .onEnded { _ in velocityDrag = nil })
-        .hint("Velocity lane. Drag a marker up or down; marked notes change together. Control and drag on a note does the same.")
+            .onEnded { _ in velocityDrag = nil; lineDrag = nil })
+        .hint("Velocity lane. Drag a marker up or down; marked notes change together. Control and drag on a note does the same. Option and drag: a velocity line.")
     }
 
-    /// Moves note starts to the nearest grid step. The marked notes, or every note when none is marked.
+    /// The velocities under a line from `a` to `b`: each note between them (the marked notes, or all) takes the
+    /// line's height at its start. The marking follows the changed notes.
+    private func applyVelocityLine(from a: CGPoint, to b: CGPoint, laneHeight: CGFloat, top: CGFloat) {
+        let (p0, p1) = a.x <= b.x ? (a, b) : (b, a)
+        let span = max(1, p1.x - p0.x)
+        func velocity(atY y: CGFloat) -> Double { Double(min(max((laneHeight - y) / (laneHeight - top), 0), 1)) * 127 }
+        let v0 = velocity(atY: p0.y), v1 = velocity(atY: p1.y)
+        let all = model.selectedNotes.isEmpty
+        var marking = model.selectedNotes
+        var changed = false
+        let notes = clip.notes.map { n -> MIDINote in
+            guard all || model.selectedNotes.contains(n) else { return n }
+            let x = CGFloat(Double(n.tick.rawValue) / Double(Tick.perQuarter)) * pxPerBeat
+            guard x >= p0.x - 3, x <= p1.x + 3 else { return n }
+            let t = Double(min(max((x - p0.x) / span, 0), 1))
+            var m = n
+            m.velocity = UInt8(min(127, max(1, Int((v0 + (v1 - v0) * t).rounded()))))
+            guard m != n else { return n }
+            changed = true
+            if marking.remove(n) != nil { marking.insert(m) }
+            return m
+        }
+        guard changed else { return }
+        model.setNotes(clip.id, notes, key: "velocityLine\(clip.id)")
+        model.selectedNotes = marking
+    }
+
+    /// Quantize and Humanize, with their amounts. They act on the marked notes, or on all notes.
+    private var quantizePanel: some View {
+        @Bindable var model = model
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Quantize to \(gridName(division, bar: model.barTicks))").font(.system(size: 12, weight: .semibold))
+            HStack {
+                Text("Amount").frame(width: 56, alignment: .leading)
+                Slider(value: $model.quantizeAmount, in: 0...1)
+                Text("\(Int((model.quantizeAmount * 100).rounded())) %").monospacedDigit().frame(width: 40, alignment: .trailing)
+            }
+            Button("Quantize") { quantize() }.keyboardShortcut(.defaultAction)
+                .hint("Moves each note this far towards its nearest grid step. A low amount, applied a few times, tightens the feel step by step.")
+            Divider()
+            Text("Humanize").font(.system(size: 12, weight: .semibold))
+            HStack {
+                Text("Position").frame(width: 56, alignment: .leading)
+                Slider(value: $model.humanizeTime, in: 0...1)
+                Text("\(Int((model.humanizeTime * 100).rounded())) %").monospacedDigit().frame(width: 40, alignment: .trailing)
+            }
+            HStack {
+                Text("Velocity").frame(width: 56, alignment: .leading)
+                Slider(value: $model.humanizeVelocity, in: 0...1)
+                Text("\(Int((model.humanizeVelocity * 100).rounded())) %").monospacedDigit().frame(width: 40, alignment: .trailing)
+            }
+            Button("Humanize") { humanize() }
+                .hint("Scatters each note's start (up to a quarter of a grid step at 100 %) and velocity (up to ±24 at 100 %). Each press scatters a little more; Undo takes a step back.")
+            Text(model.selectedNotes.isEmpty ? "Acts on all \(clip.notes.count) notes." : "Acts on the \(model.selectedNotes.count) marked notes.")
+                .font(.caption).foregroundStyle(Theme.dim)
+        }
+        .font(.system(size: 11))
+        .padding(12)
+        .frame(width: 270)
+    }
+
+    /// Scatters the starts and velocities of the notes a little, by the two amounts.
+    private func humanize() {
+        let all = model.selectedNotes.isEmpty
+        let maxShift = Double(division) / 4 * model.humanizeTime
+        let maxVelocity = 24 * model.humanizeVelocity
+        var moved: Set<MIDINote> = []
+        let notes = clip.notes.map { n -> MIDINote in
+            guard all || model.selectedNotes.contains(n) else { return n }
+            var h = n
+            let dt = Int64((Double.random(in: -1...1) * maxShift).rounded())
+            h.tick = Tick(min(max(0, n.tick.rawValue + dt), max(0, clip.length.rawValue - 1)))
+            h.length = Tick(max(1, min(n.length.rawValue, clip.length.rawValue - h.tick.rawValue)))
+            let dv = Int((Double.random(in: -1...1) * maxVelocity).rounded())
+            h.velocity = UInt8(min(127, max(1, Int(n.velocity) + dv)))
+            moved.insert(h)
+            return h
+        }
+        model.setNotes(clip.id, notes)
+        if !all { model.selectedNotes = moved }
+    }
+
+    /// Moves note starts towards the nearest grid step, by the quantize amount (1: onto it). The marked
+    /// notes, or every note when none is marked.
     private func quantize() {
         let all = model.selectedNotes.isEmpty
         let step = division
+        let amount = model.quantizeAmount
         var moved: Set<MIDINote> = []
         let notes = clip.notes.map { n -> MIDINote in
             guard all || model.selectedNotes.contains(n) else { return n }
             var q = n
-            q.tick = Tick(min((n.tick.rawValue + step / 2) / step * step, max(0, clip.length.rawValue - 1)))
+            let onGrid = (n.tick.rawValue + step / 2) / step * step
+            let target = n.tick.rawValue + Int64((Double(onGrid - n.tick.rawValue) * amount).rounded())
+            q.tick = Tick(min(max(0, target), max(0, clip.length.rawValue - 1)))
             q.length = Tick(max(1, min(n.length.rawValue, clip.length.rawValue - q.tick.rawValue)))
             moved.insert(q)
             return q

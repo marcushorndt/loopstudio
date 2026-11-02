@@ -20,6 +20,10 @@ struct SessionView: View {
     @State private var visibleHeight: CGFloat = 0
     /// The full height of the slot grid. The grid is never taller, so the panel below can use the rest.
     @State private var slotsHeight: CGFloat = 0
+    /// The rubber band over the slot grid, in the grid's coordinates. A drag that began on a clip's name moves
+    /// the clip instead, so it draws no band.
+    @State private var band: CGRect?
+    @State private var bandIgnored = false
 
     private func reveal(row: Int?) {
         guard let row, row < model.sessionRows, visibleHeight > 0 else { return }
@@ -56,6 +60,17 @@ struct SessionView: View {
                         LazyHStack(alignment: .top, spacing: gap) {
                             ForEach(tracks, id: \.id) { TrackColumn(track: $0, rows: rows) }
                             NewTrackColumn(rows: rows)
+                        }
+                        .coordinateSpace(name: "slots")
+                        .simultaneousGesture(bandGesture(tracks))
+                        .overlay(alignment: .topLeading) {
+                            if let band {
+                                Rectangle().fill(Color.white.opacity(0.08))
+                                    .overlay(Rectangle().stroke(Color.white.opacity(0.7), lineWidth: 1))
+                                    .frame(width: band.width, height: band.height)
+                                    .offset(x: band.minX, y: band.minY)
+                                    .allowsHitTesting(false)
+                            }
                         }
                     }
                     .scrollPosition($slotsX)
@@ -116,6 +131,29 @@ struct SessionView: View {
         .dropDestination(for: DropItem.self) { items, _ in model.dropOnNewTrack(items) }
         .onChange(of: model.selectedTrack) { _, id in reveal(id, in: tracks) }
         .onChange(of: model.selectedSceneRow) { _, row in reveal(row: row) }
+    }
+}
+
+extension SessionView {
+    /// A drag across the grid marks the slots it touches. Starting on a clip's name is a move, not a band.
+    fileprivate func bandGesture(_ tracks: [Track]) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .named("slots"))
+            .onChanged { g in
+                if band == nil {
+                    let p = g.startLocation
+                    let col = Int(p.x / (columnWidth + gap)), inCol = p.x - CGFloat(col) * (columnWidth + gap)
+                    let row = Int((p.y - 30 - gap) / (slotHeight + gap))
+                    let onName = col >= 0 && col < tracks.count && row >= 0 && row < tracks[col].slots.count
+                        && tracks[col].slots[row] != nil && inCol > 26 && inCol < columnWidth
+                    bandIgnored = onName
+                }
+                guard !bandIgnored else { return }
+                let rect = CGRect(x: min(g.startLocation.x, g.location.x), y: min(g.startLocation.y, g.location.y),
+                                  width: abs(g.translation.width), height: abs(g.translation.height))
+                band = rect
+                model.markSlots(inBand: rect, columnWidth: columnWidth, slotHeight: slotHeight, gap: gap, headerHeight: 30)
+            }
+            .onEnded { _ in band = nil; bandIgnored = false }
     }
 }
 
@@ -233,7 +271,16 @@ private struct SlotCell: View {
                 }
                 .padding(.horizontal, 5).frame(maxWidth: .infinity, minHeight: slotHeight)
                 .contentShape(Rectangle())
-                .onTapGesture { model.selectSlot(track: track.id, row: row, clip: slot.clip.id) }
+                .onTapGesture {
+                    // Command adds or removes (gaps allowed), Shift marks the rectangle from the last plain click.
+                    let flags = NSEvent.modifierFlags
+                    model.selectSlot(track: track.id, row: row, clip: slot.clip.id, add: flags.contains(.command), range: flags.contains(.shift))
+                }
+                // Drag the name onto another slot: the clip moves there, with the whole marking when it is part of it.
+                .draggable("slot:\(track.id.rawValue.uuidString):\(row)") {
+                    Text(model.clipName(slot.clip)).font(.system(size: 11, weight: .medium)).padding(.horizontal, 6).padding(.vertical, 4)
+                        .background(tint.opacity(0.8), in: RoundedRectangle(cornerRadius: Theme.radius))
+                }
             }
             .foregroundStyle(Theme.onTint)
             .background(alignment: .leading) {
@@ -250,7 +297,7 @@ private struct SlotCell: View {
             .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(look.frame(tint: tint, selected: selected), lineWidth: selected || look.frameLit ? 1.5 : 1))
             .frame(height: slotHeight)
             .hint(state == .ready ? "\(model.clipName(slot.clip)): played when the transport stopped. Play starts it again."
-                  : "\(model.clipName(slot.clip)): the play icon launches it, a click selects it, Return launches the selection.")
+                  : "\(model.clipName(slot.clip)): the play icon launches it, a click selects it, Return launches the selection. Command-click adds, Shift-click marks a range, drag the name to move it.")
             .contextMenu { SlotMenu(track: track, row: row) }
         } else {
             // An empty slot reached with the arrow keys shows a frame.

@@ -248,3 +248,78 @@ private func run(_ id: String, _ params: [String: Double], _ input: [Float], sid
     let data = try JSONEncoder().encode(DeviceSlot(format: "builtin", identifier: "compressor", name: "C", sidechain: b.id))
     #expect(try JSONDecoder().decode(DeviceSlot.self, from: data).sidechain == b.id)
 }
+
+// MARK: Reverb room shaping, tape wobble, multiband solo
+
+/// How much of the signal is high-frequency: the level of its first difference against its own level.
+private func brightness(_ x: ArraySlice<Float>) -> Float {
+    let diff = zip(x.dropFirst(), x).map { $0 - $1 }
+    return rms(diff[...]) / max(rms(x), 1e-9)
+}
+
+@Test func aSmallRoomDiesFasterThanAHall() {
+    var impulse = [Float](repeating: 0, count: Int(3 * rate))
+    impulse[0] = 1
+    let small = run("reverb", ["mix": 1, "size": 0, "damping": 1], impulse)
+    let hall = run("reverb", ["mix": 1, "size": 1, "damping": 0], impulse)
+    let at = Int(0.5 * rate), end = Int(0.6 * rate)
+    #expect(rms(small[at..<end]) < rms(hall[at..<end]) / 20, "small \(rms(small[at..<end])) hall \(rms(hall[at..<end]))")
+    #expect(rms(small[Int(1.0 * rate)...]) < 1e-3, "the small damped room is gone after a second")
+}
+
+@Test func reverbHighCutDarkensAndLowCutThinsTheTail() {
+    var impulse = [Float](repeating: 0, count: Int(1 * rate))
+    impulse[0] = 1
+    let plain = run("reverb", ["mix": 1, "size": 0.8, "damping": 0], impulse)
+    let dark = run("reverb", ["mix": 1, "size": 0.8, "damping": 0, "highCut": 1_500], impulse)
+    let window = Int(0.1 * rate)..<Int(0.4 * rate)
+    #expect(brightness(dark[window]) < brightness(plain[window]) * 0.6)
+    // A low cut on the tail: a 100 Hz tone through the reverb leaves far less wet sound than without it.
+    let tone = sine(100, seconds: 1)
+    let full = run("reverb", ["mix": 1, "size": 0.5], tone)
+    let thin = run("reverb", ["mix": 1, "size": 0.5, "lowCut": 1_000], tone)
+    #expect(rms(thin[Int(0.5 * rate)...]) < rms(full[Int(0.5 * rate)...]) * 0.3)
+}
+
+@Test func reverbFreezeHoldsTheTail() {
+    let fx = DSPEffect.make("reverb", sampleRate: rate)!
+    fx.configure(["mix": 1, "size": 0.6])
+    var l = sine(440, seconds: 0.5), r = l
+    l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in fx.process(lp.baseAddress!, rp.baseAddress!, frames: lp.count) } }
+    // Freeze, then feed silence for three seconds: the tail neither grows nor dies.
+    fx.configure(["mix": 1, "size": 0.6, "freeze": 1])
+    var sl = [Float](repeating: 0, count: Int(3 * rate)), sr = sl
+    sl.withUnsafeMutableBufferPointer { lp in sr.withUnsafeMutableBufferPointer { rp in fx.process(lp.baseAddress!, rp.baseAddress!, frames: lp.count) } }
+    let early = rms(sl[0..<Int(0.2 * rate)]), late = rms(sl[Int(2.8 * rate)...])
+    #expect(early > 0.01)
+    #expect(late > early * 0.5 && late < early * 2, "early \(early) late \(late)")
+    #expect(sl.allSatisfy { $0.isFinite && abs($0) < 4 })
+}
+
+@Test func tapeWowAtFullIsAudibleAndStaysInTheBuffer() {
+    // A steady tone through a wobbling tape comes back frequency-modulated: its first difference varies.
+    let tone = sine(1_000, seconds: 3)
+    let still = run("tapeEcho", ["mix": 1, "feedback": 0, "wow": 0, "flutter": 0, "timeMs": 300, "drive": 0], tone)
+    let wobbly = run("tapeEcho", ["mix": 1, "feedback": 0, "wow": 1, "flutter": 1, "timeMs": 300, "drive": 0], tone)
+    func spread(_ x: [Float]) -> Float {
+        // The brightness over short windows: a modulated pitch makes it vary.
+        let win = 2_400
+        let values = stride(from: Int(0.5 * rate), to: x.count - win, by: win).map { brightness(x[$0..<$0 + win]) }
+        return (values.max() ?? 0) - (values.min() ?? 0)
+    }
+    #expect(spread(wobbly) > spread(still) * 10 + 1e-4, "still \(spread(still)) wobbly \(spread(wobbly))")
+    #expect(wobbly.allSatisfy { $0.isFinite })
+}
+
+@Test func multibandSoloHearsOneBand() {
+    // A low tone and a high tone: solo on the high band removes the low one, and the other way round.
+    let n = Int(1 * rate)
+    let mixTone = (0..<n).map { 0.3 * Float(sin(2 * .pi * 80 * Double($0) / rate)) + 0.3 * Float(sin(2 * .pi * 6_000 * Double($0) / rate)) }
+    let window = Int(0.5 * rate)..<n
+    let both = run("multiband", ["low.threshold": 0, "mid.threshold": 0, "high.threshold": 0], mixTone)
+    let highOnly = run("multiband", ["low.threshold": 0, "mid.threshold": 0, "high.threshold": 0, "high.solo": 1], mixTone)
+    let lowOnly = run("multiband", ["low.threshold": 0, "mid.threshold": 0, "high.threshold": 0, "low.solo": 1], mixTone)
+    #expect(brightness(highOnly[window]) > brightness(both[window]) * 1.3)
+    #expect(brightness(lowOnly[window]) < brightness(both[window]) * 0.3)
+    #expect(rms(highOnly[window]) < rms(both[window]), "one band is quieter than both")
+}

@@ -54,7 +54,8 @@ struct MultibandView: View {
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line.opacity(0.7), lineWidth: 1))
             .contentShape(Rectangle())
             .gesture(dragGesture)
-            .hint("Drag a crossover line sideways. Drag in a band up or down: its threshold. Option, also mid-drag: its ratio. The shade from the top: the gain reduction.")
+            .overlay(alignment: .topLeading) { soloButtons }
+            .hint("Drag a crossover line sideways. Drag in a band up or down: its threshold. Option, also mid-drag: its ratio. The shade from the top: the gain reduction. S: hear that band alone.")
             GroupedKnobs(track: track, device: device, spec: spec)
         }
     }
@@ -95,6 +96,27 @@ struct MultibandView: View {
                 }
             }
         }
+    }
+
+    /// An S at the top right of each band: solo, to hear the band alone while it is set up.
+    private var soloButtons: some View {
+        let edges = [x(Self.minHz), x(value("lowX")), x(value("highX")), x(Self.maxHz)]
+        return ZStack(alignment: .topLeading) {
+            ForEach(0..<3, id: \.self) { i in
+                let key = Self.bandKeys[i] + ".solo"
+                let on = value(key) >= 0.5
+                Button { model.setDeviceParam(track.id, device.id, key, on ? 0 : 1) } label: {
+                    Text("S").font(.system(size: 8, weight: .bold))
+                        .frame(width: 14, height: 12)
+                        .background(on ? Theme.accent : Color.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 2))
+                        .foregroundStyle(on ? Color.black : Theme.dim)
+                }
+                .buttonStyle(.plain)
+                .position(x: max(edges[i] + 10, edges[i + 1] - 10), y: 9)
+                .hint(on ? "Solo off: all bands sound again" : "Solo the \(Self.bandNames[i].lowercased()) band")
+            }
+        }
+        .frame(width: Self.width, height: Self.height)
     }
 
     private var dragGesture: some Gesture {

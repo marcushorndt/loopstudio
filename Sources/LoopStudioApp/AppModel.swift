@@ -255,6 +255,13 @@ final class AppModel {
     /// Set to rename a clip; takes the place of a track rename while a clip is selected.
     var clipRenameRequest: ClipID?
     var selectedSceneRow: Int?
+    /// The slot a plain click chose. Shift with a click or an arrow key marks the rectangle from here.
+    @ObservationIgnored var slotAnchor: (track: TrackID, row: Int)?
+    /// Quantize: how far a note moves towards the grid (1: all the way). Humanize: how far the position and
+    /// the velocity of a note scatter. Each Humanize step scatters a little more.
+    var quantizeAmount = 1.0
+    var humanizeTime = 0.2
+    var humanizeVelocity = 0.2
     /// The automation lanes under each track in the arrangement, top to bottom. A collapsed track keeps its
     /// list, so expanding it brings the same lanes back. Saved with the project (see `projectForSaving`),
     /// so a project opens with the lanes it was closed with. A new project has none open.
@@ -1277,8 +1284,8 @@ final class AppModel {
 
     private func startIfStopped() {
         guard !transportPlaying else { return }
-        // A launch while stopped starts that clip only, not what played before the stop.
-        session.clear()
+        // A launch while stopped starts the transport again: the clips a stop kept resume, and the
+        // launched clip joins them (`play` resumes the kept clips before the launch is added).
         play()
     }
 

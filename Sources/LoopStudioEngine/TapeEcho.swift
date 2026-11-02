@@ -56,7 +56,7 @@ final class TapeEchoDSP: DSPEffect, @unchecked Sendable {
     private func updateTarget() {
         let seconds = syncQuarters.map { $0 * quarterSeconds } ?? Double(freeMs) / 1000
         // Room for the whole wobble (wow and flutter at full) behind the longest time.
-        let headroom = 0.009 * sampleRate + 8
+        let headroom = 0.02 * sampleRate + 8
         target = Float(min(seconds * sampleRate, Double(size) - headroom))
         if !started { current = target }
     }
@@ -82,7 +82,9 @@ final class TapeEchoDSP: DSPEffect, @unchecked Sendable {
         started = true
         let fb = feedback, m = mix, rate = Float(sampleRate)
         let k = 0.3 + 6 * drive, norm = 1 / tanhf(k)
-        let wowDepth = wow * 0.004 * rate, flutterDepth = flutter * 0.0004 * rate
+        // Squared: the low end of the knob stays a gentle drift, the top end is a worn transport
+        // (wow up to ±15 ms, about three quarters of a semitone; flutter up to ±1 ms at 7 Hz).
+        let wowDepth = wow * wow * 0.015 * rate, flutterDepth = flutter * flutter * 0.001 * rate
         let spread = spreadFrames
         for i in 0..<frames {
             // The motor: the head moves slowly to a new time (varispeed), and wobbles.

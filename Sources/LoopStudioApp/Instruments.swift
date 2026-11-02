@@ -66,6 +66,11 @@ enum DeviceLayout {
     static let sectionHeight: CGFloat = 90
     /// The body of every device: two rows of sections. A display beside the sections takes the same height.
     static let bodyHeight: CGFloat = sectionHeight * 2 + groupGap
+    /// A device card: its header row, the body and the card padding.
+    static let cardHeight: CGFloat = 20 + 6 + bodyHeight + 16
+    /// The inspector on the device view: one card high plus the chain's padding. It never resizes there,
+    /// so no empty room sits under the devices.
+    static let panelHeight: CGFloat = cardHeight + 20
 }
 
 private let groupGap = DeviceLayout.groupGap

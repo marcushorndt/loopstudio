@@ -141,7 +141,7 @@ final class LimiterDSP: DSPEffect, @unchecked Sendable {
             let outL = lineL[linePos], outR = lineR[linePos]
             lineL[linePos] = a; lineR[linePos] = b
             linePos += 1
-            if linePos > n { linePos = 0 }
+            if linePos >= n { linePos = 0 }
             if n == 0 {
                 l[i] = a * min(gain, want); r[i] = b * min(gain, want)
             } else {

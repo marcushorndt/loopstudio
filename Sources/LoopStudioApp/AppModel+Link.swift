@@ -44,8 +44,11 @@ extension AppModel {
 
     /// A tempo the project got in another way than the tempo field (a project opened, a command from an
     /// agent, an undo) goes to the Link session, so the session does not pull the project back to its old tempo.
+    /// Only an edit of the project tempo goes to the session. The follower's own nudges (drift control) and
+    /// the tempo taken from the session must not go back out, or every peer would chase the others.
     func pushTempoToLink() {
-        guard linkEnabled, abs(bpm - linkTempoKnown) >= 0.005 else { return }
+        defer { linkPushedBpm = bpm }
+        guard linkEnabled, !linkFollowing, abs(bpm - linkPushedBpm) >= 0.005 else { return }
         linkTempoKnown = bpm
         link.setTempo(bpm, atMicros: link.nowMicros)
     }

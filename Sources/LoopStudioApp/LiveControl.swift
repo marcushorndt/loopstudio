@@ -111,7 +111,7 @@ enum AppTools {
                 return try await box.on { m in
                     if let track, let slot {
                         guard let uuid = UUID(uuidString: track), case let id = TrackID(uuid), let t = m.project.track(id) else { throw ToolFailure("no track \(track)") }
-                        guard slot < t.slots.count, t.slots[slot] != nil else { throw ToolFailure("slot \(slot) of \(t.name) is empty") }
+                        guard slot >= 0, slot < t.slots.count, t.slots[slot] != nil else { throw ToolFailure("slot \(slot) of \(t.name) is empty") }
                         m.launch(track: id, row: slot)
                     } else if let scene {
                         m.launchScene(scene)

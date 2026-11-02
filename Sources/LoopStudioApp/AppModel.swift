@@ -430,6 +430,8 @@ final class AppModel {
     @ObservationIgnored var linkDrifts: [Double] = []
     /// A play or pause that came from a peer: do not send it back to the session.
     @ObservationIgnored var linkFollowing = false
+    /// The project tempo the last `changed()` saw: a change from it is an edit, which goes to the session.
+    @ObservationIgnored var linkPushedBpm = 0.0
     func setLinkPeers(_ n: Int) { if linkPeers != n { linkPeers = n } }
 
     /// The transport and the tempo follow the external MIDI clock, like Live with "EXT" on.
@@ -483,8 +485,20 @@ final class AppModel {
         let factor = v / max(points[0].bpm, 1)
         let command = Command.setTempoPoints(points: points.map { TempoPoint(tick: $0.tick, bpm: $0.bpm * factor, ramp: $0.ramp) })
         guard (try? command.apply(to: &project)) != nil else { return }
-        try? journal?.append(command)
+        journalAppend(command)
+        linkFollowing = true
         changed()
+        linkFollowing = false
+    }
+
+    /// Writes a command to the crash journal. When the journal fails, it says so once and stops, so a
+    /// half-written journal cannot replay wrong edits after a crash.
+    func journalAppend(_ command: Command) {
+        guard let journal else { return }
+        do { try journal.append(command) } catch {
+            self.journal = nil
+            status = "The edit journal stopped: \(error.localizedDescription). Save soon; crash recovery is off until then."
+        }
     }
 
     /// Starts the MIDI clock when the transport really starts: at once, or when the count-in ends.
@@ -1189,6 +1203,7 @@ final class AppModel {
     }
 
     func launchScene(_ row: Int) {
+        guard row >= 0 else { return }
         let ids = project.tracks.filter { row < $0.slots.count && $0.slots[row] != nil }.map(\.id)
         guard !ids.isEmpty else { return }
         startIfStopped()
@@ -1301,13 +1316,17 @@ final class AppModel {
     // MARK: Editing
 
     func apply(_ command: Command, key: String? = nil) {
-        do { try tryApply(command, key: key) } catch { status = "Not possible: \(error)" }
+        do { try tryApply(command, key: key) } catch {
+            // A second click on a device's remove button, after the first took it, is no error.
+            if case .removeDevice = command, case CommandError.deviceNotFound = error { return }
+            status = "Not possible: \(error)"
+        }
     }
 
     /// The edit, or the reason it is not possible. The MCP bridge reports the reason to the agent.
     func tryApply(_ command: Command, key: String? = nil) throws {
         let inverse = try command.apply(to: &project)
-        try? journal?.append(command)
+        journalAppend(command)
         if let key, let last = lastKey, last.0 == key, Date().timeIntervalSince(last.1) < 0.8, !undoStack.isEmpty {
             lastKey = (key, Date()) // same gesture: keep the first inverse
         } else {
@@ -1323,7 +1342,7 @@ final class AppModel {
 
     func undo() {
         guard let inverse = undoStack.popLast() else { return }
-        if let redo = try? inverse.apply(to: &project) { redoStack.append(redo); try? journal?.append(inverse) }
+        if let redo = try? inverse.apply(to: &project) { redoStack.append(redo); journalAppend(inverse) }
         lastKey = nil
         selectedNotes = [] // marked notes may not exist any more
         changed()
@@ -1331,7 +1350,7 @@ final class AppModel {
 
     func redo() {
         guard let command = redoStack.popLast() else { return }
-        if let inverse = try? command.apply(to: &project) { undoStack.append(inverse); try? journal?.append(command) }
+        if let inverse = try? command.apply(to: &project) { undoStack.append(inverse); journalAppend(command) }
         lastKey = nil
         selectedNotes = []
         changed()
@@ -2033,7 +2052,9 @@ final class AppModel {
         session.restore(entries)
     }
 
-    func save() {
+    /// Writes the project. False when the write failed; the status says why, and the project stays dirty.
+    @discardableResult
+    func save() -> Bool {
         captureStates()
         captureSessionState()
         do {
@@ -2051,7 +2072,9 @@ final class AppModel {
             }
         } catch {
             status = "Cannot save: \(error.localizedDescription)"
+            return false
         }
+        return true
     }
 
     func projectPackages() -> [URL] {
@@ -2060,7 +2083,8 @@ final class AppModel {
     }
 
     func newProject() {
-        save()
+        // A project whose save failed stays open: a new one would lose its edits.
+        if dirty, !save() { status += " The project stays open." ; return }
         var n = 1
         var url: URL
         repeat {
@@ -2097,7 +2121,7 @@ final class AppModel {
 
     func open(_ url: URL) {
         // Unsaved edits of the current project go to disk first; the pending autosave belongs to it.
-        if dirty && url != packageURL { save() }
+        if dirty && url != packageURL, !save() { status += " The project stays open."; return }
         saveTask?.cancel()
         do {
             let loaded = try ProjectPackage.read(from: url)

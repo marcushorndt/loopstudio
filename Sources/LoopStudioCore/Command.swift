@@ -15,6 +15,26 @@ public enum CommandError: Error, Equatable {
     case deviceNotFound(DeviceID)
 }
 
+extension CommandError: CustomStringConvertible {
+    /// The reason in plain words, for the status bar and an agent's error.
+    public var description: String {
+        switch self {
+        case .trackNotFound: "that track no longer exists"
+        case .clipNotFound: "that clip no longer exists"
+        case .assetNotFound: "that sample is not in the project"
+        case .duplicateID(let what): "\(what) exists already"
+        case .cannotChangeMaster: "the master track cannot change this way"
+        case .wouldCreateCycle: "that routing would feed a track into itself"
+        case .invalidRoute(let why): "that routing is not possible: \(why)"
+        case .invalidValue(let why): "that value is not possible: \(why)"
+        case .assetInUse: "that sample is still in use"
+        case .portNotFound: "that port no longer exists"
+        case .portInUse: "that port is still in use"
+        case .deviceNotFound: "that device no longer exists"
+        }
+    }
+}
+
 /// Every edit to a project is a command. Commands are plain data (Codable), so the same type serves
 /// undo, the crash journal, and an agent or script API.
 ///

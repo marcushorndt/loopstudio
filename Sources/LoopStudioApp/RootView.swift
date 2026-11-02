@@ -7,6 +7,8 @@ struct RootView: View {
     @State private var keys = KeyMonitor()
     /// The height of the column right of the sidebar. The panel never asks for more than fits in it.
     @State private var columnHeight: CGFloat = 0
+    /// The inspector shows the device chain: one fixed height, no resize handle.
+    private var devicesShown: Bool { model.detailTab == .devices }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
@@ -28,14 +30,17 @@ struct RootView: View {
                 // The Session view takes the height of its content; the panel below gets the rest.
                 // The arrangement fills the space itself, so the panel then keeps its own height.
                 .frame(minWidth: 0, maxWidth: .infinity,
-                       maxHeight: model.detailOpen && model.viewMode == .session ? nil : .infinity, alignment: .top)
+                       maxHeight: model.detailOpen && model.viewMode == .session && !devicesShown ? nil : .infinity, alignment: .top)
                 .layoutPriority(1)
                 if model.detailOpen {
                     DetailResizeHandle()
+                    // The device view is exactly one card high and does not resize; the clip view keeps the
+                    // height the user dragged.
                     DetailPanel()
                         .frame(minWidth: 0, maxWidth: .infinity,
-                               minHeight: columnHeight > 0 ? min(model.detailHeight, max(120, columnHeight - 220)) : model.detailHeight,
-                               maxHeight: .infinity)
+                               minHeight: devicesShown ? DeviceLayout.panelHeight
+                                   : columnHeight > 0 ? min(model.detailHeight, max(120, columnHeight - 220)) : model.detailHeight,
+                               maxHeight: devicesShown ? DeviceLayout.panelHeight : .infinity)
                         .clipped()
                         .onGeometryChange(for: CGFloat.self, of: \.size.height) { model.detailShownHeight = $0 }
                 }
@@ -291,17 +296,22 @@ struct DetailResizeHandle: View {
     @State private var startHeight: CGFloat?
 
     var body: some View {
-        Rectangle().fill(Theme.line).frame(height: 1)
-            .frame(maxWidth: .infinity, minHeight: 7)
-            .contentShape(Rectangle())
-            .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
-            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                .onChanged { g in
-                    if startHeight == nil { startHeight = max(model.detailHeight, model.detailShownHeight) }
-                    model.detailHeight = min(2_000, max(150, (startHeight ?? 260) - g.translation.height))
-                }
-                .onEnded { _ in startHeight = nil })
-            .onTapGesture(count: 2) { model.detailHeight = 260 }
-            .hint("Drag to resize the inspector. Double-click resets it.")
+        if model.detailTab == .devices {
+            // The device view has one height: the line is only a line.
+            Rectangle().fill(Theme.line).frame(height: 1).frame(maxWidth: .infinity, minHeight: 7)
+        } else {
+            Rectangle().fill(Theme.line).frame(height: 1)
+                .frame(maxWidth: .infinity, minHeight: 7)
+                .contentShape(Rectangle())
+                .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
+                .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { g in
+                        if startHeight == nil { startHeight = max(model.detailHeight, model.detailShownHeight) }
+                        model.detailHeight = min(2_000, max(150, (startHeight ?? 260) - g.translation.height))
+                    }
+                    .onEnded { _ in startHeight = nil })
+                .onTapGesture(count: 2) { model.detailHeight = 260 }
+                .hint("Drag to resize the inspector. Double-click resets it.")
+        }
     }
 }

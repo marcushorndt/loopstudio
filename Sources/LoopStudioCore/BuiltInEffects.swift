@@ -251,14 +251,15 @@ public enum BuiltInEffects {
              EffectParam("\(key).ratio", "Ratio", 1, 20, 3),
              EffectParam("\(key).attack", "Attack", 0.1, 100, key == "low" ? 20 : key == "mid" ? 10 : 3, unit: "ms", log: true),
              EffectParam("\(key).release", "Release", 10, 1_000, key == "low" ? 200 : key == "mid" ? 120 : 60, unit: "ms", log: true),
-             EffectParam("\(key).gain", "Gain", -12, 12, 0, unit: "dB")]
+             // After the band's compression: its make-up.
+             EffectParam("\(key).gain", "Makeup", -12, 12, 0, unit: "dB")]
         }
         var spec = EffectSpec(id: "multiband", name: "Multiband Compressor", params: [
             EffectParam("lowX", "Low / Mid", 40, 1_000, 200, unit: "Hz", log: true),
             EffectParam("highX", "Mid / High", 1_000, 12_000, 2_500, unit: "Hz", log: true),
         ] + band("low", "Low", threshold: -20) + band("mid", "Mid", threshold: -18) + band("high", "High", threshold: -16) + [
             EffectParam("scLowCut", "SC Low Cut", 20, 2_000, 20, unit: "Hz", log: true),
-            EffectParam("makeup", "Makeup", 0, 24, 0, unit: "dB"),
+            EffectParam("makeup", "Output", 0, 24, 0, unit: "dB"),
             EffectParam("mix", "Dry/Wet", 0, 1, 1),
         ])
         spec.groups = [EffectGroup("Crossover", ["lowX", "highX"]),

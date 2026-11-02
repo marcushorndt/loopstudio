@@ -17,14 +17,20 @@ struct ParamKnob: View {
             // A synced knob shows its note value instead of the free value.
             let synced = free.syncable && (device.params[free.syncKey] ?? 0) >= 0.5
             let param = synced ? spec.param(free.divisionKey) ?? free : free
-            Knob(param: param, value: device.params[param.key] ?? param.def, tint: tint,
+            let address = ParameterAddress(node: device.id.rawValue, parameter: param.key)
+            // A knob a macro drives shows the macro's value and takes no drag; the badge leads to the mapping.
+            let driven = model.macroDriving(address, on: track)
+            Knob(param: param, value: driven?.value ?? (device.params[param.key] ?? param.def), tint: tint,
                  onChange: { model.setDeviceParam(track.id, device.id, param.key, param.clamp($0)) },
                  onReset: { model.setDeviceParam(track.id, device.id, param.key, nil) },
                  automation: automation(param),
                  sync: free.syncable ? KnobSync(synced: synced, unit: free.unit) {
                      model.setDeviceParam(track.id, device.id, free.syncKey, synced ? 0 : 1)
                  } : nil)
+            .allowsHitTesting(driven == nil)
+            .overlay(alignment: .topTrailing) { if let driven { MacroBadge(track: track, address: address, driving: driven) } }
             .midiLearnable(.deviceParam(track.id, device.id, param.key))
+            .macroMappable(address, track: track)
         }
     }
 

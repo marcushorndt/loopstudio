@@ -97,6 +97,8 @@ public struct EffectSpec: Sendable, Hashable {
     public var bands = 0
     /// A dynamics device reports its gain reduction in `DSPEffect.meters`; the card shows it.
     public var isDynamics: Bool { id == "compressor" || id == "limiter" || id == "multiband" }
+    /// A rack: chains of devices behind macro knobs and a chain selector. See `Rack`.
+    public var isRack: Bool { id == "audiorack" || id == "midirack" }
 
     /// The knobs drawn on the device: the switch and the note value of a synced knob live inside that knob.
     public var shownParams: [EffectParam] {
@@ -130,11 +132,27 @@ public struct NoteDivision: Sendable, Hashable {
 }
 
 public enum BuiltInEffects {
+    /// The knobs every rack has: eight macros and the chain selector, all 0...127 like Live's.
+    static func rackParams() -> [EffectParam] {
+        (1...Rack.macroCount).map { EffectParam("macro\($0)", "Macro \($0)", 0, 127, 0) }
+            + [EffectParam("selector", "Chain Selector", 0, 127, 0)]
+    }
+
+    /// An Audio Effect Rack: parallel chains of effects. `Rack` explains the model.
+    public static let audioRack = EffectSpec(id: "audiorack", name: "Audio Effect Rack", params: rackParams(),
+                                             groups: [EffectGroup("Macros 1–4", ["macro1", "macro2", "macro3", "macro4"]),
+                                                      EffectGroup("Macros 5–8", ["macro5", "macro6", "macro7", "macro8"], row: 1)])
+
+    /// A MIDI Rack (Live: Instrument Rack): chains with instruments, notes routed by key and velocity zones.
+    public static let midiRack = EffectSpec(id: "midirack", name: "MIDI Rack", params: rackParams(), isInstrument: true,
+                                            groups: audioRack.groups)
+
     public static let all: [EffectSpec] = [
         EffectSpec(id: "utility", name: "Utility", params: [
             EffectParam("gain", "Gain", -96, 24, 0, unit: "dB"),
             EffectParam("width", "Width", 0, 2, 1),
         ], groups: [EffectGroup("Gain", ["gain"]), EffectGroup("Stereo", ["width"])]),
+        audioRack,
         EffectSpec(id: "filter", name: "Auto Filter", params: [
             EffectParam("type", "Type", 0, 2, 0, choices: ["Low-pass", "High-pass", "Band-pass"]),
             EffectParam("cutoff", "Cutoff", 20, 20_000, 1_000, unit: "Hz", log: true),
@@ -279,6 +297,8 @@ public enum BuiltInEffects {
     public static func makeSlot(_ id: String) -> DeviceSlot? {
         guard let s = spec(id) else { return nil }
         var slot = DeviceSlot(format: "builtin", identifier: id, name: s.name)
+        // A new rack starts with one empty chain, so a dropped device has a place to go.
+        if s.isRack { slot.rack = Rack(chains: [RackChain(name: "Chain 1")]) }
         // A new delay follows the tempo, like Live's. Older projects keep their free times: the default stays off.
         if id == "delay" { slot.params["timeMsSync"] = 1 }
         return slot
@@ -361,7 +381,7 @@ public enum BuiltInInstruments {
         EffectParam("volume", "Volume", -24, 12, 0, unit: "dB"),
     ], isInstrument: true)
 
-    public static let all: [EffectSpec] = [acid, drums]
+    public static let all: [EffectSpec] = [acid, drums, BuiltInEffects.midiRack]
 
     public static func spec(_ id: String) -> EffectSpec? { all.first { $0.id == id } }
 

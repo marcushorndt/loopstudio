@@ -171,7 +171,10 @@ struct DeviceChainView: View {
                             .font(.system(size: 10)).foregroundStyle(Theme.dim)
                     }
                     .frame(width: 230, alignment: .leading)
-                    ForEach(track.devices, id: \.id) { DeviceCard(track: track, device: $0) }
+                    ForEach(track.devices, id: \.id) { d in
+                        DeviceCard(track: track, device: d)
+                        if d.isRack { ChainDevicesStrip(track: track, rack: d) }
+                    }
                     emptySlot(track)
                     Spacer(minLength: 0)
                 }
@@ -220,10 +223,12 @@ struct DeviceChainView: View {
     }
 }
 
-private struct DeviceCard: View {
+struct DeviceCard: View {
     @Environment(AppModel.self) private var model
     let track: Track
     let device: DeviceSlot
+    /// The chain this card sits in, or `nil` on the track itself.
+    var chain: ChainID? = nil
 
     @ViewBuilder
     private var pluginBody: some View {
@@ -251,6 +256,7 @@ private struct DeviceCard: View {
                 .frame(width: 20, height: 20).contentShape(Rectangle())
         }
         .buttonStyle(.plain).hint(device.bypassed ? "Turn on" : "Bypass")
+        .midiLearnable(.deviceOn(track.id, device.id))
     }
 
     /// The card folded to a narrow strip: the power switch and the name along it. Click the name to unfold.
@@ -309,7 +315,10 @@ private struct DeviceCard: View {
             // Every body is `DeviceLayout.bodyHeight` tall: instruments and effects share one height, and their
             // top row of knobs sits on one line.
             Group {
-                if let spec, spec.isInstrument {
+                if let spec, spec.isRack {
+                    RackBody(track: track, device: device, spec: spec)
+                        .opacity(device.bypassed ? 0.4 : 1)
+                } else if let spec, spec.isInstrument {
                     InstrumentView(track: track, device: device, spec: spec)
                         .opacity(device.bypassed ? 0.4 : 1)
                 } else if let spec, spec.view == "eq" {

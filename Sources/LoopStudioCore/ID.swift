@@ -21,6 +21,11 @@ public struct ID<Tag>: Hashable, Codable, Sendable, CustomStringConvertible {
     public var description: String { rawValue.uuidString }
 }
 
+extension ID: Identifiable {
+    /// SwiftUI item bindings (`popover(item:)`, `sheet(item:)`) take a typed ID directly.
+    public var id: UUID { rawValue }
+}
+
 public enum TrackTag {}
 public enum ClipTag {}
 public enum AssetTag {}

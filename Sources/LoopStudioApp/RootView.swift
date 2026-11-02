@@ -73,7 +73,8 @@ struct StatusBar: View {
     var body: some View {
         HStack(spacing: 12) {
             // A mode that swallows clicks or keys stays visible whatever the pointer rests on.
-            if model.midiLearn { modePill("MIDI Learn · Esc ends", tint: Theme.accent) }
+            if model.midiLearn { modePill("MIDI Map · click a control, move a knob · Esc ends", tint: Theme.midiMap) }
+            if model.macroMap != nil { modePill("Macro Map · click a knob in the rack · Esc ends", tint: Theme.macroMap) }
             if model.keyboardMIDI { modePill("Keyboard plays notes · C\(model.keyboardOctave) · Esc ends", tint: Theme.play) }
             if model.drawMode { modePill("Draw · Esc ends", tint: Theme.track(2)) }
             // A fresh message first, then the control under the pointer, then the last message, then a warning.

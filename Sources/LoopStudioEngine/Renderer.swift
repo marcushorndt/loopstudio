@@ -45,32 +45,43 @@ public final class Renderer {
     /// Offline it stays `nil`: an export has no hardware.
     unowned(unsafe) var midiOut: MIDIOutQueue?
 
-    private final class Slot {
+    final class Slot {
         let effect: DSPEffect?
         let unit: AudioUnitEffect?
         let bypassed: Bool
         let auto: [(key: String, lane: AutoLane)]
+        /// False for an automated key a macro drives: the macro wins, the curve is ignored.
+        let autoActive: [Bool]
         /// The knob value of each automated key without automation. It comes back when no curve covers the frame.
         let base: [Double?]
         var live: [String: Double]
         /// The effect still runs in the old renderer: the audio thread applies `live` on the first block.
         /// A flag, not an optional dictionary, so the audio thread frees nothing.
         var needsConfigure = false
+        /// A macro changed a value in `live` since the last `configure`.
+        var dirty = false
         /// Automated Audio Unit parameters, keyed by their address.
         let unitAuto: [(address: AUParameterAddress, lane: AutoLane)]
         /// The node this effect listens to (a sidechain), rendered before this one.
         let sidechain: Int?
-        init(effect: DSPEffect?, unit: AudioUnitEffect?, bypassed: Bool, auto: [String: AutoLane], params: [String: Double], sidechain: Int? = nil) {
-            self.effect = effect; self.unit = unit; self.bypassed = bypassed; self.sidechain = sidechain
+        /// A rack: `effect` is nil, the chains run here. `live` holds its macros and selector.
+        let rack: RackRuntime?
+        init(effect: DSPEffect?, unit: AudioUnitEffect?, bypassed: Bool, auto: [String: AutoLane], params: [String: Double], sidechain: Int? = nil,
+             rack: RackRuntime? = nil, mapped: Set<String> = [], spec: EffectSpec? = nil) {
+            self.effect = effect; self.unit = unit; self.bypassed = bypassed; self.sidechain = sidechain; self.rack = rack
             let sorted = auto.map { ($0.key, $0.value) }.sorted { $0.0 < $1.0 }
             self.auto = sorted
-            self.base = sorted.map { key, _ in params[key] ?? effect?.spec.params.first { $0.key == key }?.def }
+            self.autoActive = sorted.map { !mapped.contains($0.0) }
+            let spec = spec ?? effect?.spec
+            self.base = sorted.map { key, _ in params[key] ?? spec?.params.first { $0.key == key }?.def }
             // Every key present and the storage owned by this slot, so the audio thread never grows or copies it.
             var live = Dictionary(uniqueKeysWithValues: params.map { ($0.key, $0.value) })
             for (i, (key, _)) in sorted.enumerated() where live[key] == nil { live[key] = base[i] ?? 0 }
+            for key in mapped where live[key] == nil { live[key] = spec?.params.first { $0.key == key }?.def ?? 0 }
+            if rack != nil, live["selector"] == nil { live["selector"] = 0 }
             self.live = live
             self.unitAuto = auto.compactMap { key, lane in
-                guard key.hasPrefix("au."), let address = AUParameterAddress(key.dropFirst(3)) else { return nil }
+                guard key.hasPrefix("au."), let address = AUParameterAddress(key.dropFirst(3)), !mapped.contains(key) else { return nil }
                 return (address, lane)
             }.sorted { $0.address < $1.address }
         }
@@ -93,6 +104,11 @@ public final class Renderer {
     private let instrumentSlots: [Slot?]
     /// The built-in instrument of each node as a slot: its knobs and automation run like a built-in effect's.
     private let synthSlots: [Slot?]
+    /// A MIDI rack as the instrument of a node, and its slot (macros, selector).
+    private let rackSynths: [RackRuntime?]
+    private let rackSynthSlots: [Slot?]
+    /// Every rack runtime at any depth, for `reset`.
+    private let racks: [RackRuntime]
 
     /// With `reusing`, effects that exist in both plans keep their memory (reverb tails, filter state),
     /// so changing a knob does not cut the sound.
@@ -102,6 +118,10 @@ public final class Renderer {
         var instruments: [Slot?] = []
         var synths: [Slot?] = []
         var synthUnits: [DSPInstrument?] = []
+        var rackSynthList: [RackRuntime?] = [], rackSynthSlotList: [Slot?] = []
+        var allRacks: [RackRuntime] = []
+        /// Every slot by its device, so a rack's macro links find the slot they move (any depth).
+        var slotIndex: [UUID: (Slot, EffectSpec?)] = [:]
         /// A built-in device: the one the old renderer runs when it is the same device of the same kind, else a new one.
         func builtIn(_ device: DeviceID, kind: String, params: [String: Double]) -> (DSPEffect, running: Bool)? {
             if let kept = old?.instances[device], kept.spec.id == kind, kept.sampleRate == plan.sampleRate { return (kept, true) }
@@ -110,33 +130,95 @@ public final class Renderer {
             new.configure(params)
             return (new, false)
         }
-        for node in plan.nodes {
+        /// The macro and selector values of a MIDI rack, from the plan.
+        func rackParams(_ device: DeviceID) -> [String: Double] { plan.rackParams[device] ?? [:] }
+        /// The slots of an effect list. A rack becomes a slot with a runtime, its chains built the same way.
+        func slots(for effects: [EffectPlan]) -> [Slot] {
             var chain: [Slot] = []
-            for e in node.effects {
-                if let unit = e.unit { chain.append(Slot(effect: nil, unit: unit, bypassed: e.bypassed, auto: e.auto, params: [:])); continue }
+            for e in effects {
+                if let unit = e.unit {
+                    let slot = Slot(effect: nil, unit: unit, bypassed: e.bypassed, auto: e.auto, params: [:], mapped: e.mappedKeys)
+                    slotIndex[e.device.rawValue] = (slot, nil)
+                    chain.append(slot); continue
+                }
+                if let rackPlan = e.rack {
+                    let runtime = makeRack(rackPlan)
+                    let spec = BuiltInEffects.spec(e.kind)
+                    let slot = Slot(effect: nil, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params, rack: runtime,
+                                    mapped: e.mappedKeys, spec: spec)
+                    slotIndex[e.device.rawValue] = (slot, spec)
+                    runtime.resolveLinks(rackPlan.mappings, slot: slot, lookup: slotIndex)
+                    chain.append(slot)
+                    continue
+                }
                 guard let found = builtIn(e.device, kind: e.kind, params: e.params) else { continue }
                 made[e.device] = found.0
-                let slot = Slot(effect: found.0, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params, sidechain: e.sidechain)
+                let slot = Slot(effect: found.0, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params, sidechain: e.sidechain, mapped: e.mappedKeys)
                 slot.needsConfigure = found.running
+                slotIndex[e.device.rawValue] = (slot, found.0.spec)
                 chain.append(slot)
             }
-            built.append(chain)
+            return chain
+        }
+        /// A built-in instrument's slot. A kept instrument keeps its notes and its tails across the swap.
+        func synthSlot(_ s: SynthPlan, auto: [String: AutoLane]) -> (Slot, DSPInstrument)? {
+            guard let found = builtIn(s.device, kind: s.kind, params: s.params), let synth = found.0 as? DSPInstrument else { return nil }
+            made[s.device] = synth
+            let slot = Slot(effect: synth, unit: nil, bypassed: false, auto: auto, params: s.params, mapped: s.mappedKeys)
+            slot.needsConfigure = found.running
+            slotIndex[s.device.rawValue] = (slot, synth.spec)
+            return (slot, synth)
+        }
+        func makeRack(_ rackPlan: RackPlan) -> RackRuntime {
+            let chains = rackPlan.chains.map { c -> ChainRuntime in
+                let synth = c.synth.flatMap { synthSlot($0, auto: c.instrumentAuto) }
+                var nested: (Slot, RackRuntime)?
+                if let r = c.rackSynth, let device = c.instrumentDevice {
+                    let runtime = makeRack(r)
+                    let slot = Slot(effect: nil, unit: nil, bypassed: false, auto: c.instrumentAuto, params: rackParams(device), rack: runtime,
+                                    mapped: r.mappedKeys, spec: BuiltInEffects.midiRack)
+                    slotIndex[device.rawValue] = (slot, BuiltInEffects.midiRack)
+                    runtime.resolveLinks(r.mappings, slot: slot, lookup: slotIndex)
+                    nested = (slot, runtime)
+                }
+                let instrumentSlot = c.instrument.map { Slot(effect: nil, unit: $0, bypassed: false, auto: c.instrumentAuto, params: [:]) }
+                if let instrumentSlot, let device = c.instrumentDevice { slotIndex[device.rawValue] = (instrumentSlot, nil) }
+                return ChainRuntime(plan: c, slots: slots(for: c.effects),
+                                    instrumentSlot: instrumentSlot,
+                                    synthSlot: synth?.0, synth: synth?.1, rackSlot: nested?.0, rack: nested?.1,
+                                    line: c.delay > 0 ? DelayLine(delay: c.delay, maxBlock: maxBlock) : nil, maxBlock: maxBlock)
+            }
+            let runtime = RackRuntime(device: rackPlan.device, isMIDI: rackPlan.isMIDI, chains: chains, maxBlock: maxBlock)
+            allRacks.append(runtime)
+            return runtime
+        }
+        for node in plan.nodes {
+            built.append(slots(for: node.effects))
             instruments.append(node.instrument.map { Slot(effect: nil, unit: $0, bypassed: false, auto: node.instrumentAuto, params: [:]) })
-            // A kept instrument keeps its notes and its tails across the swap.
-            if let s = node.synth, let found = builtIn(s.device, kind: s.kind, params: s.params), let synth = found.0 as? DSPInstrument {
-                made[s.device] = synth
-                let slot = Slot(effect: synth, unit: nil, bypassed: false, auto: node.instrumentAuto, params: s.params)
-                slot.needsConfigure = found.running
+            if let s = node.synth, let (slot, synth) = synthSlot(s, auto: node.instrumentAuto) {
                 synths.append(slot)
                 synthUnits.append(synth)
             } else {
                 synths.append(nil)
                 synthUnits.append(nil)
             }
+            if let r = node.rackSynth {
+                let runtime = makeRack(r)
+                let slot = Slot(effect: nil, unit: nil, bypassed: false, auto: node.instrumentAuto, params: rackParams(r.device), rack: runtime,
+                                mapped: r.mappedKeys, spec: BuiltInEffects.midiRack)
+                slotIndex[r.device.rawValue] = (slot, BuiltInEffects.midiRack)
+                runtime.resolveLinks(r.mappings, slot: slot, lookup: slotIndex)
+                rackSynthList.append(runtime); rackSynthSlotList.append(slot)
+            } else {
+                rackSynthList.append(nil); rackSynthSlotList.append(nil)
+            }
         }
         chains = built
         instrumentSlots = instruments
         synthSlots = synths
+        rackSynths = rackSynthList
+        rackSynthSlots = rackSynthSlotList
+        racks = allRacks
         // A connection that keeps its ends and its delay keeps its line, so an edit does not insert
         // a stretch of silence into a compensated path. Only one renderer runs at a time, so sharing is safe.
         var kept: [String: DelayLine] = [:]
@@ -208,12 +290,14 @@ public final class Renderer {
     /// What takes the notes of node `i`: its hosted instrument, else its built-in one.
     @inline(__always) private func noteSink(_ i: Int) -> (any MIDIReceiver)? {
         if let unit = nodes[i].instrument { return unit }
-        return nodes[i].synthUnit
+        if let synth = nodes[i].synthUnit { return synth }
+        return rackSynths[i]
     }
 
     /// Clears every effect's memory (delay lines, reverb tails). Called after a stop or a jump.
     public func reset() {
         for effect in instances.values { effect.reset() }
+        for rack in racks { for chain in rack.chains { chain.line?.reset() } }
         for line in outputLines { line?.reset() }
         for lines in sendLines { for line in lines { line?.reset() } }
         for lines in tapLines { for line in lines { line?.reset() } }
@@ -298,7 +382,13 @@ public final class Renderer {
             if i < old.plan.trackOrder.count, let track = old.plan.trackOrder[i] {
                 for n in 0..<min(plan.trackOrder.count, nodeCount) where plan.trackOrder[n] == track { j = n; break }
             }
-            let unitKept = j >= 0 && unit != nil && noteSink(j) === unit
+            var unitKept = j >= 0 && unit != nil && noteSink(j) === unit
+            // A rack is rebuilt with every plan: the same rack device keeps its notes, and the new runtime
+            // learns which chains hold them, so their note-offs find the same instruments.
+            if !unitKept, j >= 0, let oldRack = unit as? RackRuntime, let newRack = rackSynths[j], oldRack.device == newRack.device {
+                newRack.inheritHeld(from: oldRack)
+                unitKept = true
+            }
             let hwKept = j >= 0 && hw != nil && nodes[j].midiOut?.endpoint == hw?.endpoint
             let out = midiOut
             @inline(__always) func off(_ k: Int, unitToo: Bool, hwToo: Bool) {
@@ -515,6 +605,8 @@ public final class Renderer {
                 play(instrument, into: l, r, frames: frames)
             } else if let synth = node.synthUnit, let slot = synthSlots[i] {
                 runSynth(synth, slot, l, r, startFrame: startFrame, frames: frames)
+            } else if let rack = rackSynths[i], let slot = rackSynthSlots[i] {
+                runRackSlot(rack, slot, l, r, startFrame: startFrame, frames: frames, instrument: true)
             }
             for slot in chains[i] where !slot.bypassed { runSlot(slot, l, r, startFrame: startFrame, frames: frames) }
 
@@ -635,14 +727,15 @@ public final class Renderer {
             run(unit, l, r, frames: frames)
             return
         }
+        if let rack = slot.rack { runRackSlot(rack, slot, l, r, startFrame: startFrame, frames: frames, instrument: false); return }
         guard let effect = slot.effect else { return }
-        if slot.needsConfigure { effect.configure(slot.live); slot.needsConfigure = false }
+        if slot.needsConfigure || slot.dirty { effect.configure(slot.live); slot.needsConfigure = false; slot.dirty = false }
         // A sidechain reads the output of a node that rendered before this one in this block.
         let scL = slot.sidechain.map { UnsafePointer(left($0)) }, scR = slot.sidechain.map { UnsafePointer(right($0)) }
         guard !slot.auto.isEmpty || effect.followsTempo else { effect.process(l, r, sidechainL: scL, sidechainR: scR, frames: frames); return }
         eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
             var changed = false
-            for (i, (key, lane)) in slot.auto.enumerated() {
+            for (i, (key, lane)) in slot.auto.enumerated() where slot.autoActive[i] {
                 guard let v = lane.value(at: grid, sessionOffset: sessionOffset).map(Double.init) ?? slot.base[i] else { continue }
                 if slot.live[key] != v { slot.live[key] = v; changed = true }
             }
@@ -660,11 +753,11 @@ public final class Renderer {
     /// are set at every grid step, and it adds its sound to the node.
     private func runSynth(_ synth: DSPInstrument, _ slot: Slot, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
                           startFrame: Int64, frames: Int) {
-        if slot.needsConfigure { synth.configure(slot.live); slot.needsConfigure = false }
+        if slot.needsConfigure || slot.dirty { synth.configure(slot.live); slot.needsConfigure = false; slot.dirty = false }
         guard !slot.auto.isEmpty || synth.followsTempo else { synth.render(l, r, frames: frames); return }
         eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
             var changed = false
-            for (i, (key, lane)) in slot.auto.enumerated() {
+            for (i, (key, lane)) in slot.auto.enumerated() where slot.autoActive[i] {
                 guard let v = lane.value(at: grid, sessionOffset: sessionOffset).map(Double.init) ?? slot.base[i] else { continue }
                 if slot.live[key] != v { slot.live[key] = v; changed = true }
             }
@@ -740,6 +833,317 @@ public final class Renderer {
             r[k] += srcR[Int(s)] * g
             f += 1
         }
+    }
+}
+
+// MARK: Racks
+
+/// One macro knob driving one value inside a rack, resolved to the slot or chain it moves.
+struct MacroLink {
+    enum Target {
+        /// A knob of a built-in device: the slot, the key and the parameter that maps a position to a value.
+        case param(Renderer.Slot, String, EffectParam?)
+        /// A plugin parameter, scheduled on the unit.
+        case unit(AudioUnitEffect, AUParameterAddress, Double, Double)
+        case chainVolume(Int)
+        case chainPan(Int)
+        /// A chain of a rack inside this one.
+        case nestedChainVolume(RackRuntime, Int)
+        case nestedChainPan(RackRuntime, Int)
+        case selector
+    }
+    let macro: Int
+    let min: Double
+    let max: Double
+    let curve: Double
+    let target: Target
+    /// The last position written, so an unchanged macro writes nothing.
+    var last = Double.nan
+}
+
+/// A chain of a rack as it runs: its slots, its instrument, its mixer and its buffers.
+final class ChainRuntime {
+    let id: ChainID
+    let slots: [Renderer.Slot]
+    let instrumentSlot: Renderer.Slot?
+    let synthSlot: Renderer.Slot?
+    let synth: DSPInstrument?
+    let unit: AudioUnitEffect?
+    let rackSlot: Renderer.Slot?
+    let rack: RackRuntime?
+    let gain: Float
+    let panLeft: Float, panRight: Float
+    let volumeAuto: AutoLane?, panAuto: AutoLane?
+    let mute: Bool, solo: Bool
+    let zone: ChainZone
+    let keyZone: ChainZone?, velocityZone: ChainZone?
+    /// Lines this chain up with the slowest chain of the rack.
+    let line: DelayLine?
+    let bufL: UnsafeMutablePointer<Float>, bufR: UnsafeMutablePointer<Float>
+    /// How many note-ons per key went down this chain, so the note-offs follow.
+    let heldKeys: UnsafeMutablePointer<UInt8>
+    /// A macro moved the chain's volume or pan: these win over the knob and the automation.
+    var macroVolumeDb = Double.nan
+    var macroPan = Double.nan
+
+    init(plan: ChainPlan, slots: [Renderer.Slot], instrumentSlot: Renderer.Slot?, synthSlot: Renderer.Slot?, synth: DSPInstrument?,
+         rackSlot: Renderer.Slot?, rack: RackRuntime?, line: DelayLine?, maxBlock: Int) {
+        id = plan.id
+        self.slots = slots
+        self.instrumentSlot = instrumentSlot
+        self.synthSlot = synthSlot
+        self.synth = synth
+        unit = plan.instrument
+        self.rackSlot = rackSlot
+        self.rack = rack
+        gain = plan.gain; panLeft = plan.panLeft; panRight = plan.panRight
+        volumeAuto = plan.volumeAuto; panAuto = plan.panAuto
+        mute = plan.mute; solo = plan.solo
+        zone = plan.zone; keyZone = plan.keyZone; velocityZone = plan.velocityZone
+        self.line = line
+        bufL = .allocate(capacity: maxBlock); bufL.initialize(repeating: 0, count: maxBlock)
+        bufR = .allocate(capacity: maxBlock); bufR.initialize(repeating: 0, count: maxBlock)
+        heldKeys = .allocate(capacity: 128); heldKeys.initialize(repeating: 0, count: 128)
+    }
+
+    deinit { bufL.deallocate(); bufR.deallocate(); heldKeys.deallocate() }
+
+    /// What plays this chain's notes.
+    var sink: (any MIDIReceiver)? { unit ?? synth ?? rack }
+}
+
+/// A rack as it runs. For a MIDI rack it is also the note sink of its track or chain: it routes every note
+/// to the chains whose zones hold it.
+final class RackRuntime: MIDIReceiver {
+    let device: DeviceID
+    let isMIDI: Bool
+    let chains: [ChainRuntime]
+    let anySolo: Bool
+    var links: [MacroLink] = []
+    /// The chain selector as the last grid step set it. The note router reads it.
+    var selector = 0.0
+    let inL: UnsafeMutablePointer<Float>, inR: UnsafeMutablePointer<Float>
+
+    init(device: DeviceID, isMIDI: Bool, chains: [ChainRuntime], maxBlock: Int) {
+        self.device = device
+        self.isMIDI = isMIDI
+        self.chains = chains
+        anySolo = chains.contains(where: \.solo)
+        inL = .allocate(capacity: maxBlock); inL.initialize(repeating: 0, count: maxBlock)
+        inR = .allocate(capacity: maxBlock); inR.initialize(repeating: 0, count: maxBlock)
+    }
+
+    deinit { inL.deallocate(); inR.deallocate() }
+
+    /// Turns the mappings of the plan into links to the slots of this runtime. Once, off the audio thread.
+    /// `lookup` holds every slot built so far by its device; a rack's chains are built before the rack itself.
+    func resolveLinks(_ mappings: [MacroMapping], slot: Renderer.Slot, lookup: [UUID: (Renderer.Slot, EffectSpec?)]) {
+        selector = slot.live["selector"] ?? 0
+        links = mappings.compactMap { m in
+            let node = m.target.node, key = m.target.parameter
+            if node == device.rawValue { return key == "selector" ? MacroLink(macro: m.macro, min: m.min, max: m.max, curve: m.curve, target: .selector) : nil }
+            for c in chains.indices where chains[c].id.rawValue == node {
+                if key == "volume" { return MacroLink(macro: m.macro, min: m.min, max: m.max, curve: m.curve, target: .chainVolume(c)) }
+                if key == "pan" { return MacroLink(macro: m.macro, min: m.min, max: m.max, curve: m.curve, target: .chainPan(c)) }
+                return nil
+            }
+            // A chain of a nested rack: its runtime holds the chain.
+            for chain in chains {
+                for nested in chain.slots.compactMap(\.rack) + [chain.rack].compactMap({ $0 }) {
+                    if let link = nested.chainLink(m, node: node, key: key) { return link }
+                }
+            }
+            guard let (target, spec) = lookup[node] else { return nil }
+            if let unit = target.unit {
+                guard key.hasPrefix("au."), let address = AUParameterAddress(key.dropFirst(3)), let range = unit.parameterRange(address) else { return nil }
+                return MacroLink(macro: m.macro, min: m.min, max: m.max, curve: m.curve, target: .unit(unit, address, range.min, range.max))
+            }
+            return MacroLink(macro: m.macro, min: m.min, max: m.max, curve: m.curve, target: .param(target, key, spec?.params.first { $0.key == key }))
+        }
+    }
+
+    /// A link to a chain of this rack or of a rack inside it, for an outer rack's macro.
+    private func chainLink(_ m: MacroMapping, node: UUID, key: String) -> MacroLink? {
+        for c in chains.indices where chains[c].id.rawValue == node {
+            if key == "volume" { return MacroLink(macro: m.macro, min: m.min, max: m.max, curve: m.curve, target: .nestedChainVolume(self, c)) }
+            if key == "pan" { return MacroLink(macro: m.macro, min: m.min, max: m.max, curve: m.curve, target: .nestedChainPan(self, c)) }
+        }
+        for chain in chains {
+            for nested in chain.slots.compactMap(\.rack) + [chain.rack].compactMap({ $0 }) {
+                if let link = nested.chainLink(m, node: node, key: key) { return link }
+            }
+        }
+        return nil
+    }
+
+    /// The chain selector value and the macros, applied to the links. Called at every grid step, before the chains run.
+    func applyLinks(_ slot: Renderer.Slot) {
+        selector = slot.live["selector"] ?? 0
+        for i in links.indices {
+            let link = links[i]
+            let value = slot.live["macro\(link.macro + 1)"] ?? 0
+            let q = min(max(value / 127, 0), 1)
+            let position = link.min + (link.max - link.min) * MacroMapping.shape(q, curve: link.curve)
+            if position == link.last { continue }
+            links[i].last = position
+            switch link.target {
+            case .param(let target, let key, let param):
+                let v = param?.value(atPosition: position) ?? position
+                if target.live[key] != v { target.live[key] = v; target.dirty = true }
+            case .unit(let unit, let address, let lo, let hi):
+                unit.scheduleParameter(address, Float(lo + (hi - lo) * min(max(position, 0), 1)), sampleOffset: 0, ramp: 32)
+            case .chainVolume(let c):
+                chains[c].macroVolumeDb = RackChain.volumeRange.lowerBound + (RackChain.volumeRange.upperBound - RackChain.volumeRange.lowerBound) * min(max(position, 0), 1)
+            case .chainPan(let c):
+                chains[c].macroPan = -1 + 2 * min(max(position, 0), 1)
+            case .nestedChainVolume(let rack, let c):
+                rack.chains[c].macroVolumeDb = RackChain.volumeRange.lowerBound + (RackChain.volumeRange.upperBound - RackChain.volumeRange.lowerBound) * min(max(position, 0), 1)
+            case .nestedChainPan(let rack, let c):
+                rack.chains[c].macroPan = -1 + 2 * min(max(position, 0), 1)
+            case .selector:
+                let s = 127 * min(max(position, 0), 1)
+                slot.live["selector"] = s
+                selector = s
+            }
+        }
+    }
+
+    /// The level of a chain at the selector, with mute and solo. 0 for a chain that is silent.
+    @inline(__always) func level(_ c: Int) -> Float {
+        let chain = chains[c]
+        if chain.mute || (anySolo && !chain.solo) { return 0 }
+        return Float(chain.zone.gain(at: selector))
+    }
+
+    // MARK: Notes
+
+    func sendMIDI(_ status: UInt8, _ data1: UInt8, _ data2: UInt8, sampleOffset: Int) {
+        let kind = status & 0xF0
+        let pitch = Int(data1 & 127)
+        if kind == 0x90, data2 > 0 {
+            let velocity = Int(data2 & 127)
+            for c in 0..<chains.count where level(c) > 0 {
+                let chain = chains[c]
+                if let kz = chain.keyZone, !kz.contains(pitch) { continue }
+                if let vz = chain.velocityZone, !vz.contains(velocity) { continue }
+                // The fades of the key and velocity zones scale the velocity, like Live's.
+                var v = Double(velocity)
+                if let kz = chain.keyZone { v *= kz.gain(at: Double(pitch)) }
+                if let vz = chain.velocityZone { v *= vz.gain(at: Double(velocity)) }
+                chain.sink?.sendMIDI(status, data1, UInt8(max(1, min(127, v.rounded()))), sampleOffset: sampleOffset)
+                chain.heldKeys[pitch] &+= 1
+            }
+            return
+        }
+        if kind == 0x80 || kind == 0x90 {
+            var routed = false
+            for chain in chains where chain.heldKeys[pitch] > 0 {
+                chain.sink?.sendMIDI(status, data1, data2, sampleOffset: sampleOffset)
+                chain.heldKeys[pitch] -= 1
+                routed = true
+            }
+            // A note-off nobody remembers (after a rebuild that lost the route) ends the note everywhere.
+            if !routed { for chain in chains { chain.sink?.sendMIDI(status, data1, data2, sampleOffset: sampleOffset) } }
+            return
+        }
+        for chain in chains { chain.sink?.sendMIDI(status, data1, data2, sampleOffset: sampleOffset) }
+    }
+
+    func silenceNotes() {
+        for chain in chains {
+            chain.sink?.silenceNotes()
+            chain.heldKeys.update(repeating: 0, count: 128)
+        }
+    }
+
+    /// Takes the note routes of the runtime this one replaces. A chain that is gone releases its notes now.
+    func inheritHeld(from old: RackRuntime) {
+        for oldChain in old.chains {
+            if let mine = chains.first(where: { $0.id == oldChain.id }) {
+                mine.heldKeys.update(from: oldChain.heldKeys, count: 128)
+                if let nestedOld = oldChain.rack, let nestedNew = mine.rack { nestedNew.inheritHeld(from: nestedOld) }
+            } else {
+                for k in 0..<128 where oldChain.heldKeys[k] > 0 { oldChain.sink?.sendMIDI(0x80, UInt8(k), 0, sampleOffset: 0) }
+            }
+            oldChain.heldKeys.update(repeating: 0, count: 128)
+        }
+    }
+}
+
+extension Renderer {
+    /// Runs a rack: its macros and selector from the slot's automation at every grid step, then every chain in
+    /// parallel on the same input (or, for an instrument rack, from its own notes), summed by the chain levels.
+    func runRackSlot(_ rack: RackRuntime, _ slot: Slot, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
+                     startFrame: Int64, frames: Int, instrument: Bool) {
+        guard !slot.auto.isEmpty else {
+            renderRack(rack, slot, l, r, startFrame: startFrame, frames: frames, instrument: instrument)
+            return
+        }
+        eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
+            for (i, (key, lane)) in slot.auto.enumerated() where slot.autoActive[i] {
+                guard let v = lane.value(at: grid, sessionOffset: sessionOffset).map(Double.init) ?? slot.base[i] else { continue }
+                if slot.live[key] != v { slot.live[key] = v }
+            }
+            renderRack(rack, slot, l + offset, r + offset, startFrame: startFrame + Int64(offset), frames: count, instrument: instrument)
+        }
+    }
+
+    private func renderRack(_ rack: RackRuntime, _ slot: Slot, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
+                            startFrame: Int64, frames: Int, instrument: Bool) {
+        rack.applyLinks(slot)
+        if !instrument {
+            rack.inL.update(from: l, count: frames)
+            rack.inR.update(from: r, count: frames)
+        }
+        l.update(repeating: 0, count: frames)
+        r.update(repeating: 0, count: frames)
+        for c in 0..<rack.chains.count {
+            let chain = rack.chains[c]
+            let level = rack.level(c)
+            // Every chain runs, sounding or not: a faded-out chain keeps its tails and its instrument's releases.
+            if instrument {
+                chain.bufL.update(repeating: 0, count: frames)
+                chain.bufR.update(repeating: 0, count: frames)
+                if let unit = chain.unit {
+                    if let s = chain.instrumentSlot { scheduleAutomation(s, startFrame: startFrame, frames: frames) }
+                    play(unit, into: chain.bufL, chain.bufR, frames: frames)
+                } else if let synth = chain.synth, let s = chain.synthSlot {
+                    runSynth(synth, s, chain.bufL, chain.bufR, startFrame: startFrame, frames: frames)
+                } else if let nested = chain.rack, let s = chain.rackSlot {
+                    runRackSlot(nested, s, chain.bufL, chain.bufR, startFrame: startFrame, frames: frames, instrument: true)
+                }
+            } else {
+                chain.bufL.update(from: rack.inL, count: frames)
+                chain.bufR.update(from: rack.inR, count: frames)
+            }
+            for s in chain.slots where !s.bypassed { runSlot(s, chain.bufL, chain.bufR, startFrame: startFrame, frames: frames) }
+            var outL = UnsafePointer(chain.bufL), outR = UnsafePointer(chain.bufR)
+            if let line = chain.line {
+                line.process(chain.bufL, chain.bufR, frames: frames)
+                outL = UnsafePointer(line.outLeft); outR = UnsafePointer(line.outRight)
+            }
+            guard level > 0 else { continue }
+            if chain.volumeAuto == nil, chain.panAuto == nil, chain.macroVolumeDb.isNaN, chain.macroPan.isNaN {
+                let gl = chain.gain * chain.panLeft * level, gr = chain.gain * chain.panRight * level
+                for k in 0..<frames { l[k] += outL[k] * gl; r[k] += outR[k] * gr }
+                continue
+            }
+            eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
+                let (gl, gr) = chainGains(chain, at: grid)
+                for k in offset..<(offset + count) { l[k] += outL[k] * gl * level; r[k] += outR[k] * gr * level }
+            }
+        }
+    }
+
+    /// The chain's volume and pan at a frame: a macro first, then automation, then the knobs.
+    private func chainGains(_ chain: ChainRuntime, at frame: Int64) -> (Float, Float) {
+        var volume = chain.gain
+        if !chain.macroVolumeDb.isNaN { volume = chain.mute ? 0 : RenderPlan.dB(chain.macroVolumeDb) }
+        else if let lane = chain.volumeAuto, let v = lane.value(at: frame, sessionOffset: sessionOffset) { volume = chain.mute ? 0 : RenderPlan.dB(Double(v)) }
+        var pl = chain.panLeft, pr = chain.panRight
+        if !chain.macroPan.isNaN { (pl, pr) = RenderPlan.balance(chain.macroPan) }
+        else if let lane = chain.panAuto, let v = lane.value(at: frame, sessionOffset: sessionOffset) { (pl, pr) = RenderPlan.balance(Double(v)) }
+        return (volume * pl, volume * pr)
     }
 }
 

@@ -570,7 +570,7 @@ extension AppModel {
         copy.name += " copy"
         // The copy's automation must drive the copy, not the original track and its devices.
         var nodes: [UUID: UUID] = [id.rawValue: copy.id.rawValue]
-        copy.devices = copy.devices.map { var d = $0; d.id = DeviceID(); nodes[$0.id.rawValue] = d.id.rawValue; return d }
+        copy.devices = copy.devices.map { $0.withFreshIDs(map: &nodes) }
         func retarget(_ lanes: [AutomationLane]) -> [AutomationLane] {
             lanes.map { var l = $0; l.id = LaneID(); l.target.node = nodes[l.target.node] ?? l.target.node; return l }
         }
@@ -605,17 +605,26 @@ extension AppModel {
     }
 
     func moveDevice(_ track: TrackID, _ device: DeviceID, by delta: Int) {
-        guard let t = project.track(track), let i = t.devices.firstIndex(where: { $0.id == device }) else { return }
+        guard let t = project.track(track) else { return }
+        let list = siblings(of: device, on: t)
+        guard let i = list.firstIndex(where: { $0.id == device }) else { return }
         let to = i + delta
-        guard t.devices.indices.contains(to) else { return }
+        guard list.indices.contains(to) else { return }
         apply(.moveDevice(track: track, device: device, to: to))
     }
 
+    /// A copy right after the device, in the same list. A rack copies with everything inside under new IDs.
     func duplicateDevice(_ track: TrackID, _ device: DeviceID) {
-        guard let t = project.track(track), let i = t.devices.firstIndex(where: { $0.id == device }) else { return }
-        var copy = t.devices[i]
-        copy.id = DeviceID()
-        apply(.insertDevice(track: track, device: copy, index: i + 1))
+        guard let t = project.track(track), let original = t.device(device) else { return }
+        let list = siblings(of: device, on: t)
+        guard let i = list.firstIndex(where: { $0.id == device }) else { return }
+        var map: [UUID: UUID] = [:]
+        let copy = original.withFreshIDs(map: &map)
+        if let chain = t.chainHolding(device) {
+            apply(.insertDeviceInChain(track: track, chain: chain.id, device: copy, index: i + 1))
+        } else {
+            apply(.insertDevice(track: track, device: copy, index: i + 1))
+        }
     }
 
     // MARK: Scenes

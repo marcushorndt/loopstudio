@@ -256,6 +256,7 @@ final class KeyMonitor {
             // Escape leaves a mode that swallows clicks or keys: MIDI Learn first, then the draw mode.
             if event.type == .keyDown, event.keyCode == 53 {
                 if model.midiLearn { model.toggleMIDILearn(); return nil }
+                if model.macroMap != nil { model.endMacroMap(); return nil }
                 if model.keyboardMIDI { model.perform(.toggleKeyboardMIDI); return nil }
                 if model.drawMode { model.drawMode = false; model.status = "Draw mode off"; return nil }
             }

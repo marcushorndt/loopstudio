@@ -13,6 +13,7 @@ public enum CommandError: Error, Equatable {
     case portNotFound(PortID)
     case portInUse(PortID)
     case deviceNotFound(DeviceID)
+    case chainNotFound(ChainID)
 }
 
 extension CommandError: CustomStringConvertible {
@@ -31,6 +32,7 @@ extension CommandError: CustomStringConvertible {
         case .portNotFound: "that port no longer exists"
         case .portInUse: "that port is still in use"
         case .deviceNotFound: "that device no longer exists"
+        case .chainNotFound: "that chain no longer exists"
         }
     }
 }
@@ -115,15 +117,34 @@ public enum Command: Codable, Sendable {
     /// The sound card channels an audio track records. `nil` uses the channels of the audio settings.
     case setInputChannels(id: TrackID, channels: InputChannels?)
 
-    /// Device chain of a track. `index` nil means the end.
+    /// Device chain of a track. `index` nil means the end. Devices inside a rack's chain: `insertDeviceInChain`.
+    /// Every other device command finds its device at any depth (a device id is unique in the project).
     case insertDevice(track: TrackID, device: DeviceSlot, index: Int?)
+    /// Puts a device into a chain of a rack on the track (any depth). `index` nil means the end of the chain.
+    case insertDeviceInChain(track: TrackID, chain: ChainID, device: DeviceSlot, index: Int?)
     case removeDevice(track: TrackID, device: DeviceID)
+    /// Moves a device within its own list (the track's, or its chain's).
     case moveDevice(track: TrackID, device: DeviceID, to: Int)
-    /// Sets a built-in parameter. `nil` returns it to the default.
+    /// Replaces the whole device list of the track (`chain` nil) or of a chain. The devices keep their IDs:
+    /// this is how devices move between chains, and how a rack is grouped or ungrouped.
+    case setDevices(track: TrackID, chain: ChainID?, devices: [DeviceSlot])
+    /// Sets a built-in parameter. `nil` returns it to the default. A rack's macros are "macro1"..."macro8",
+    /// its chain selector "selector", all 0...127.
     case setDeviceParam(track: TrackID, device: DeviceID, key: String, value: Double?)
     case setDeviceBypass(track: TrackID, device: DeviceID, bypassed: Bool)
     /// The track a sidechain effect listens to. `nil`: its own input.
     case setDeviceSidechain(track: TrackID, device: DeviceID, source: TrackID?)
+
+    /// Racks. `rack` is the rack device (any depth on the track).
+    case addChain(track: TrackID, rack: DeviceID, chain: RackChain, index: Int?)
+    case removeChain(track: TrackID, rack: DeviceID, chain: ChainID)
+    case moveChain(track: TrackID, rack: DeviceID, chain: ChainID, to: Int)
+    /// Name, colour, mixer and zones of a chain. Its devices stay as they are (use the device commands).
+    case setChain(track: TrackID, rack: DeviceID, chain: RackChain)
+    /// Adds or replaces (same id) a macro mapping. A parameter can hang on one macro only, in the whole track.
+    case setMacroMapping(track: TrackID, rack: DeviceID, mapping: MacroMapping)
+    case removeMacroMapping(track: TrackID, rack: DeviceID, mapping: UUID)
+    case setMacroName(track: TrackID, rack: DeviceID, index: Int, name: String)
 
     /// Replaces the whole launch list. The list is sorted by tick and track.
     case setLaunches(launches: [Launch])
@@ -578,74 +599,129 @@ extension Project {
             return .setAudioInput(id: id, port: old)
 
         case .insertDevice(let trackID, let device, let index):
-            let exists = allTracks.contains { $0.devices.contains { $0.id == device.id } }
-            guard !exists else { throw CommandError.duplicateID(device.id.description) }
-            if device.format == "builtin" {
-                guard let spec = BuiltInEffects.spec(device.identifier) else { throw CommandError.invalidValue("unknown built-in device \(device.identifier)") }
-                if let source = device.sidechain {
-                    guard spec.sidechain else { throw CommandError.invalidValue("\(spec.name) has no sidechain input") }
-                    guard source != trackID, source != master.id, track(source) != nil else { throw CommandError.invalidRoute("sidechain source") }
-                }
-            }
+            try checkNewDevice(device, on: trackID)
             return try withTrack(trackID) { t in
                 let at = min(max(0, index ?? t.devices.count), t.devices.count)
                 t.devices.insert(device, at: at)
                 return .removeDevice(track: trackID, device: device.id)
             }
 
-        case .removeDevice(let trackID, let id):
-            let restore = try withTrack(trackID) { t -> Command in
-                guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
-                let removed = t.devices.remove(at: i)
-                return .insertDevice(track: trackID, device: removed, index: i)
+        case .insertDeviceInChain(let trackID, let chainID, let device, let index):
+            try checkNewDevice(device, on: trackID)
+            return try withTrack(trackID) { t in
+                try t.withChain(chainID) { chain in
+                    let at = min(max(0, index ?? chain.devices.count), chain.devices.count)
+                    chain.devices.insert(device, at: at)
+                }
+                return .removeDevice(track: trackID, device: device.id)
             }
-            // Its automation goes with it, and comes back on undo.
-            return restore.then(dropLanes { $0.node == id.rawValue })
+
+        case .removeDevice(let trackID, let id):
+            var gone = Set<UUID>()
+            let restore = try withTrack(trackID) { t -> Command in
+                if let i = t.devices.firstIndex(where: { $0.id == id }) {
+                    let removed = t.devices.remove(at: i)
+                    gone = Set(removed.selfAndNested.map(\.id.rawValue) + removed.nestedChainIDs)
+                    return .insertDevice(track: trackID, device: removed, index: i)
+                }
+                guard let chain = t.chainHolding(id) else { throw CommandError.deviceNotFound(id) }
+                var removed: DeviceSlot?, at = 0
+                try t.withChain(chain.id) { c in
+                    at = c.devices.firstIndex { $0.id == id } ?? 0
+                    removed = c.devices.remove(at: at)
+                }
+                gone = Set(removed!.selfAndNested.map(\.id.rawValue) + removed!.nestedChainIDs)
+                return .insertDeviceInChain(track: trackID, chain: chain.id, device: removed!, index: at)
+            }
+            // Its automation goes with it (a rack's: everything inside), and comes back on undo. So do the
+            // macro mappings of enclosing racks that pointed into it.
+            var restoreMappings: [Command] = []
+            try withTrack(trackID) { t in
+                for rack in t.allDevices where rack.rack != nil {
+                    for m in rack.rack!.mappings where gone.contains(m.target.node) {
+                        restoreMappings.append(.setMacroMapping(track: trackID, rack: rack.id, mapping: m))
+                    }
+                    if rack.rack!.mappings.contains(where: { gone.contains($0.target.node) }) {
+                        try t.withDevice(rack.id) { $0.rack?.mappings.removeAll { gone.contains($0.target.node) } }
+                    }
+                }
+            }
+            return restore.then(dropLanes { gone.contains($0.node) } + restoreMappings)
 
         case .moveDevice(let trackID, let id, let to):
             return try withTrack(trackID) { t in
-                guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
-                let d = t.devices.remove(at: i)
-                t.devices.insert(d, at: min(max(0, to), t.devices.count))
-                return .moveDevice(track: trackID, device: id, to: i)
+                let chain = t.chainHolding(id)
+                var from = 0
+                try t.withDevices(in: chain?.id) { list in
+                    guard let i = list.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
+                    from = i
+                    let d = list.remove(at: i)
+                    list.insert(d, at: min(max(0, to), list.count))
+                }
+                return .moveDevice(track: trackID, device: id, to: from)
             }
+
+        case .setDevices(let trackID, let chainID, let devices):
+            // The new list may only hold devices that are new to the project or that leave this very list
+            // (or any list on this track: a device may move from one chain to another).
+            var old: [DeviceSlot] = []
+            try withTrack(trackID) { t in
+                try t.withDevices(in: chainID) { old = $0 }
+            }
+            let staying = Set(old.flatMap(\.selfAndNested).map(\.id))
+            for d in devices {
+                for inner in d.selfAndNested where !staying.contains(inner.id) {
+                    if allTracks.contains(where: { $0.device(inner.id) != nil }) {
+                        // It sits elsewhere on this track: fine when the caller moves it in the same batch; refuse other tracks.
+                        guard track(trackID)?.device(inner.id) != nil else { throw CommandError.duplicateID(inner.id.description) }
+                    }
+                    if inner.format == "builtin", BuiltInEffects.spec(inner.identifier) == nil { throw CommandError.invalidValue("unknown built-in device \(inner.identifier)") }
+                }
+                let issues = d.rackIssues()
+                if let first = issues.first { throw CommandError.invalidValue(first) }
+            }
+            var ids = Set<DeviceID>()
+            for d in devices.flatMap(\.selfAndNested) where !ids.insert(d.id).inserted { throw CommandError.duplicateID(d.id.description) }
+            try withTrack(trackID) { t in
+                try t.withDevices(in: chainID) { $0 = devices }
+            }
+            return .setDevices(track: trackID, chain: chainID, devices: old)
 
         case .setDeviceParam(let trackID, let id, let key, let value):
             if let value, !value.isFinite { throw CommandError.invalidValue("not a number") }
             return try withTrack(trackID) { t in
-                guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
-                let device = t.devices[i]
-                var value = value
-                // A key the device does not have would be stored and do nothing. Values outside the range are clamped.
-                if device.format == "builtin", let spec = BuiltInEffects.spec(device.identifier) {
-                    guard let param = spec.params.first(where: { $0.key == key }) else {
-                        throw CommandError.invalidValue("\(spec.name) has no parameter \"\(key)\"; it has \(spec.params.map(\.key).joined(separator: ", "))")
+                var old: Double?
+                try t.withDevice(id) { device in
+                    var value = value
+                    // A key the device does not have would be stored and do nothing. Values outside the range are clamped.
+                    if device.format == "builtin", let spec = BuiltInEffects.spec(device.identifier) {
+                        guard let param = spec.params.first(where: { $0.key == key }) else {
+                            throw CommandError.invalidValue("\(spec.name) has no parameter \"\(key)\"; it has \(spec.params.map(\.key).joined(separator: ", "))")
+                        }
+                        value = value.map(param.clamp)
+                    } else if let known = device.pluginParams, !known.contains(where: { $0.key == key }) {
+                        throw CommandError.invalidValue("\(device.name) has no parameter \"\(key)\"")
                     }
-                    value = value.map(param.clamp)
-                } else if let known = device.pluginParams, !known.contains(where: { $0.key == key }) {
-                    throw CommandError.invalidValue("\(device.name) has no parameter \"\(key)\"")
+                    old = device.params[key]
+                    device.params[key] = value
                 }
-                let old = device.params[key]
-                t.devices[i].params[key] = value
                 return .setDeviceParam(track: trackID, device: id, key: key, value: old)
             }
 
         case .setPluginParams(let trackID, let id, let params):
+            guard (params ?? []).allSatisfy({ $0.min.isFinite && $0.max.isFinite && $0.min <= $0.max }) else {
+                throw CommandError.invalidValue("plugin parameter range")
+            }
             return try withTrack(trackID) { t in
-                guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
-                guard (params ?? []).allSatisfy({ $0.min.isFinite && $0.max.isFinite && $0.min <= $0.max }) else {
-                    throw CommandError.invalidValue("plugin parameter range")
-                }
-                let old = t.devices[i].pluginParams
-                t.devices[i].pluginParams = params
+                var old: [PluginParam]?
+                try t.withDevice(id) { old = $0.pluginParams; $0.pluginParams = params }
                 return .setPluginParams(track: trackID, device: id, params: old)
             }
 
         case .setDeviceBypass(let trackID, let id, let bypassed):
             return try withTrack(trackID) { t in
-                guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
-                let old = t.devices[i].bypassed
-                t.devices[i].bypassed = bypassed
+                var old = false
+                try t.withDevice(id) { old = $0.bypassed; $0.bypassed = bypassed }
                 return .setDeviceBypass(track: trackID, device: id, bypassed: old)
             }
 
@@ -655,13 +731,148 @@ extension Project {
                 guard let s = track(source), s.kind != .master else { throw CommandError.trackNotFound(source) }
             }
             return try withTrack(trackID) { t in
-                guard let i = t.devices.firstIndex(where: { $0.id == id }) else { throw CommandError.deviceNotFound(id) }
-                guard t.devices[i].format == "builtin", BuiltInEffects.spec(t.devices[i].identifier)?.sidechain == true else {
-                    throw CommandError.invalidValue("\(t.devices[i].name) has no sidechain input")
+                var old: TrackID?
+                try t.withDevice(id) { device in
+                    guard device.format == "builtin", BuiltInEffects.spec(device.identifier)?.sidechain == true else {
+                        throw CommandError.invalidValue("\(device.name) has no sidechain input")
+                    }
+                    old = device.sidechain
+                    device.sidechain = source
                 }
-                let old = t.devices[i].sidechain
-                t.devices[i].sidechain = source
                 return .setDeviceSidechain(track: trackID, device: id, source: old)
+            }
+
+        case .addChain(let trackID, let rackID, let chain, let index):
+            guard !allTracks.contains(where: { $0.chain(chain.id) != nil }) else { throw CommandError.duplicateID(chain.id.description) }
+            for d in chain.devices { try checkNewDevice(d, on: trackID) }
+            return try withTrack(trackID) { t in
+                try t.withDevice(rackID) { rack in
+                    guard rack.rack != nil else { throw CommandError.invalidValue("\(rack.name) is not a rack") }
+                    var c = chain
+                    c.zone = c.zone.normalized; c.keyZone = c.keyZone?.normalized; c.velocityZone = c.velocityZone?.normalized
+                    let at = min(max(0, index ?? rack.rack!.chains.count), rack.rack!.chains.count)
+                    rack.rack!.chains.insert(c, at: at)
+                }
+                return .removeChain(track: trackID, rack: rackID, chain: chain.id)
+            }
+
+        case .removeChain(let trackID, let rackID, let chainID):
+            var removed: RackChain?, at = 0
+            var gone = Set<UUID>()
+            try withTrack(trackID) { t in
+                try t.withDevice(rackID) { rack in
+                    guard let i = rack.rack?.chains.firstIndex(where: { $0.id == chainID }) else { throw CommandError.chainNotFound(chainID) }
+                    at = i
+                    removed = rack.rack!.chains.remove(at: i)
+                }
+            }
+            gone = Set(removed!.devices.flatMap(\.selfAndNested).map(\.id.rawValue) + removed!.devices.flatMap(\.nestedChainIDs) + [chainID.rawValue])
+            var restoreMappings: [Command] = []
+            try withTrack(trackID) { t in
+                for rack in t.allDevices where rack.rack != nil {
+                    for m in rack.rack!.mappings where gone.contains(m.target.node) {
+                        restoreMappings.append(.setMacroMapping(track: trackID, rack: rack.id, mapping: m))
+                    }
+                    if rack.rack!.mappings.contains(where: { gone.contains($0.target.node) }) {
+                        try t.withDevice(rack.id) { $0.rack?.mappings.removeAll { gone.contains($0.target.node) } }
+                    }
+                }
+            }
+            return Command.addChain(track: trackID, rack: rackID, chain: removed!, index: at)
+                .then(dropLanes { gone.contains($0.node) } + restoreMappings)
+
+        case .moveChain(let trackID, let rackID, let chainID, let to):
+            return try withTrack(trackID) { t in
+                var from = 0
+                try t.withDevice(rackID) { rack in
+                    guard let i = rack.rack?.chains.firstIndex(where: { $0.id == chainID }) else { throw CommandError.chainNotFound(chainID) }
+                    from = i
+                    let c = rack.rack!.chains.remove(at: i)
+                    rack.rack!.chains.insert(c, at: min(max(0, to), rack.rack!.chains.count))
+                }
+                return .moveChain(track: trackID, rack: rackID, chain: chainID, to: from)
+            }
+
+        case .setChain(let trackID, let rackID, let chain):
+            guard chain.volumeDb.isFinite, chain.pan.isFinite else { throw CommandError.invalidValue("not a number") }
+            return try withTrack(trackID) { t in
+                var old: RackChain?
+                try t.withDevice(rackID) { rack in
+                    guard let i = rack.rack?.chains.firstIndex(where: { $0.id == chain.id }) else { throw CommandError.chainNotFound(chain.id) }
+                    old = rack.rack!.chains[i]
+                    var c = chain
+                    c.devices = old!.devices
+                    c.volumeDb = min(max(c.volumeDb, RackChain.volumeRange.lowerBound), RackChain.volumeRange.upperBound)
+                    c.pan = min(max(c.pan, -1), 1)
+                    c.zone = c.zone.normalized; c.keyZone = c.keyZone?.normalized; c.velocityZone = c.velocityZone?.normalized
+                    rack.rack!.chains[i] = c
+                }
+                return .setChain(track: trackID, rack: rackID, chain: old!)
+            }
+
+        case .setMacroMapping(let trackID, let rackID, let mapping):
+            guard mapping.macro >= 0, mapping.macro < Rack.macroCount else { throw CommandError.invalidValue("macro \(mapping.macro + 1) does not exist") }
+            guard mapping.min.isFinite, mapping.max.isFinite, mapping.curve.isFinite else { throw CommandError.invalidValue("not a number") }
+            guard let t = track(trackID) else { throw CommandError.trackNotFound(trackID) }
+            guard let rack = t.device(rackID), rack.rack != nil else { throw CommandError.deviceNotFound(rackID) }
+            // The target must sit inside this rack: a device in a chain (any depth), a chain of this rack, or the selector.
+            let inside = Set(rack.rack!.chains.flatMap { $0.devices.flatMap(\.selfAndNested) }.map(\.id.rawValue))
+            let chains = Set(rack.rack!.chains.flatMap { chain in [chain.id.rawValue] + chain.devices.flatMap(\.nestedChainIDs) })
+            let target = mapping.target
+            if target.node == rackID.rawValue {
+                guard target.parameter == "selector" else { throw CommandError.invalidValue("a macro can drive the rack's own selector only") }
+            } else if chains.contains(target.node) {
+                guard target.parameter == "volume" || target.parameter == "pan" else { throw CommandError.invalidValue("a chain has volume and pan only") }
+            } else if inside.contains(target.node) {
+                guard automationTargets(of: t).contains(where: { $0.address == target }) else {
+                    throw CommandError.invalidValue("no parameter \"\(target.parameter)\" in that device")
+                }
+            } else {
+                throw CommandError.invalidValue("the target is not inside \(rack.name)")
+            }
+            // One macro per parameter, in the whole track: a knob cannot serve two masters.
+            for other in t.allDevices where other.rack != nil && other.id != rackID {
+                if other.rack!.mappings.contains(where: { $0.target == target }) {
+                    throw CommandError.invalidValue("\(other.name) already drives that parameter")
+                }
+            }
+            if rack.rack!.mappings.contains(where: { $0.target == target && $0.id != mapping.id }) {
+                throw CommandError.invalidValue("that parameter already hangs on a macro of \(rack.name)")
+            }
+            return try withTrack(trackID) { t in
+                var old: MacroMapping?
+                try t.withDevice(rackID) { r in
+                    if let i = r.rack!.mappings.firstIndex(where: { $0.id == mapping.id }) {
+                        old = r.rack!.mappings[i]; r.rack!.mappings[i] = mapping
+                    } else {
+                        r.rack!.mappings.append(mapping)
+                    }
+                }
+                return old.map { .setMacroMapping(track: trackID, rack: rackID, mapping: $0) }
+                    ?? .removeMacroMapping(track: trackID, rack: rackID, mapping: mapping.id)
+            }
+
+        case .removeMacroMapping(let trackID, let rackID, let mappingID):
+            return try withTrack(trackID) { t in
+                var old: MacroMapping?
+                try t.withDevice(rackID) { r in
+                    guard let i = r.rack?.mappings.firstIndex(where: { $0.id == mappingID }) else { throw CommandError.invalidValue("no such mapping") }
+                    old = r.rack!.mappings.remove(at: i)
+                }
+                return .setMacroMapping(track: trackID, rack: rackID, mapping: old!)
+            }
+
+        case .setMacroName(let trackID, let rackID, let index, let name):
+            guard index >= 0, index < Rack.macroCount else { throw CommandError.invalidValue("macro \(index + 1) does not exist") }
+            return try withTrack(trackID) { t in
+                var old = ""
+                try t.withDevice(rackID) { r in
+                    guard r.rack != nil else { throw CommandError.invalidValue("\(r.name) is not a rack") }
+                    while r.rack!.macroNames.count < Rack.macroCount { r.rack!.macroNames.append("") }
+                    old = r.rack!.macroNames[index]
+                    r.rack!.macroNames[index] = name
+                }
+                return .setMacroName(track: trackID, rack: rackID, index: index, name: old)
             }
 
         case .setLaunches(let list):
@@ -758,6 +969,33 @@ extension Project {
 extension Command {
     /// This command, then `more`, as one undo step.
     func then(_ more: [Command]) -> Command { more.isEmpty ? self : .batch(commands: [self] + more) }
+}
+
+extension Project {
+    /// A device about to join a track: new to the project, a known kind, a valid sidechain, a sound rack.
+    func checkNewDevice(_ device: DeviceSlot, on trackID: TrackID) throws {
+        for inner in device.selfAndNested {
+            if allTracks.contains(where: { $0.device(inner.id) != nil }) { throw CommandError.duplicateID(inner.id.description) }
+            if inner.format == "builtin" {
+                guard let spec = BuiltInEffects.spec(inner.identifier) else { throw CommandError.invalidValue("unknown built-in device \(inner.identifier)") }
+                if let source = inner.sidechain {
+                    guard spec.sidechain else { throw CommandError.invalidValue("\(spec.name) has no sidechain input") }
+                    guard source != trackID, source != master.id, track(source) != nil else { throw CommandError.invalidRoute("sidechain source") }
+                }
+            }
+        }
+        for chain in device.rack?.chains ?? [] where allTracks.contains(where: { $0.chain(chain.id) != nil }) {
+            throw CommandError.duplicateID(chain.id.description)
+        }
+        if let first = device.rackIssues().first { throw CommandError.invalidValue(first) }
+    }
+}
+
+extension DeviceSlot {
+    /// The ids of every chain inside this device, any depth.
+    public var nestedChainIDs: [UUID] {
+        (rack?.chains ?? []).flatMap { chain in [chain.id.rawValue] + chain.devices.flatMap(\.nestedChainIDs) }
+    }
 }
 
 extension Project {

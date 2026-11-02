@@ -162,12 +162,12 @@ private struct ArrangementHeader: View {
                     .simultaneousGesture(TapGesture(count: 2).onEnded { model.openTrackInspector(track.id) })
                 HStack(spacing: 4) {
                     if track.kind != .master {
-                        pill("S", on: track.solo, tint: Theme.track(5)) { model.toggleSolo(track) }
+                        pill("S", on: track.solo, tint: Theme.track(5)) { model.toggleSolo(track) }.midiLearnable(.solo(track.id))
                             .hint("Solo this track only. ⌘-click adds it to the soloed tracks.")
                     }
-                    pill("M", on: track.mute, tint: Theme.accent) { model.apply(.setMute(id: track.id, mute: !track.mute)) }
+                    pill("M", on: track.mute, tint: Theme.accent) { model.apply(.setMute(id: track.id, mute: !track.mute)) }.midiLearnable(.mute(track.id))
                     if track.kind == .audio || track.kind == .midi {
-                        pill("●", on: model.armedTracks.contains(track.id), tint: .red) { model.toggleArm(track.id) }
+                        pill("●", on: model.armedTracks.contains(track.id), tint: .red) { model.toggleArm(track.id) }.midiLearnable(.arm(track.id))
                             .hint("Arm this track only: it records and plays the MIDI keyboard. ⌘-click adds it to the armed tracks.")
                     }
                 }

@@ -92,17 +92,27 @@ extension Project {
                 add(track.id.rawValue, "send.\(send.target.rawValue.uuidString)", "Send to \(target.name)", -60, 0, -60, "dB")
             }
         }
-        for device in track.devices where device.format != "builtin" {
-            for p in device.pluginParams ?? [] {
-                add(device.id.rawValue, p.key, "\(device.name) › \(p.name)", p.min, p.max, p.def, p.unit)
+        // Devices at every depth: a device in a rack's chain is named through its rack and chain.
+        func walk(_ devices: [DeviceSlot], prefix: String) {
+            for device in devices {
+                let name = prefix + device.name
+                if device.format == "builtin", let spec = BuiltInEffects.spec(device.identifier) {
+                    for p in spec.params where !(spec.isRack && p.key == "selector" && device.rack?.chains.isEmpty == true) {
+                        add(device.id.rawValue, p.key, "\(name) › \(p.name)", p.min, p.max, p.def, p.unit, log: p.logarithmic, choices: p.choices)
+                    }
+                } else if device.format != "builtin" {
+                    for p in device.pluginParams ?? [] {
+                        add(device.id.rawValue, p.key, "\(name) › \(p.name)", p.min, p.max, p.def, p.unit)
+                    }
+                }
+                for chain in device.rack?.chains ?? [] {
+                    add(chain.id.rawValue, "volume", "\(name) › \(chain.name) › Volume", RackChain.volumeRange.lowerBound, RackChain.volumeRange.upperBound, 0, "dB")
+                    add(chain.id.rawValue, "pan", "\(name) › \(chain.name) › Pan", -1, 1, 0)
+                    walk(chain.devices, prefix: "\(name) › \(chain.name) › ")
+                }
             }
         }
-        for device in track.devices where device.format == "builtin" {
-            guard let spec = BuiltInEffects.spec(device.identifier) else { continue }
-            for p in spec.params {
-                add(device.id.rawValue, p.key, "\(device.name) › \(p.name)", p.min, p.max, p.def, p.unit, log: p.logarithmic, choices: p.choices)
-            }
-        }
+        walk(track.devices, prefix: "")
         return list
     }
 
@@ -141,7 +151,8 @@ extension Project {
     public func effectiveLanes(of clip: Clip, owner: Track) -> [AutomationLane] {
         let lanes = clip.lanes.filter { !$0.points.isEmpty }
         if case .dummy = clip { return lanes }
-        let devices = Set(owner.devices.map(\.id.rawValue))
+        var devices = Set(owner.allDevices.map(\.id.rawValue))
+        for d in owner.allDevices { for chain in d.rack?.chains ?? [] { devices.insert(chain.id.rawValue) } }
         var seen = Set<ParameterAddress>()
         var result: [AutomationLane] = []
         for var lane in lanes {
@@ -155,7 +166,11 @@ extension Project {
 
     /// The track that holds a parameter: the track itself or the track of the device.
     public func trackOwning(_ address: ParameterAddress) -> Track? {
-        allTracks.first { $0.id.rawValue == address.node || $0.devices.contains { $0.id.rawValue == address.node } }
+        allTracks.first { t in
+            t.id.rawValue == address.node || t.allDevices.contains { d in
+                d.id.rawValue == address.node || d.rack?.chains.contains { $0.id.rawValue == address.node } == true
+            }
+        }
     }
 
     /// The value of a parameter without automation: the fader, the knob, or the default.
@@ -170,8 +185,13 @@ extension Project {
                 return track.sends.first { $0.target.rawValue.uuidString == target }?.levelDb
             }
         }
-        if let device = track.devices.first(where: { $0.id.rawValue == address.node }), let value = device.params[address.parameter] {
+        if let device = track.allDevices.first(where: { $0.id.rawValue == address.node }), let value = device.params[address.parameter] {
             return value
+        }
+        for d in track.allDevices {
+            if let chain = d.rack?.chains.first(where: { $0.id.rawValue == address.node }) {
+                return address.parameter == "volume" ? chain.volumeDb : (address.parameter == "pan" ? chain.pan : nil)
+            }
         }
         return automationTargets(of: track).first { $0.address == address }?.def
     }

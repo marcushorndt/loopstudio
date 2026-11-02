@@ -263,10 +263,33 @@ struct DeviceMenu: View {
     let device: DeviceSlot
 
     var body: some View {
+        let siblings = model.siblings(of: device.id, on: track)
+        let holder = track.chainHolding(device.id)
         Button(device.bypassed ? "Turn On" : "Bypass") { model.apply(.setDeviceBypass(track: track.id, device: device.id, bypassed: !device.bypassed)) }
         Button("Duplicate") { model.duplicateDevice(track.id, device.id) }
-        Button("Move Left") { model.moveDevice(track.id, device.id, by: -1) }.disabled(track.devices.first?.id == device.id)
-        Button("Move Right") { model.moveDevice(track.id, device.id, by: 1) }.disabled(track.devices.last?.id == device.id)
+        Button("Move Left") { model.moveDevice(track.id, device.id, by: -1) }.disabled(siblings.first?.id == device.id)
+        Button("Move Right") { model.moveDevice(track.id, device.id, by: 1) }.disabled(siblings.last?.id == device.id)
+        Divider()
+        if device.isRack {
+            Button("Ungroup Rack") { model.ungroupRack(device.id, on: track.id) }
+            Button("Add Chain") { model.addChain(to: device.id, on: track.id) }
+        } else {
+            Button("Group into a Rack") { model.groupDevice(device.id, on: track.id) }
+        }
+        // Every chain on the track the device could move into, with its rack's name.
+        let chains = track.allDevices.filter { $0.rack != nil && $0.id != device.id && !device.nestedChainIDs.contains($0.id.rawValue) }
+            .flatMap { rack in (rack.rack?.chains ?? []).map { (rack: rack, chain: $0) } }
+            .filter { !device.nestedChainIDs.contains($0.chain.id.rawValue) }
+        if !chains.isEmpty || holder != nil {
+            Menu("Move to") {
+                if holder != nil { Button("The Track") { model.moveDevice(device.id, on: track.id, toChain: nil) } }
+                ForEach(chains, id: \.chain.id) { pair in
+                    Button("\(pair.rack.name) › \(pair.chain.name)") { model.moveDevice(device.id, on: track.id, toChain: pair.chain.id) }
+                        .disabled(pair.chain.id == holder?.id)
+                }
+            }
+        }
+        Divider()
         if device.format == "audiounit", let unit = model.host.units[device.id] {
             Button("Open Plugin Window") { PluginWindow.show(unit, title: device.name) }
         }

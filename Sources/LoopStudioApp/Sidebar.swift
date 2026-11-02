@@ -13,16 +13,21 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            tabs
-            TextField("Search", text: $search)
-                .textFieldStyle(.roundedBorder)
-                .padding(.horizontal, 10).padding(.bottom, 8)
-            Divider()
-            switch model.sidebarTab {
-            case .audio: AudioBrowser(search: search)
-            case .effects: UnitList(title: "Audio Effects", match: "effect", units: units, loaded: unitsLoaded, search: search, builtIn: BuiltInEffects.all)
-            case .instruments: UnitList(title: "Instruments", match: "instrument", units: units, loaded: unitsLoaded, search: search, builtIn: BuiltInInstruments.all)
-            case .projects: ProjectList()
+            if model.midiLearn {
+                // Live's mapping browser takes the browser's place while MIDI map mode is on.
+                MIDIMappingList()
+            } else {
+                tabs
+                TextField("Search", text: $search)
+                    .textFieldStyle(.roundedBorder)
+                    .padding(.horizontal, 10).padding(.bottom, 8)
+                Divider()
+                switch model.sidebarTab {
+                case .audio: AudioBrowser(search: search)
+                case .effects: UnitList(title: "Audio Effects", match: "effect", units: units, loaded: unitsLoaded, search: search, builtIn: BuiltInEffects.all)
+                case .instruments: UnitList(title: "Instruments", match: "instrument", units: units, loaded: unitsLoaded, search: search, builtIn: BuiltInInstruments.all)
+                case .projects: ProjectList()
+                }
             }
         }
         .task {

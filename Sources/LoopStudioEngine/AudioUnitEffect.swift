@@ -201,6 +201,12 @@ public final class AudioUnitEffect: @unchecked Sendable {
     }
 
     /// The parameters automation can move: writable ones with a usable range.
+    /// The range of one parameter, for a macro that drives it. `nil` for an address the unit does not have.
+    public func parameterRange(_ address: AUParameterAddress) -> (min: Double, max: Double)? {
+        guard let p = unit.parameterTree?.parameter(withAddress: address) else { return nil }
+        return (Double(p.minValue), Double(p.maxValue))
+    }
+
     public func automatableParameters(limit: Int = 256) -> [PluginParam] {
         guard let tree = unit.parameterTree else { return [] }
         return tree.allParameters

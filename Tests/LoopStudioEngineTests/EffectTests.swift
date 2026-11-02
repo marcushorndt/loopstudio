@@ -29,7 +29,8 @@ private func peak(_ x: ArraySlice<Float>) -> Float { x.reduce(0) { max($0, abs($
 
 @Test func everyCatalogEffectHasDSP() {
     for spec in BuiltInEffects.all {
-        #expect(DSPEffect.make(spec.id, sampleRate: rate) != nil, "\(spec.id)")
+        // A rack has no DSP of its own: its chains carry the devices.
+        if !spec.isRack { #expect(DSPEffect.make(spec.id, sampleRate: rate) != nil, "\(spec.id)") }
         for p in spec.params { #expect(p.min <= p.def && p.def <= p.max, "\(spec.id).\(p.key) default in range") }
     }
 }

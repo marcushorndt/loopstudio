@@ -54,8 +54,8 @@ private func frame(_ seconds: Double) -> Int { Int(seconds * rate) }
 
 @Test func everyInstrumentHasDSPAndDefaultsInRange() {
     for spec in BuiltInInstruments.all {
-        let dsp = DSPEffect.make(spec.id, sampleRate: rate)
-        #expect(dsp is DSPInstrument, "\(spec.id)")
+        // A MIDI rack has no DSP of its own: its chains carry the instruments.
+        if !spec.isRack { #expect(DSPEffect.make(spec.id, sampleRate: rate) is DSPInstrument, "\(spec.id)") }
         #expect(spec.isInstrument)
         for p in spec.params { #expect(p.min <= p.def && p.def <= p.max, "\(spec.id).\(p.key) default in range") }
     }

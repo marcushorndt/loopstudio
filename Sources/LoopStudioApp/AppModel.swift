@@ -125,6 +125,12 @@ final class AppModel {
     var selectedDevice: DeviceID?
     /// Device cards folded to their title, like Live's folded devices. Saved with the project.
     var foldedDevices: Set<DeviceID> = []
+    /// Rack panels hidden on their cards ("<rack>:macros", "<rack>:chains"). Saved with the project.
+    var hiddenRackPanels: Set<String> = []
+    /// The chain each rack shows the devices of. Per session.
+    var shownChains: [DeviceID: ChainID] = [:]
+    /// Macro map mode: the rack and macro waiting for a knob. See `AppModel+Racks`.
+    var macroMap: MacroMapSession?
 
     func toggleDeviceFold(_ id: DeviceID) {
         if foldedDevices.contains(id) { foldedDevices.remove(id) } else { foldedDevices.insert(id) }
@@ -382,6 +388,8 @@ final class AppModel {
     /// The last value each mapped button saw, so only a rising edge counts as a press.
     @ObservationIgnored var midiButtonValues: [MIDIMapTarget: UInt8] = [:]
     var learnTarget: MIDIMapTarget?
+    /// The target bound last: a second key for the same target widens its mapping to a key range.
+    @ObservationIgnored var lastLearned: MIDIMapTarget?
     var midiMappings: [MIDIMapping] = []
     @ObservationIgnored let midiLearnBox = MIDILearnBox()
     /// MIDI clock out: the destination (per Mac) and the sender that follows the transport.
@@ -1426,7 +1434,7 @@ final class AppModel {
         }
         if let device = selectedDevice {
             selectedDevice = nil
-            if let track = project.allTracks.first(where: { $0.devices.contains { $0.id == device } }) {
+            if let track = project.allTracks.first(where: { $0.device(device) != nil }) {
                 apply(.removeDevice(track: track.id, device: device))
                 return
             }
@@ -1541,6 +1549,11 @@ final class AppModel {
     /// Live. Without a MIDI track it makes one, named after the instrument.
     private func placeInstrument(_ slot: DeviceSlot, on target: Track?) {
         if let target, target.kind == .midi {
+            if slot.isMIDIRack, let old = target.devices.first(where: isInstrument) {
+                // A MIDI Rack dropped on a track with an instrument takes the instrument in, like Group in Live.
+                groupDevice(old.id, on: target.id)
+                return
+            }
             if let old = target.devices.firstIndex(where: isInstrument) {
                 apply(.batch(commands: [.removeDevice(track: target.id, device: target.devices[old].id),
                                         .insertDevice(track: target.id, device: slot, index: old)]))
@@ -2043,7 +2056,7 @@ final class AppModel {
 
     // MARK: Files and projects
 
-    private func scheduleSave() {
+    func scheduleSave() {
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
@@ -2246,14 +2259,22 @@ final class AppModel {
         var lanes: [TrackID: [ParameterAddress]] = [:]
         var folded: Set<TrackID> = []
         var foldedCards: Set<DeviceID> = []
+        var hiddenPanels: Set<String> = []
         for t in new.allTracks {
             if let list = t.automationLanes, !list.isEmpty { lanes[t.id] = list }
             if t.automationFolded == true { folded.insert(t.id) }
-            for d in t.devices where d.folded == true { foldedCards.insert(d.id) }
+            for d in t.allDevices where d.folded == true { foldedCards.insert(d.id) }
+            for d in t.allDevices where d.rack != nil {
+                if d.rack?.showsMacros == false { hiddenPanels.insert("\(d.id):macros") }
+                if d.rack?.showsChains == false { hiddenPanels.insert("\(d.id):chains") }
+            }
         }
         automationShown = lanes
         automationCollapsed = folded
         foldedDevices = foldedCards
+        hiddenRackPanels = hiddenPanels
+        shownChains = [:]
+        macroMap = nil
         midiLearn = false; learnTarget = nil
         loadMIDIMappings()
         saveTask?.cancel()
@@ -2269,7 +2290,15 @@ final class AppModel {
             let lanes = laneList(t)
             t.automationLanes = lanes.isEmpty ? nil : lanes
             t.automationFolded = !lanes.isEmpty && automationCollapsed.contains(t.id) ? true : nil
-            for i in t.devices.indices { t.devices[i].folded = foldedDevices.contains(t.devices[i].id) ? true : nil }
+            for id in t.allDevices.map(\.id) {
+                try? t.withDevice(id) { d in
+                    d.folded = foldedDevices.contains(d.id) ? true : nil
+                    if d.rack != nil {
+                        d.rack!.showsMacros = !hiddenRackPanels.contains("\(d.id):macros")
+                        d.rack!.showsChains = !hiddenRackPanels.contains("\(d.id):chains")
+                    }
+                }
+            }
         }
         for i in copy.tracks.indices { viewState(&copy.tracks[i]) }
         viewState(&copy.master)

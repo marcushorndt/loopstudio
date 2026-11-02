@@ -56,6 +56,10 @@ enum Theme {
     static var trackColors: [Color] { palette.trackColors }
     /// The dot that says "this holds automation points", like Live's red automation LED.
     static let automationDot = Color(red: 0.96, green: 0.36, blue: 0.36)
+    /// MIDI map mode: every mappable control lights up in this blue, like Live's.
+    static let midiMap = Color(red: 0.24, green: 0.56, blue: 1.0)
+    /// Macro map mode of a rack: the knobs inside it light up in this green, like Live's.
+    static let macroMap = Color(red: 0.38, green: 0.80, blue: 0.48)
 
     static let radius: CGFloat = 2
 

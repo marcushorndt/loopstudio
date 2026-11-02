@@ -183,6 +183,7 @@ private struct StopButton: View {
                         lineWidth: model.stopRowSelected && model.selectedTrack == track.id ? 1.5 : 1))
         }
         .buttonStyle(.plain)
+        .midiLearnable(.stopTrack(track.id))
         .frame(width: width)
         .hint(track.kind == .master ? "Stop all clips" : (track.kind == .returnTrack ? "Stop every track that feeds this bus" : "Stop this track's clip at the next bar"))
     }
@@ -224,6 +225,7 @@ private struct SlotCell: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .midiLearnable(.slot(track.id, row))
                 HStack {
                     Text(model.clipName(slot.clip)).lineLimit(1).font(.system(size: 11, weight: .medium))
                     Spacer(minLength: 0)

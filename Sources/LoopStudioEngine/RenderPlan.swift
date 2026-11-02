@@ -73,6 +73,47 @@ struct EffectPlan {
     var unit: AudioUnitEffect? = nil
     /// The node whose output the effect listens to (a sidechain). It renders before this node.
     var sidechain: Int? = nil
+    /// An audio effect rack: its chains. The slot of this plan holds the macros and the selector.
+    var rack: RackPlan? = nil
+    /// Keys a macro of an enclosing rack drives. Their automation is ignored; the macro sets them.
+    var mappedKeys: Set<String> = []
+}
+
+/// One chain of a rack, compiled: its devices, its instrument (MIDI racks), its mixer and its zones.
+struct ChainPlan {
+    var id: ChainID
+    var effects: [EffectPlan] = []
+    var instrument: AudioUnitEffect? = nil
+    var synth: SynthPlan? = nil
+    /// A nested MIDI rack that plays the chain's notes.
+    var rackSynth: RackPlan? = nil
+    var instrumentDevice: DeviceID? = nil
+    var instrumentAuto: [String: AutoLane] = [:]
+    var gain: Float = 1
+    var panLeft: Float = 1
+    var panRight: Float = 1
+    var volumeAuto: AutoLane? = nil
+    var panAuto: AutoLane? = nil
+    var mute = false
+    var solo = false
+    var zone = ChainZone.full
+    var keyZone: ChainZone? = nil
+    var velocityZone: ChainZone? = nil
+    /// The frames this chain's own devices delay the sound by.
+    var latency = 0
+    /// Frames added at the chain's end so every chain of the rack arrives together.
+    var delay = 0
+}
+
+/// A rack, compiled. `latency` is the slowest chain's; the others get `delay` to match it.
+struct RackPlan {
+    var device: DeviceID
+    var isMIDI: Bool
+    var chains: [ChainPlan]
+    var mappings: [MacroMapping]
+    var latency = 0
+    /// Keys of this rack (macros, selector) an outer rack's macro drives.
+    var mappedKeys: Set<String> = []
 }
 
 struct MIDIEvent {
@@ -87,6 +128,8 @@ struct SynthPlan {
     var device: DeviceID
     var kind: String
     var params: [String: Double]
+    /// Keys a macro of an enclosing rack drives. See `EffectPlan.mappedKeys`.
+    var mappedKeys: Set<String> = []
 }
 
 struct SendPlan {
@@ -119,6 +162,10 @@ struct NodePlan {
     var instrumentAuto: [String: AutoLane] = [:]
     /// A built-in instrument instead of a hosted one. A track has one or the other.
     var synth: SynthPlan? = nil
+    /// A MIDI rack as the track's instrument: notes go to its chains. The renderer makes its runtime.
+    var rackSynth: RackPlan? = nil
+    /// The device that plays the track's notes, whatever its kind. Two plans with the same one keep the notes.
+    var instrumentDevice: DeviceID? = nil
     /// The running built-in instrument. The renderer sets it on its own copy of the node; the plan has none.
     var synthUnit: DSPInstrument? = nil
     var midi: [MIDIEvent] = []
@@ -162,6 +209,8 @@ public struct RenderPlan {
     /// The hardware ports that tracks play to directly, past the master. The renderer has one stereo bus each.
     public internal(set) var outputPorts: [PortID] = []
     var timeSignatures: [TimeSignatureChange] = [TimeSignatureChange(tick: 0, signature: TimeSignature(4, 4))]
+    /// The knob values (macros, selector) of every MIDI rack, by device. An effect rack carries its own in its plan.
+    var rackParams: [DeviceID: [String: Double]] = [:]
 
     public static func dB(_ db: Double) -> Float { db <= -96 ? 0 : Float(pow(10.0, db / 20.0)) }
 
@@ -314,7 +363,7 @@ public struct RenderPlan {
         }
         func autoParams(_ device: DeviceID, of track: Track) -> [String: AutoLane] {
             var result: [String: AutoLane] = [:]
-            guard let d = track.devices.first(where: { $0.id == device }) else { return result }
+            guard let d = track.device(device) else { return result }
             if let spec = BuiltInEffects.spec(d.identifier), d.format == "builtin" {
                 for p in spec.params { if let l = lane(device.rawValue, p.key) { result[p.key] = l } }
             } else {
@@ -406,14 +455,17 @@ public struct RenderPlan {
             }
             if t.kind == .midi || t.kind == .group || t.kind == .returnTrack { /* summing nodes or not rendered yet */ }
 
-            var (chain, instrument, synth, instrumentDevice) = effects(of: t, units: units, warnings: &warnings)
-            chain = chain.map { var e = $0; e.auto = autoParams(e.device, of: t); return e }
+            var compiled = compile(t.devices, track: t, units: units, rate: rate, auto: { autoParams($0, of: t) },
+                                   lane: { lane($0, $1) }, allowInstrument: t.kind == .midi, warnings: &warnings)
+            var chain = compiled.effects
+            let instrument = compiled.instrument, instrumentDevice = compiled.instrumentDevice
+            var synth = compiled.synth
             if sidechainsOrdered { chain = sidechained(chain, of: t, index: index, before: index[t.id] ?? masterIndex) }
             let instrumentAuto = instrumentDevice.map { autoParams($0, of: t) } ?? [:]
-            if t.kind != .midi { synth = nil } // an instrument on an audio track stays silent
+            if t.kind != .midi { synth = nil; compiled.rackSynth = nil } // an instrument on an audio track stays silent
             var midi: [MIDIEvent] = [], sessionMidi: [MIDIEvent] = []
             let midiOut = t.kind == .midi ? midiOutputs[t.id] : nil
-            let plays = instrument != nil || synth != nil
+            let plays = instrument != nil || synth != nil || compiled.rackSynth != nil
             if t.kind == .midi && !silent && (plays || midiOut != nil) {
                 midi = midiEvents(of: t, session: nil, map: map, rate: rate, endFrame: &endFrame)
                 var ignored: Int64 = 0
@@ -433,7 +485,8 @@ public struct RenderPlan {
                 sends: t.sends.filter { keeps(t.id, $0.target) }.compactMap { s in index[s.target].map {
                     SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader,
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
-                effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, instrumentAuto: instrumentAuto, synth: synth, midi: midi, sessionMidi: sessionMidi,
+                effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, instrumentAuto: instrumentAuto, synth: synth,
+                rackSynth: compiled.rackSynth, instrumentDevice: instrumentDevice, midi: midi, sessionMidi: sessionMidi,
                 midiOut: midiOut, arrangementEnd: arrangementEnds[t.id]))
             if let input {
                 nodes[nodes.count - 1].input = (input.channels.first, input.channels.stereo ? input.channels.first + 1 : nil)
@@ -446,8 +499,9 @@ public struct RenderPlan {
             }
         }
 
-        var masterEffects = effects(of: project.master, units: units, warnings: &warnings).0
-        masterEffects = masterEffects.map { var e = $0; e.auto = autoParams(e.device, of: project.master); return e }
+        var masterEffects = compile(project.master.devices, track: project.master, units: units, rate: rate,
+                                    auto: { autoParams($0, of: project.master) }, lane: { lane($0, $1) },
+                                    allowInstrument: false, warnings: &warnings).effects
         masterEffects = sidechained(masterEffects, of: project.master, index: index, before: masterIndex)
         let (ml, mr) = balance(project.master.pan)
         nodes.append(NodePlan(isMaster: true, clips: [], gain: project.master.mute ? 0 : dB(project.master.volumeDb),
@@ -460,15 +514,14 @@ public struct RenderPlan {
             nodes[from].taps.append(to)
         }
         for i in nodes.indices {
-            let chainLatency = nodes[i].effects.filter { !$0.bypassed }.reduce(0) {
-                $0 + ($1.unit?.latencySamples ?? DSPEffect.latency(kind: $1.kind, params: $1.params, sampleRate: rate))
-            }
-            nodes[i].latency = chainLatency + (nodes[i].instrument?.latencySamples ?? 0)
+            nodes[i].latency = Self.latency(of: nodes[i].effects, rate: rate)
+                + (nodes[i].instrument?.latencySamples ?? nodes[i].rackSynth?.latency ?? 0)
         }
         var plan = RenderPlan(nodes: nodes, sampleRate: rate, endFrame: endFrame, warnings: warnings,
                               trackOrder: order.map { Optional($0) } + [nil])
         plan.tempoMap = map
         plan.outputPorts = outputPorts
+        for t in project.allTracks { for d in t.allDevices where d.isMIDIRack { plan.rackParams[d.id] = d.params } }
         plan.timeSignatures = project.timeSignatures.sorted { $0.tick < $1.tick }
         plan.applyDelayCompensation()
         return plan
@@ -548,43 +601,114 @@ public struct RenderPlan {
         }
     }
 
-    /// The effect chain of a track, and its instrument: the first one that is not bypassed, hosted or built in.
-    private static func effects(of track: Track, units: [DeviceID: AudioUnitEffect],
-                                warnings: inout [String]) -> ([EffectPlan], AudioUnitEffect?, SynthPlan?, DeviceID?) {
-        var plans: [EffectPlan] = []
-        var instrument: AudioUnitEffect?
-        var synth: SynthPlan?
-        var instrumentDevice: DeviceID?
-        for d in track.devices {
+    struct Compiled {
+        var effects: [EffectPlan] = []
+        var instrument: AudioUnitEffect? = nil
+        var synth: SynthPlan? = nil
+        var rackSynth: RackPlan? = nil
+        var instrumentDevice: DeviceID? = nil
+    }
+
+    /// The frames a chain of effects delays the sound by: plugins by their reported latency, built-in devices
+    /// by their look-ahead, a rack by its slowest chain.
+    static func latency(of effects: [EffectPlan], rate: Double) -> Int {
+        effects.filter { !$0.bypassed }.reduce(0) {
+            $0 + ($1.unit?.latencySamples ?? $1.rack?.latency ?? DSPEffect.latency(kind: $1.kind, params: $1.params, sampleRate: rate))
+        }
+    }
+
+    /// Compiles a device list: the effects in order, and the instrument (the first one that is not bypassed,
+    /// hosted, built in, or a MIDI rack) when `allowInstrument`. A rack compiles its chains the same way.
+    private static func compile(_ devices: [DeviceSlot], track: Track, units: [DeviceID: AudioUnitEffect], rate: Double,
+                                auto: (DeviceID) -> [String: AutoLane], lane: (UUID, String) -> AutoLane?,
+                                allowInstrument: Bool, warnings: inout [String]) -> Compiled {
+        var out = Compiled()
+        for d in devices {
             if d.format == "builtin" {
                 guard let spec = BuiltInEffects.spec(d.identifier) else { continue }
+                if spec.isRack {
+                    let rack = compileRack(d, track: track, units: units, rate: rate, auto: auto, lane: lane, warnings: &warnings)
+                    if d.identifier == "midirack" {
+                        if allowInstrument, out.instrumentDevice == nil, !d.bypassed { out.rackSynth = rack; out.instrumentDevice = d.id }
+                        else if !allowInstrument { warnings.append("\(d.name) on \"\(track.name)\" plays notes only on a MIDI track") }
+                        continue
+                    }
+                    out.effects.append(EffectPlan(device: d.id, kind: d.identifier, params: d.params, bypassed: d.bypassed, auto: auto(d.id), rack: rack))
+                    continue
+                }
                 if spec.isInstrument {
-                    if instrumentDevice == nil && !d.bypassed {
-                        synth = SynthPlan(device: d.id, kind: d.identifier, params: d.params); instrumentDevice = d.id
+                    if allowInstrument, out.instrumentDevice == nil, !d.bypassed {
+                        out.synth = SynthPlan(device: d.id, kind: d.identifier, params: d.params); out.instrumentDevice = d.id
                     }
                     continue
                 }
-                plans.append(EffectPlan(device: d.id, kind: d.identifier, params: d.params, bypassed: d.bypassed))
+                out.effects.append(EffectPlan(device: d.id, kind: d.identifier, params: d.params, bypassed: d.bypassed, auto: auto(d.id)))
             } else if d.format == "audiounit" {
                 guard let unit = units[d.id] else { warnings.append("\(d.name) on \"\(track.name)\" is not loaded"); continue }
                 if unit.isInstrument {
-                    if instrumentDevice == nil && !d.bypassed { instrument = unit; instrumentDevice = d.id }
+                    if allowInstrument, out.instrumentDevice == nil, !d.bypassed { out.instrument = unit; out.instrumentDevice = d.id }
                 } else {
-                    plans.append(EffectPlan(device: d.id, kind: "audiounit", params: [:], bypassed: d.bypassed, unit: unit))
+                    out.effects.append(EffectPlan(device: d.id, kind: "audiounit", params: [:], bypassed: d.bypassed, auto: auto(d.id), unit: unit))
                 }
             } else {
                 warnings.append("\(d.name) on \"\(track.name)\" uses an unsupported plugin format")
             }
         }
-        return (plans, instrument, synth, instrumentDevice)
+        return out
     }
 
-    /// Resolves the sidechain of each effect to the node it listens to. Only a node that renders before
-    /// `before` (this node's index) can be listened to; any other sidechain falls back to the own input.
+    /// A rack: every chain compiled, the slowest chain's latency as the rack's, the others delayed to match,
+    /// and the keys its macros drive marked on the plans inside.
+    private static func compileRack(_ d: DeviceSlot, track: Track, units: [DeviceID: AudioUnitEffect], rate: Double,
+                                    auto: (DeviceID) -> [String: AutoLane], lane: (UUID, String) -> AutoLane?,
+                                    warnings: inout [String]) -> RackPlan {
+        let isMIDI = d.identifier == "midirack"
+        var chains: [ChainPlan] = []
+        for c in d.rack?.chains ?? [] {
+            let sub = compile(c.devices, track: track, units: units, rate: rate, auto: auto, lane: lane, allowInstrument: isMIDI, warnings: &warnings)
+            var chain = ChainPlan(id: c.id, effects: sub.effects, instrument: sub.instrument, synth: sub.synth, rackSynth: sub.rackSynth,
+                                  instrumentDevice: sub.instrumentDevice, instrumentAuto: sub.instrumentDevice.map(auto) ?? [:])
+            chain.gain = c.mute ? 0 : dB(c.volumeDb)
+            (chain.panLeft, chain.panRight) = balance(c.pan)
+            chain.volumeAuto = lane(c.id.rawValue, "volume")
+            chain.panAuto = lane(c.id.rawValue, "pan")
+            chain.mute = c.mute; chain.solo = c.solo
+            chain.zone = c.zone.normalized; chain.keyZone = c.keyZone?.normalized; chain.velocityZone = c.velocityZone?.normalized
+            chain.latency = latency(of: chain.effects, rate: rate) + (chain.instrument?.latencySamples ?? chain.rackSynth?.latency ?? 0)
+            chains.append(chain)
+        }
+        let slowest = chains.map(\.latency).max() ?? 0
+        for i in chains.indices { chains[i].delay = slowest - chains[i].latency }
+        var rack = RackPlan(device: d.id, isMIDI: isMIDI, chains: chains, mappings: d.rack?.mappings ?? [], latency: slowest)
+        for m in rack.mappings { markMapped(&rack, node: m.target.node, key: m.target.parameter) }
+        return rack
+    }
+
+    /// Marks a key as macro-driven on the device plan inside `rack` that has that node, at any depth.
+    private static func markMapped(_ rack: inout RackPlan, node: UUID, key: String) {
+        for c in rack.chains.indices {
+            for e in rack.chains[c].effects.indices {
+                if rack.chains[c].effects[e].device.rawValue == node { rack.chains[c].effects[e].mappedKeys.insert(key) }
+                if rack.chains[c].effects[e].rack != nil { markMapped(&rack.chains[c].effects[e].rack!, node: node, key: key) }
+            }
+            if rack.chains[c].synth?.device.rawValue == node { rack.chains[c].synth!.mappedKeys.insert(key) }
+            if rack.chains[c].rackSynth != nil {
+                if rack.chains[c].rackSynth!.device.rawValue == node { rack.chains[c].rackSynth!.mappedKeys.insert(key) }
+                markMapped(&rack.chains[c].rackSynth!, node: node, key: key)
+            }
+        }
+    }
+
+    /// Resolves the sidechain of each effect (racks included) to the node it listens to. Only a node that
+    /// renders before `before` (this node's index) can be listened to; any other sidechain falls back to the own input.
     private static func sidechained(_ chain: [EffectPlan], of track: Track, index: [TrackID: Int], before: Int) -> [EffectPlan] {
         chain.map { e in
             var e = e
-            guard let source = track.devices.first(where: { $0.id == e.device })?.sidechain, let i = index[source], i < before else { return e }
+            if var rack = e.rack {
+                for c in rack.chains.indices { rack.chains[c].effects = sidechained(rack.chains[c].effects, of: track, index: index, before: before) }
+                e.rack = rack
+            }
+            guard let source = track.device(e.device)?.sidechain, let i = index[source], i < before else { return e }
             e.sidechain = i
             return e
         }

@@ -31,6 +31,10 @@ public final class SocketTransport: @unchecked Sendable {
     public func start() throws {
         guard path.utf8.count < 100 else { throw Failure(description: "socket path too long: \(path)") }
         try FileManager.default.createDirectory(at: URL(fileURLWithPath: path).deletingLastPathComponent(), withIntermediateDirectories: true)
+        // A socket that still answers belongs to a running instance: it keeps the agents. Only a dead file goes.
+        if FileManager.default.fileExists(atPath: path), SocketClient(path: path) != nil {
+            throw Failure(description: "another LoopStudio already serves \(path)")
+        }
         unlink(path)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw Failure(description: "socket: \(String(cString: strerror(errno)))") }
@@ -41,14 +45,19 @@ public final class SocketTransport: @unchecked Sendable {
                 _ = path.withCString { strncpy(bytes, $0, MemoryLayout.size(ofValue: tuple.pointee) - 1) }
             }
         }
+        // The file is private from its first moment: no window between bind and chmod.
+        let oldMask = umask(0o077)
         let bound = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
+        umask(oldMask)
         guard bound == 0 else {
             let reason = String(cString: strerror(errno)); close(fd)
             throw Failure(description: "bind \(path): \(reason)")
         }
         chmod(path, 0o600)
+        var info = stat()
+        if stat(path, &info) == 0 { ownInode = info.st_ino }
         guard listen(fd, 8) == 0 else {
             let reason = String(cString: strerror(errno)); close(fd); unlink(path)
             throw Failure(description: "listen: \(reason)")
@@ -69,8 +78,15 @@ public final class SocketTransport: @unchecked Sendable {
 
     public func stop() {
         if listener >= 0 { close(listener); listener = -1 }
-        unlink(path)
+        // Only the own socket file goes; a newer instance's file stays.
+        var info = stat()
+        if stat(path, &info) == 0, info.st_ino == ownInode { unlink(path) }
     }
+
+    /// The inode of the socket file this transport made, so `stop` never removes another instance's file.
+    private var ownInode: ino_t = 0
+    /// The longest line a client may send before the connection is dropped.
+    private static let maxLine = 16 * 1024 * 1024
 
     private final class Box: @unchecked Sendable { var data: Data? }
 
@@ -82,6 +98,7 @@ public final class SocketTransport: @unchecked Sendable {
             let n = read(connection, &chunk, chunk.count)
             guard n > 0 else { break }
             pending.append(chunk, count: n)
+            guard pending.count <= Self.maxLine else { break } // a client that never ends its line
             while let newline = pending.firstIndex(of: 10) {
                 let line = Data(pending[pending.startIndex..<newline])
                 pending.removeSubrange(pending.startIndex...newline)

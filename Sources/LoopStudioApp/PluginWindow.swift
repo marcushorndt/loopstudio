@@ -44,6 +44,8 @@ enum PluginWindow {
                 let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
                                       styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
                 window.title = title
+                // The key monitor leaves plugin windows alone: typing in a plugin's editor must not play or delete.
+                window.identifier = NSUserInterfaceItemIdentifier("loopstudio.plugin")
                 window.isReleasedWhenClosed = false
                 window.contentMinSize = NSSize(width: 280, height: 160)
                 window.contentViewController = content

@@ -157,7 +157,8 @@ public final class MIDIClockReceiver: @unchecked Sendable {
             running = true; pulses = 0; originSixteenths = 0
             event = .start(host: host)
         case 0xFB:
-            running = true; pulses = 0
+            // Continue goes on from where the clock stopped; only Start and a Song Position move it.
+            running = true
             event = .continue(host: host)
         case 0xFC:
             running = false

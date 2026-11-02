@@ -89,7 +89,8 @@ extension AppModel {
     private func saveMIDIMappings() {
         midiLearnBox.set(midiMappings, learning: learnTarget != nil)
         if midiMappings.isEmpty { try? FileManager.default.removeItem(at: midiMapURL); return }
-        if let data = try? JSONEncoder().encode(midiMappings) { try? data.write(to: midiMapURL, options: .atomic) }
+        do { try JSONEncoder().encode(midiMappings).write(to: midiMapURL, options: .atomic) }
+        catch { status = "The MIDI mapping works now but could not be saved: \(error.localizedDescription)" }
     }
 
     func mapping(for target: MIDIMapTarget) -> MIDIControl? {
@@ -140,7 +141,13 @@ extension AppModel {
     /// Drives a target with a controller value (0...127). Buttons act once per press (a value of 64 or more).
     func perform(_ target: MIDIMapTarget, value: UInt8) {
         let q = Double(value) / 127
-        if target.isButton, value < 64 { return }
+        if target.isButton {
+            // A press is the rising edge: a controller in toggle mode (127, then 0) still acts once per press,
+            // and a knob mapped to a button by mistake acts only when it crosses the middle upwards.
+            let was = midiButtonValues[target] ?? 0
+            midiButtonValues[target] = value
+            guard value >= 64, was < 64 else { return }
+        }
         switch target {
         case .volume(let id): apply(.setVolume(id: id, db: Fader.db(position: q)), key: "vol\(id)")
         case .pan(let id): apply(.setPan(id: id, pan: q * 2 - 1), key: "pan\(id)")

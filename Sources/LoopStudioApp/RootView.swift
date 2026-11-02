@@ -67,11 +67,17 @@ struct RootView: View {
 
 struct StatusBar: View {
     @Environment(AppModel.self) private var model
+    /// A new message holds the line for a few seconds before the hover text may take it back.
+    @State private var statusFresh = false
 
     var body: some View {
         HStack(spacing: 12) {
-            // The control under the pointer first, then the last message, then a warning.
-            if !model.hoverInfo.isEmpty {
+            // A mode that swallows clicks or keys stays visible whatever the pointer rests on.
+            if model.midiLearn { modePill("MIDI Learn · Esc ends", tint: Theme.accent) }
+            if model.keyboardMIDI { modePill("Keyboard plays notes · C\(model.keyboardOctave) · Esc ends", tint: Theme.play) }
+            if model.drawMode { modePill("Draw · Esc ends", tint: Theme.track(2)) }
+            // A fresh message first, then the control under the pointer, then the last message, then a warning.
+            if !model.hoverInfo.isEmpty, !(statusFresh && !model.status.isEmpty) {
                 Text(model.hoverInfo).lineLimit(1).foregroundStyle(Theme.text)
             } else {
                 Text(model.status.isEmpty ? (model.warnings.first ?? "Ready") : model.status)
@@ -85,6 +91,18 @@ struct StatusBar: View {
         .font(.caption)
         .padding(.horizontal, 10).padding(.vertical, 4)
         .background(Theme.panel)
+        .task(id: model.status) {
+            statusFresh = !model.status.isEmpty
+            try? await Task.sleep(for: .seconds(4))
+            statusFresh = false
+        }
+    }
+
+    private func modePill(_ text: String, tint: Color) -> some View {
+        Text(text).font(.system(size: 10, weight: .semibold)).foregroundStyle(tint)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(tint.opacity(0.16), in: Capsule())
+            .overlay(Capsule().stroke(tint.opacity(0.5), lineWidth: 1))
     }
 }
 

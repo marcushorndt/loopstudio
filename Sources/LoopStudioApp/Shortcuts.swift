@@ -230,18 +230,23 @@ extension AppAction {
 
 @MainActor
 final class KeyMonitor {
-    private var token: Any?
+    /// One monitor for the app: the root view is rebuilt on a theme change, and a second monitor would act twice.
+    private static var token: Any?
 
     /// Piano layout on the home row, like Live: A W S E D F T G Y H U J K.
     private static let piano: [String: Int] = ["a": 0, "w": 1, "s": 2, "e": 3, "d": 4, "f": 5, "t": 6, "g": 7, "y": 8, "h": 9, "u": 10, "j": 11, "k": 12, "o": 13, "l": 14, "p": 15]
     private var held: [String: UInt8] = [:]
 
     func install(model: AppModel) {
-        guard token == nil else { return }
-        token = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self, weak model] event in
+        guard Self.token == nil else { return }
+        Self.token = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self, weak model] event in
             guard let self, let model else { return event }
-            // Typing in a text field keeps its keys.
-            if NSApp.keyWindow?.firstResponder is NSText { return event }
+            // Typing in a text field keeps its keys. So do the Settings window, a plugin's editor and a sheet.
+            if let window = NSApp.keyWindow {
+                if window.firstResponder is NSText { return event }
+                let id = window.identifier?.rawValue ?? ""
+                if window.sheetParent != nil || window.attachedSheet != nil || id.contains("Settings") || id == "loopstudio.plugin" { return event }
+            }
             let typed = event.charactersIgnoringModifiers?.lowercased() ?? ""
             // Turning the keyboard off releases the notes it still holds.
             if !model.keyboardMIDI, !held.isEmpty {
@@ -251,6 +256,7 @@ final class KeyMonitor {
             // Escape leaves a mode that swallows clicks or keys: MIDI Learn first, then the draw mode.
             if event.type == .keyDown, event.keyCode == 53 {
                 if model.midiLearn { model.toggleMIDILearn(); return nil }
+                if model.keyboardMIDI { model.perform(.toggleKeyboardMIDI); return nil }
                 if model.drawMode { model.drawMode = false; model.status = "Draw mode off"; return nil }
             }
             let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty

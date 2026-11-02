@@ -177,13 +177,13 @@ struct Biquad {
         set(b0: 1 + a * A, b1: -2 * c, b2: 1 - a * A, a0: 1 + a / A, a1: -2 * c, a2: 1 - a / A)
     }
     mutating func lowShelf(_ f: Double, gainDb: Double, rate: Double) {
-        let A = pow(10, gainDb / 40), w = 2 * .pi * f / rate, c = cos(w), s = sin(w)
+        let A = pow(10, gainDb / 40), w = 2 * .pi * min(f, rate * 0.45) / rate, c = cos(w), s = sin(w)
         let alpha = s / 2 * sqrt(2.0), t = 2 * sqrt(A) * alpha
         set(b0: A * ((A + 1) - (A - 1) * c + t), b1: 2 * A * ((A - 1) - (A + 1) * c), b2: A * ((A + 1) - (A - 1) * c - t),
             a0: (A + 1) + (A - 1) * c + t, a1: -2 * ((A - 1) + (A + 1) * c), a2: (A + 1) + (A - 1) * c - t)
     }
     mutating func highShelf(_ f: Double, gainDb: Double, rate: Double) {
-        let A = pow(10, gainDb / 40), w = 2 * .pi * f / rate, c = cos(w), s = sin(w)
+        let A = pow(10, gainDb / 40), w = 2 * .pi * min(f, rate * 0.45) / rate, c = cos(w), s = sin(w)
         let alpha = s / 2 * sqrt(2.0), t = 2 * sqrt(A) * alpha
         set(b0: A * ((A + 1) + (A - 1) * c + t), b1: -2 * A * ((A - 1) + (A + 1) * c), b2: A * ((A + 1) + (A - 1) * c - t),
             a0: (A + 1) - (A - 1) * c + t, a1: 2 * ((A - 1) - (A + 1) * c), a2: (A + 1) - (A - 1) * c - t)

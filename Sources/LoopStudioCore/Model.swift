@@ -169,9 +169,10 @@ public struct MIDINote: Hashable, Codable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         tick = try c.decode(Tick.self, forKey: .tick)
         length = try c.decode(Tick.self, forKey: .length)
-        pitch = try c.decode(UInt8.self, forKey: .pitch)
-        velocity = try c.decode(UInt8.self, forKey: .velocity)
-        channel = try c.decode(UInt8.self, forKey: .channel)
+        // The same limits as the init: a file is input too.
+        pitch = min(try c.decode(UInt8.self, forKey: .pitch), 127)
+        velocity = min(max(try c.decode(UInt8.self, forKey: .velocity), 1), 127)
+        channel = min(try c.decode(UInt8.self, forKey: .channel), 15)
         muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
     }
 }
@@ -460,6 +461,8 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
     public var pluginParams: [PluginParam]?
     /// The track a sidechain effect (a compressor) listens to instead of its own input. `nil`: its own input.
     public var sidechain: TrackID?
+    /// View state: the card is folded to its title. Saved with the project, like the arm state; no undo.
+    public var folded: Bool?
 
     public init(id: DeviceID = DeviceID(), format: String, identifier: String, name: String,
                 bypassed: Bool = false, state: Data? = nil, params: [String: Double] = [:], sidechain: TrackID? = nil) {
@@ -473,7 +476,7 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
         self.sidechain = sidechain
     }
 
-    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params, pluginParams, sidechain }
+    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params, pluginParams, sidechain, folded }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -486,6 +489,7 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
         params = try c.decodeIfPresent([String: Double].self, forKey: .params) ?? [:]
         pluginParams = try c.decodeIfPresent([PluginParam].self, forKey: .pluginParams)
         sidechain = try c.decodeIfPresent(TrackID.self, forKey: .sidechain)
+        folded = try c.decodeIfPresent(Bool.self, forKey: .folded)
     }
 }
 

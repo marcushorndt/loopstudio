@@ -92,7 +92,7 @@ struct AudioBrowser: View {
             Section {
                 ForEach(model.audioFolders, id: \.self) { folder in
                     DisclosureGroup {
-                        ForEach(filtered(files(in: folder)), id: \.self) {
+                        ForEach(filtered(folderFiles[folder] ?? []), id: \.self) {
                             FileRow(url: $0, title: $0.deletingPathExtension().lastPathComponent, detail: nil)
                         }
                     } label: {
@@ -105,7 +105,16 @@ struct AudioBrowser: View {
         }
         .listStyle(.sidebar)
         .onAppear { library = DemoSamples.ensure() }
+        // The folders are read off the main thread, once per folder list, not on every keystroke in the search.
+        .task(id: model.audioFolders) {
+            for folder in model.audioFolders where folderFiles[folder] == nil {
+                let files = await Task.detached(priority: .utility) { Self.files(in: folder) }.value
+                folderFiles[folder] = files
+            }
+        }
     }
+
+    @State private var folderFiles: [URL: [URL]] = [:]
 
     private func filtered(_ urls: [URL]) -> [URL] {
         search.isEmpty ? urls : urls.filter { $0.lastPathComponent.localizedCaseInsensitiveContains(search) }
@@ -116,7 +125,7 @@ struct AudioBrowser: View {
         return s < 10 ? String(format: "%.1f s", s) : String(format: "%d:%02d", Int(s) / 60, Int(s) % 60)
     }
 
-    private func files(in folder: URL) -> [URL] {
+    nonisolated private static func files(in folder: URL) -> [URL] {
         guard let e = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return [] }
         var result: [URL] = []
         for case let url as URL in e where audioExtensions.contains(url.pathExtension.lowercased()) {
@@ -233,7 +242,7 @@ struct ProjectList: View {
     var body: some View {
         List {
             Section {
-                Button { model.newProject() } label: { Label("New Project", systemImage: "plus") }
+                Button { model.newProject() } label: { Label("New Project", systemImage: "plus").frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }
                     .buttonStyle(.plain).foregroundStyle(Theme.accent)
             }
             Section("Projects") {

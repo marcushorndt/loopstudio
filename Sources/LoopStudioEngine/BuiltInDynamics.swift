@@ -108,7 +108,8 @@ final class LimiterDSP: DSPEffect, @unchecked Sendable {
         ceiling = dbToLinear(value(p, "ceiling"))
         release = 1 - expf(-1 / (value(p, "release") * 0.001 * Float(sampleRate)))
         let want = min(capacity - 2, Int(value(p, "lookahead") * 0.001 * Float(sampleRate)))
-        if want != lookahead { lookahead = want; reset() }
+        // A new look-ahead re-anchors the window and the line; the gain and the sound go on without a gap.
+        if want != lookahead { lookahead = want; head = 0; tail = 0; sample = 0; linePos = 0 }
     }
 
     override func reset() {

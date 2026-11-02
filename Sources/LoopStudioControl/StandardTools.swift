@@ -206,7 +206,7 @@ public enum StandardTools {
                 "tailSeconds": Schema.number("Extra seconds after the last clip (for reverb tails). Default 0."),
                 "overwrite": .object(["type": .string("boolean"), "description": .string("Replace an existing file. Default false.")]),
             ], required: ["path"]),
-            annotations: ToolAnnotations(destructive: false)
+            annotations: ToolAnnotations(destructive: true)
         ) { args in
             let out = try fileURL(try args.string("path"))
             guard out.pathExtension.lowercased() == "wav" else { throw ToolFailure("path must end in .wav") }

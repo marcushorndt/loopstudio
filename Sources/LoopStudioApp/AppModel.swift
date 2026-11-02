@@ -87,11 +87,15 @@ final class AppModel {
     var status = ""
 
     // UI state
-    var viewMode: ViewMode = .session
+    var viewMode: ViewMode = ViewMode(rawValue: UserDefaults.standard.string(forKey: "viewMode") ?? "") ?? .session {
+        didSet { UserDefaults.standard.set(viewMode.rawValue, forKey: "viewMode") }
+    }
     var sidebarTab: SidebarTab = SidebarTab(rawValue: UserDefaults.standard.string(forKey: "sidebarTab") ?? "") ?? .audio {
         didSet { UserDefaults.standard.set(sidebarTab.rawValue, forKey: "sidebarTab") }
     }
-    var detailOpen = true
+    var detailOpen = UserDefaults.standard.object(forKey: "detailOpen") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(detailOpen, forKey: "detailOpen") }
+    }
     /// Height of the inspector, kept per Mac.
     /// The height the panel has on screen. It is at least `detailHeight` and fills the space the view above
     /// does not need. The resize handle starts its drag from it.
@@ -119,6 +123,13 @@ final class AppModel {
     var detailTab: DetailTab = .clip
     /// The device card last clicked. Delete removes it; a click on a clip or track lets it go.
     var selectedDevice: DeviceID?
+    /// Device cards folded to their title, like Live's folded devices. Saved with the project.
+    var foldedDevices: Set<DeviceID> = []
+
+    func toggleDeviceFold(_ id: DeviceID) {
+        if foldedDevices.contains(id) { foldedDevices.remove(id) } else { foldedDevices.insert(id) }
+        scheduleSave()
+    }
     var selectedClip: ClipID? {
         // One selection: no clip in focus means no marked clips either, so Delete cannot hit a clip out of view.
         didSet {
@@ -368,6 +379,8 @@ final class AppModel {
     /// MIDI Learn: the mode, the control waiting for a device message, and the mappings of this project
     /// (saved next to it in `midi-map.json`, not as an edit).
     var midiLearn = false
+    /// The last value each mapped button saw, so only a rising edge counts as a press.
+    @ObservationIgnored var midiButtonValues: [MIDIMapTarget: UInt8] = [:]
     var learnTarget: MIDIMapTarget?
     var midiMappings: [MIDIMapping] = []
     @ObservationIgnored let midiLearnBox = MIDILearnBox()
@@ -1341,16 +1354,24 @@ final class AppModel {
     private(set) var revision = 0
 
     func undo() {
-        guard let inverse = undoStack.popLast() else { return }
-        if let redo = try? inverse.apply(to: &project) { redoStack.append(redo); journalAppend(inverse) }
+        guard let inverse = undoStack.last else { return }
+        do {
+            let redo = try inverse.apply(to: &project)
+            undoStack.removeLast()
+            redoStack.append(redo); journalAppend(inverse)
+        } catch { status = "Cannot undo: \(error)"; return }
         lastKey = nil
         selectedNotes = [] // marked notes may not exist any more
         changed()
     }
 
     func redo() {
-        guard let command = redoStack.popLast() else { return }
-        if let inverse = try? command.apply(to: &project) { undoStack.append(inverse); journalAppend(command) }
+        guard let command = redoStack.last else { return }
+        do {
+            let inverse = try command.apply(to: &project)
+            redoStack.removeLast()
+            undoStack.append(inverse); journalAppend(command)
+        } catch { status = "Cannot redo: \(error)"; return }
         lastKey = nil
         selectedNotes = []
         changed()
@@ -1365,6 +1386,8 @@ final class AppModel {
         if let c = selectedClip, project.findClip(c) == nil { selectedClip = nil }
         selectedClips = selectedClips.filter { project.findClip($0) != nil }
         session.followMovedSlots(in: project)
+        // An asset an agent added over the socket gets decoded here; the drop path decodes it itself.
+        for asset in project.assets where bank.buffer(for: asset.id) == nil { loadAudio(asset) }
         rebuild()
         syncPlugins()
         scheduleSave()
@@ -2133,7 +2156,9 @@ final class AppModel {
             loadAllAudio()
             if let replay {
                 dirty = true
-                scheduleSave()
+                // The package gets the recovered edits now and the journal starts clean: a journal with a bad
+                // tail must not replay over them after the next crash.
+                save()
                 status = "Recovered \(replay.applied) unsaved edit\(replay.applied == 1 ? "" : "s")"
                     + (replay.failure == nil ? "" : "; the rest could not be applied")
             }
@@ -2144,7 +2169,7 @@ final class AppModel {
             }
         } catch {
             status = "Cannot open \(url.lastPathComponent): \(error)"
-            if project.tracks.isEmpty { createDemo() }
+            if project.tracks.isEmpty, packageURL.path.isEmpty { createDemo() }
         }
     }
 
@@ -2220,12 +2245,15 @@ final class AppModel {
         restoreSessionState()
         var lanes: [TrackID: [ParameterAddress]] = [:]
         var folded: Set<TrackID> = []
+        var foldedCards: Set<DeviceID> = []
         for t in new.allTracks {
             if let list = t.automationLanes, !list.isEmpty { lanes[t.id] = list }
             if t.automationFolded == true { folded.insert(t.id) }
+            for d in t.devices where d.folded == true { foldedCards.insert(d.id) }
         }
         automationShown = lanes
         automationCollapsed = folded
+        foldedDevices = foldedCards
         midiLearn = false; learnTarget = nil
         loadMIDIMappings()
         saveTask?.cancel()
@@ -2241,6 +2269,7 @@ final class AppModel {
             let lanes = laneList(t)
             t.automationLanes = lanes.isEmpty ? nil : lanes
             t.automationFolded = !lanes.isEmpty && automationCollapsed.contains(t.id) ? true : nil
+            for i in t.devices.indices { t.devices[i].folded = foldedDevices.contains(t.devices[i].id) ? true : nil }
         }
         for i in copy.tracks.indices { viewState(&copy.tracks[i]) }
         viewState(&copy.master)

@@ -68,6 +68,14 @@ public struct TimeSignature: Hashable, Codable, Sendable {
         self.denominator = [1, 2, 4, 8, 16, 32].contains(denominator) ? denominator : 4
     }
 
+    private enum CodingKeys: String, CodingKey { case numerator, denominator }
+
+    /// A file is input: a zero or odd denominator goes through the same rules as a typed one.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(try c.decode(Int.self, forKey: .numerator), try c.decode(Int.self, forKey: .denominator))
+    }
+
     public var ticksPerBar: Tick {
         Tick(Int64(numerator) * (4 * Tick.perQuarter) / Int64(denominator))
     }

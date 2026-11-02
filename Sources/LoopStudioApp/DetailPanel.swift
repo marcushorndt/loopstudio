@@ -33,11 +33,14 @@ struct DetailTabs: View {
 
     private func tab(_ title: String, _ value: DetailTab) -> some View {
         let on = model.detailTab == value
-        return Button(title) { model.detailTab = value }
-            .buttonStyle(.plain).font(.system(size: 11, weight: on ? .semibold : .regular))
-            .foregroundStyle(on ? Theme.text : Theme.dim)
-            .padding(.horizontal, 10).padding(.vertical, 2)
-            .background(on ? Theme.accent.opacity(0.35) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
+        return Button { model.detailTab = value } label: {
+            Text(title).font(.system(size: 11, weight: on ? .semibold : .regular))
+                .foregroundStyle(on ? Theme.text : Theme.dim)
+                .padding(.horizontal, 10).padding(.vertical, 2)
+                .background(on ? Theme.accent.opacity(0.35) : Color.clear, in: RoundedRectangle(cornerRadius: Theme.radius))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -31,7 +31,7 @@ extension AppModel {
         case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil) || !selectedNotes.isEmpty
             || selectedScene != nil || selectedDevice != nil
         case .cut, .copy: !selectedClips.isEmpty || selectedClip != nil
-        case .duplicate: !selectedClips.isEmpty || selectedClip != nil || !selectedNotes.isEmpty || selectedScene != nil
+        case .duplicate: !selectedClips.isEmpty || selectedClip != nil || !selectedNotes.isEmpty || selectedScene != nil || (trackFocused && selectedTrack != nil)
         case .paste: !clipboard.isEmpty || !noteClipboard.isEmpty
         case .backToArrangement, .captureSession: arrangementOverridden
         case .renameTrack: selectedTrack != nil || selectedClip != nil
@@ -55,10 +55,18 @@ extension AppModel {
         case .copy: copySelection()
         case .paste: pasteClipboard()
         case .duplicate:
-            // Marked notes: a copy right after them, like Live. The note clipboard keeps the copy.
-            if !selectedNotes.isEmpty { copySelection(); pasteClipboard() } else { duplicateSelection() }
+            // Marked notes: a copy right after them, like Live. The note clipboard keeps the copy. A focused
+            // track with nothing else marked duplicates the track, as ⌘D does in Live.
+            if !selectedNotes.isEmpty { copySelection(); pasteClipboard() }
+            else if trackFocused, selectedClips.isEmpty, selectedClip == nil, selectedScene == nil, let t = selectedTrack { duplicateTrack(t) }
+            else { duplicateSelection() }
         case .deleteSelection: deleteSelected()
-        case .drawMode: drawMode.toggle(); status = drawMode ? "Draw mode: click or drag to draw notes, click a note to delete it" : "Draw mode off"
+        case .drawMode:
+            // The pen belongs to the piano roll: without an open MIDI clip the key does nothing.
+            guard drawMode || (detailTab == .clip && selectedClip.flatMap { project.findClip($0) }.map { if case .midi = $0.1 { true } else { false } } == true) else {
+                status = "Draw mode needs an open MIDI clip"; return
+            }
+            drawMode.toggle(); status = drawMode ? "Draw mode: click or drag to draw notes, click a note to delete it (Esc ends it)" : "Draw mode off"
         case .splitAtPlayhead: splitAtPlayhead()
         case .deactivateClip: deactivateSelected()
         case .record: toggleRecordArm()

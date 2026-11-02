@@ -41,8 +41,10 @@ struct ArrangementView: View {
                         }
                         .padding(.horizontal, 8).frame(height: rulerHeight)
                         ForEach(tracks, id: \.id) { ArrangementHeader(track: $0) }
-                        Button { model.addTrack() } label: { Label("Add track", systemImage: "plus").font(.caption) }
-                            .buttonStyle(.plain).foregroundStyle(Theme.dim).frame(height: 36)
+                        Button { model.addTrack() } label: {
+                            Label("Add track", systemImage: "plus").font(.caption).frame(maxWidth: .infinity).frame(height: 36).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain).foregroundStyle(Theme.dim)
                     }
                     .frame(width: headerWidth)
 
@@ -155,6 +157,9 @@ private struct ArrangementHeader: View {
             RoundedRectangle(cornerRadius: 2).fill(Theme.track(track.colorIndex)).frame(width: 6)
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    // A double-click on the name opens the inspector; on the buttons it would toggle them twice.
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { model.openTrackInspector(track.id) })
                 HStack(spacing: 4) {
                     if track.kind != .master {
                         pill("S", on: track.solo, tint: Theme.track(5)) { model.toggleSolo(track) }
@@ -178,7 +183,6 @@ private struct ArrangementHeader: View {
         // The single click acts at once; a double-click also opens the inspector. A double-click handler that
         // runs first would hold every single click back until the double-click time has passed.
         .onTapGesture { model.focusTrack(track.id) }
-        .simultaneousGesture(TapGesture(count: 2).onEnded { model.openTrackInspector(track.id) })
         .contextMenu {
             if track.kind == .master { AutomationLanesMenu(track: track) } else { TrackMenuItems(track: track, showsAutomation: true) }
         }
@@ -359,8 +363,9 @@ private struct ArrangementClip: View {
         }
         .frame(width: w, height: laneHeight - 6)
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : tint.opacity(0.55), lineWidth: selected ? 1.5 : 1))
+        // A clip narrower than its two grips has no body to grab: the grips go, the clip can still be moved.
         .overlay(alignment: .leading) {
-            Rectangle().fill(.clear).frame(width: 8).contentShape(Rectangle())
+            if w >= 24 { Rectangle().fill(.clear).frame(width: 8).contentShape(Rectangle())
                 // Measured in the window, not in the edge itself: the edge moves with the drag, which made it flicker.
                 .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { trimStart = trimTarget($0.translation.width) }
@@ -375,9 +380,10 @@ private struct ArrangementClip: View {
                     })
                 .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
                 .hint("Drag to trim the start. The sound stays in place.")
+            }
         }
         .overlay(alignment: .trailing) {
-            Rectangle().fill(.clear).frame(width: 8).contentShape(Rectangle())
+            if w >= 24 { Rectangle().fill(.clear).frame(width: 8).contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { g in
                         let end = model.snap(xTick(tickX(clip.start + clip.length, model) + g.translation.width, model))
@@ -389,6 +395,7 @@ private struct ArrangementClip: View {
                         if end > clip.start { model.apply(.setClipRange(clip: clip.id, start: clip.start, length: end - clip.start)) }
                     })
                 .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+            }
         }
         .offset(x: x + trim + shown.width, y: 3 + shown.height)
         .zIndex(shown == .zero ? 0 : 10)

@@ -189,6 +189,11 @@ extension Project {
                     restore.append(.setOutput(id: tracks[i].id, target: id))
                     tracks[i].output = nil
                 }
+                // A sidechain that listened to the removed track falls back to its own input.
+                for d in tracks[i].devices.indices where tracks[i].devices[d].sidechain == id {
+                    restore.append(.setDeviceSidechain(track: tracks[i].id, device: tracks[i].devices[d].id, source: id))
+                    tracks[i].devices[d].sidechain = nil
+                }
                 if tracks[i].sends.contains(where: { $0.target == id }) {
                     restore.append(.setSends(id: tracks[i].id, sends: tracks[i].sends))
                     tracks[i].sends.removeAll { $0.target == id }
@@ -264,7 +269,8 @@ extension Project {
             return .setInputTrack(id: id, source: old)
 
         case .setMonitor(let id, let mode):
-            let old = try withTrack(id) { t -> MonitorMode in defer { t.monitor = mode }; return t.monitorMode }
+            // `.auto` is stored as nil, so undo lands on the same stored value.
+            let old = try withTrack(id) { t -> MonitorMode in defer { t.monitor = mode == .auto ? nil : mode }; return t.monitorMode }
             return .setMonitor(id: id, mode: old)
 
         case .setSendsOnly(let id, let sendsOnly):
@@ -298,6 +304,9 @@ extension Project {
             }
             return .insertClip(track: trackID, clip: clip)
 
+        case .moveClip(let id, let toTrack, let start) where start.rawValue < 0:
+            throw CommandError.invalidValue("clip start \(start.rawValue)")
+
         case .moveClip(let id, let toTrack, let start):
             guard let (fromTrack, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
             let moved = clip.with(start: start, length: clip.length)
@@ -313,6 +322,9 @@ extension Project {
             }
             return .moveClip(clip: id, toTrack: fromTrack, start: clip.start)
 
+        case .setClipRange(let id, let start, let length) where start.rawValue < 0 || length.rawValue <= 0:
+            throw CommandError.invalidValue("clip range")
+
         case .setClipRange(let id, let start, let length):
             guard length.rawValue > 0 else { throw CommandError.invalidValue("clip length must be positive") }
             guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
@@ -321,10 +333,12 @@ extension Project {
             return .setClipRange(clip: id, start: clip.start, length: clip.length)
 
         case .setClip(let clip):
-            guard clip.length.rawValue > 0, clip.start.rawValue >= 0 else { throw CommandError.invalidValue("clip range") }
-            if case .audio(let a) = clip, a.offset.rawValue < 0 { throw CommandError.invalidValue("clip offset") }
+            try validate(clip)
             guard let (trackID, old) = findClip(clip.id) else { throw CommandError.clipNotFound(clip.id) }
-            try withTrack(trackID) { t in try t.replaceClip(clip) }
+            try withTrack(trackID) { t in
+                guard Self.clip(clip, fits: t.kind) else { throw CommandError.invalidValue("clip does not fit track kind") }
+                try t.replaceClip(clip)
+            }
             return .setClip(clip: old)
 
         case .setClipLoop(let id, let loop):
@@ -566,6 +580,13 @@ extension Project {
         case .insertDevice(let trackID, let device, let index):
             let exists = allTracks.contains { $0.devices.contains { $0.id == device.id } }
             guard !exists else { throw CommandError.duplicateID(device.id.description) }
+            if device.format == "builtin" {
+                guard let spec = BuiltInEffects.spec(device.identifier) else { throw CommandError.invalidValue("unknown built-in device \(device.identifier)") }
+                if let source = device.sidechain {
+                    guard spec.sidechain else { throw CommandError.invalidValue("\(spec.name) has no sidechain input") }
+                    guard source != trackID, source != master.id, track(source) != nil else { throw CommandError.invalidRoute("sidechain source") }
+                }
+            }
             return try withTrack(trackID) { t in
                 let at = min(max(0, index ?? t.devices.count), t.devices.count)
                 t.devices.insert(device, at: at)
@@ -689,8 +710,10 @@ extension Project {
 
     private func validate(_ clip: Clip) throws {
         guard clip.length.rawValue > 0 else { throw CommandError.invalidValue("clip length must be positive") }
+        guard clip.start.rawValue >= 0 else { throw CommandError.invalidValue("clip start \(clip.start.rawValue)") }
         if case .audio(let audio) = clip {
             guard asset(audio.asset) != nil else { throw CommandError.assetNotFound(audio.asset) }
+            guard audio.offset.rawValue >= 0 else { throw CommandError.invalidValue("clip offset") }
             guard !audio.gainDb.isNaN, audio.fadeInMs >= 0, audio.fadeOutMs >= 0,
                   audio.fadeInMs.isFinite, audio.fadeOutMs.isFinite else {
                 throw CommandError.invalidValue("clip gain or fade")

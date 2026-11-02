@@ -381,8 +381,14 @@ public final class Renderer {
         scratchIn.update(from: l, count: frames)
         (scratchIn + maxBlock).update(from: r, count: frames)
         guard unit.process(frames: frames, input: inPointers, output: outPointers) == noErr else { return } // keep the dry signal
+        scrub(scratchOut, frames); scrub(scratchOut + maxBlock, frames)
         l.update(from: scratchOut, count: frames)
         r.update(from: scratchOut + maxBlock, count: frames)
+    }
+
+    /// A plugin that returns NaN or infinity would poison every delay and detector after it; such a sample becomes 0.
+    @inline(__always) private func scrub(_ p: UnsafeMutablePointer<Float>, _ frames: Int) {
+        for k in 0..<frames where !p[k].isFinite { p[k] = 0 }
     }
 
     /// Queues the notes of one block. `startFrame` is in the frames of `events`. Hardware gets each note at
@@ -413,6 +419,7 @@ public final class Renderer {
         setSong(unit)
         scratchIn.update(repeating: 0, count: 2 * maxBlock)
         guard unit.process(frames: frames, input: inPointers, output: outPointers) == noErr else { return }
+        scrub(scratchOut, frames); scrub(scratchOut + maxBlock, frames)
         for k in 0..<frames { l[k] += scratchOut[k]; r[k] += scratchOut[maxBlock + k] }
     }
 

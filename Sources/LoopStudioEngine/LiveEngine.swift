@@ -291,9 +291,10 @@ public final class LiveEngine: @unchecked Sendable {
         let running = engine.isRunning
         graveLock.lock()
         if let object { graveyard.append((object, now)) }
-        // A callback that started at `now` may still use objects retired at `now`; a later one cannot.
-        let free = graveyard.filter { !running || $0.callback < now }
-        graveyard.removeAll { !running || $0.callback < now }
+        // A callback that started at `now` may still use objects retired at `now`, and the next one still
+        // reads the handover renderer's held notes. Only a callback two later cannot touch them.
+        let free = graveyard.filter { !running || $0.callback + 1 < now }
+        graveyard.removeAll { !running || $0.callback + 1 < now }
         graveLock.unlock()
         withExtendedLifetime(free) {}
     }
@@ -389,7 +390,8 @@ public final class LiveEngine: @unchecked Sendable {
         locked {
             position = max(0, frame)
             if !playing { sessionPosition = position }
-            resetPending = true
+            // Notes end; the delays and reverbs ring on, as in Live. A full reset is for a new sample rate.
+            silencePending = true
             clockGeneration &+= 1
         }
     }
@@ -509,8 +511,9 @@ public final class LiveEngine: @unchecked Sendable {
             startAtHost = 0
         }
         let renderer = self.renderer
-        let previous = handover
-        handover = nil
+        // No renderer yet (a sample-rate change): the handover waits, so its held notes get their note-offs.
+        let previous = renderer == nil ? nil : handover
+        if renderer != nil { handover = nil }
         let reset = resetPending, silence = silencePending
         resetPending = false; silencePending = false
         let captures = self.captures

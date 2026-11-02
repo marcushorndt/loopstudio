@@ -35,9 +35,12 @@ public final class EQDSP: DSPEffect, @unchecked Sendable {
     private let right: UnsafeMutablePointer<Biquad>
     private let active: UnsafeMutablePointer<Bool>
     private var outGain: Float = 1
+    /// The parameter keys per band, made once: `configure` runs on the audio thread and must not allocate.
+    private let keys: [(on: String, type: String, freq: String, gain: String, q: String)]
 
     override init(spec: EffectSpec, sampleRate: Double) {
         count = spec.bands
+        keys = (1...max(1, spec.bands)).map { ("b\($0).on", "b\($0).type", "b\($0).freq", "b\($0).gain", "b\($0).q") }
         left = .allocate(capacity: count); left.initialize(repeating: Biquad(), count: count)
         right = .allocate(capacity: count); right.initialize(repeating: Biquad(), count: count)
         active = .allocate(capacity: count); active.initialize(repeating: false, count: count)
@@ -58,9 +61,15 @@ public final class EQDSP: DSPEffect, @unchecked Sendable {
     }
 
     public override func configure(_ p: [String: Double]) {
-        for (i, band) in Self.bands(spec, p).enumerated() where i < count {
+        for i in 0..<count {
+            let k = keys[i]
+            let band = Band(on: value(p, k.on) >= 0.5, type: Int(value(p, k.type)), freq: Double(value(p, k.freq)),
+                            gain: Double(value(p, k.gain)), q: Double(value(p, k.q)))
+            let wasActive = active[i]
             active[i] = !band.isFlat
             guard active[i] else { continue }
+            // A band that was off starts clean, so no stale state clicks when it comes on.
+            if !wasActive { left[i].reset(); right[i].reset() }
             let f = band.filter(rate: sampleRate)
             left[i].b0 = f.b0; left[i].b1 = f.b1; left[i].b2 = f.b2; left[i].a1 = f.a1; left[i].a2 = f.a2
             right[i].b0 = f.b0; right[i].b1 = f.b1; right[i].b2 = f.b2; right[i].a1 = f.a1; right[i].a2 = f.a2

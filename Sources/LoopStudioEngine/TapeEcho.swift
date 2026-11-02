@@ -55,7 +55,9 @@ final class TapeEchoDSP: DSPEffect, @unchecked Sendable {
 
     private func updateTarget() {
         let seconds = syncQuarters.map { $0 * quarterSeconds } ?? Double(freeMs) / 1000
-        target = Float(min(seconds * sampleRate, Double(size - 64)))
+        // Room for the whole wobble (wow and flutter at full) behind the longest time.
+        let headroom = 0.009 * sampleRate + 8
+        target = Float(min(seconds * sampleRate, Double(size) - headroom))
         if !started { current = target }
     }
 
@@ -66,7 +68,7 @@ final class TapeEchoDSP: DSPEffect, @unchecked Sendable {
     }
 
     @inline(__always) private func read(_ buf: UnsafeMutablePointer<Float>, _ delay: Float) -> Float {
-        var pos = Float(write) - max(1, delay)
+        var pos = Float(write) - min(max(1, delay), Float(size - 2))
         if pos < 0 { pos += Float(size) }
         let i0 = Int(pos) % size, i1 = (i0 + 1) % size
         let frac = pos - floorf(pos)

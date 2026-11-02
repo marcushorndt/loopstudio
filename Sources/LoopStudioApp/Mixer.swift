@@ -29,20 +29,34 @@ struct LevelBar: View {
 
 /// Left and right meters side by side, with a peak line that holds for a moment and a clip light
 /// that stays on once a channel reached 0 dBFS, until it is clicked.
+/// The peak hold and the clip lights of a meter. A class, so the 30 Hz redraw updates it without writing
+/// view state inside `body`.
+private final class MeterMemory {
+    var holdLeft: (Float, Date) = (0, .distantPast)
+    var holdRight: (Float, Date) = (0, .distantPast)
+    var clipped = (false, false)
+
+    func hold(_ h: inout (Float, Date), _ level: Float, _ now: Date) -> Float {
+        if level >= h.0 || now.timeIntervalSince(h.1) > 1.2 { h = (level, now) }
+        return h.0
+    }
+}
+
 struct StereoMeter: View {
     let levels: (left: Float, right: Float)
     var horizontal = false
     /// Shows -inf, -12, -6, 0 marks beside the bars (the master).
     var scale = false
-    @State private var holdLeft: (Float, Date) = (0, .distantPast)
-    @State private var holdRight: (Float, Date) = (0, .distantPast)
-    @State private var clipped = (false, false)
+    @State private var memory = MeterMemory()
+    /// Only the clip lights are view state: a click clears them and must redraw.
+    @State private var clipReset = 0
 
     var body: some View {
         let now = Date()
-        let hl = hold(&holdLeft, levels.left, now), hr = hold(&holdRight, levels.right, now)
-        if levels.left >= 1 { clipped.0 = true }
-        if levels.right >= 1 { clipped.1 = true }
+        let hl = memory.hold(&memory.holdLeft, levels.left, now), hr = memory.hold(&memory.holdRight, levels.right, now)
+        if levels.left >= 1 { memory.clipped.0 = true }
+        if levels.right >= 1 { memory.clipped.1 = true }
+        let clipped = memory.clipped
         return HStack(spacing: scale ? 3 : 0) {
             Group {
                 if horizontal {
@@ -54,13 +68,9 @@ struct StereoMeter: View {
             if scale { marks }
         }
         .contentShape(Rectangle())
-        .onTapGesture { clipped = (false, false) }
+        .onTapGesture { memory.clipped = (false, false); clipReset += 1 }
+        .id(clipReset)
         .hint(scale ? "Master level, left and right. The red light stays on after a clip; click to reset it." : "Level, left and right.")
-    }
-
-    private func hold(_ h: inout (Float, Date), _ level: Float, _ now: Date) -> Float {
-        if level >= h.0 || now.timeIntervalSince(h.1) > 1.2 { h = (level, now) }
-        return h.0
     }
 
     private func bar(_ level: Float, _ peak: Float, _ clip: Bool) -> some View {
@@ -103,6 +113,7 @@ struct StereoMeter: View {
 struct Fader: View {
     let db: Double
     let onChange: (Double) -> Void
+    @State private var startPosition: Double?
 
     static func position(db: Double) -> Double { min(1, max(0, (pow(10, db / 20) / 2).squareRoot())) }
     static func db(position p: Double) -> Double { p <= 0.003 ? -96 : 20 * log10(p * p * 2) }
@@ -120,9 +131,11 @@ struct Fader: View {
                     .offset(y: min(max(0, y - 7), h - 14))
             }
             .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { g in
-                onChange(Self.db(position: 1 - min(max(0, g.location.y / h), 1)))
-            })
+            // The fader moves with the hand from where it is, like Live: a click does not jump it.
+            .gesture(DragGesture(minimumDistance: 1).onChanged { g in
+                if startPosition == nil { startPosition = Self.position(db: db) }
+                onChange(Self.db(position: min(max(0, (startPosition ?? 0) - g.translation.height / h), 1)))
+            }.onEnded { _ in startPosition = nil })
             .simultaneousGesture(TapGesture(count: 2).onEnded { onChange(0) })
         }
     }
@@ -214,7 +227,6 @@ struct MixerStrip: View {
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius))
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(model.selectedTrack == track.id ? Theme.text.opacity(0.35) : Theme.line, lineWidth: 1))
         .onTapGesture { model.focusTrack(track.id) }
-        .simultaneousGesture(TapGesture(count: 2).onEnded { model.openTrackInspector(track.id) })
         .contextMenu {
             Button("Reset Volume to 0 dB") { model.apply(.setVolume(id: track.id, db: 0)) }
             Button("Center Pan") { model.apply(.setPan(id: track.id, pan: 0)) }

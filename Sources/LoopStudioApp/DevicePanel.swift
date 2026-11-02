@@ -47,6 +47,8 @@ struct Knob: View {
                     }
                     .onEnded { _ in startPosition = nil })
                 .simultaneousGesture(TapGesture(count: 2).onEnded { onReset() })
+                // The tempo switch sits in the gap of the arc, at the bottom of the dial: every knob has that room.
+                .overlay(alignment: .bottom) { if let sync { SyncToggle(sync: sync, tint: tint).offset(y: 3) } }
             } else {
                 Menu(param.format(value)) {
                     ForEach(Array(param.choices.enumerated()), id: \.offset) { i, name in Button(name) { onChange(Double(i)) } }
@@ -56,7 +58,6 @@ struct Knob: View {
             Text(sync == nil ? param.name : param.name.replacingOccurrences(of: " Note", with: ""))
                 .font(.system(size: 10)).foregroundStyle(Theme.dim).lineLimit(1)
             if rotary { Text(param.format(value)).font(.system(size: 10, design: .monospaced)) }
-            if let sync { SyncToggle(sync: sync, tint: tint) }
         }
         .frame(width: 66)
         .hint(param.isSwitch ? "\(param.name): \(value >= 0.5 ? "On" : "Off"). Click to switch."
@@ -126,30 +127,27 @@ struct OnOffSwitch: View {
     }
 }
 
-/// Two small segments under a knob: the free unit, or a note value that follows the tempo.
+/// A small badge in the arc gap of a knob: the free unit, or a note when the knob follows the tempo.
+/// Click to switch. The hit area is larger than the badge.
 private struct SyncToggle: View {
     let sync: KnobSync
     let tint: Color
 
     var body: some View {
         Button(action: sync.toggle) {
-            HStack(spacing: 0) {
-                segment(Text(sync.unit), on: !sync.synced)
-                segment(Text(Image(systemName: "music.note")), on: sync.synced)
+            Group {
+                if sync.synced { Image(systemName: "music.note") } else { Text(sync.unit) }
             }
-            .font(.system(size: 9, weight: .semibold))
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.line, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(sync.synced ? Color.white : Theme.dim)
+            .frame(width: 24, height: 13)
+            .background(sync.synced ? tint.opacity(0.85) : Theme.panelRaised, in: Capsule())
+            .overlay(Capsule().stroke(sync.synced ? tint : Theme.line, lineWidth: 1))
+            .padding(.horizontal, 4).padding(.vertical, 3)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .hint(sync.synced ? "Follows the tempo. Click for a free time in \(sync.unit)." : "Free time. Click to follow the tempo with a note value.")
-    }
-
-    private func segment(_ label: Text, on: Bool) -> some View {
-        label.frame(width: 22, height: 14)
-            .foregroundStyle(on ? Color.white : Theme.dim)
-            .background(on ? tint.opacity(0.75) : Color.clear)
     }
 }
 
@@ -244,17 +242,61 @@ private struct DeviceCard: View {
         .frame(width: 170, alignment: .topLeading)
     }
 
-    var body: some View {
-        let spec = device.format == "builtin" ? BuiltInEffects.spec(device.identifier) : nil
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Button { model.apply(.setDeviceBypass(track: track.id, device: device.id, bypassed: !device.bypassed)) } label: {
-                    Image(systemName: "power").font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(device.bypassed ? Theme.dim : Theme.accent)
-                        .frame(width: 20, height: 20).contentShape(Rectangle())
+    private var folded: Bool { model.foldedDevices.contains(device.id) }
+
+    private var powerButton: some View {
+        Button { model.apply(.setDeviceBypass(track: track.id, device: device.id, bypassed: !device.bypassed)) } label: {
+            Image(systemName: "power").font(.system(size: 11, weight: .bold))
+                .foregroundStyle(device.bypassed ? Theme.dim : Theme.accent)
+                .frame(width: 20, height: 20).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).hint(device.bypassed ? "Turn on" : "Bypass")
+    }
+
+    /// The card folded to a narrow strip: the power switch and the name along it. Click the name to unfold.
+    private var foldedCard: some View {
+        VStack(spacing: 6) {
+            powerButton
+            Button { model.toggleDeviceFold(device.id) } label: {
+                VStack(spacing: 6) {
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
+                    Text(device.name).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                        .fixedSize().rotationEffect(.degrees(90)).frame(width: 16, height: DeviceLayout.bodyHeight - 40)
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(.plain).hint(device.bypassed ? "Turn on" : "Bypass")
+                .frame(maxHeight: .infinity, alignment: .top)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .hint("\(device.name), folded. Click to unfold.")
+        }
+        .padding(.vertical, 8).padding(.horizontal, 4)
+        .frame(width: 28)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Theme.radius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : Color.clear, lineWidth: 1.5))
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded { model.selectDevice(device.id) })
+        .contextMenu { DeviceMenu(track: track, device: device) }
+    }
+
+    var body: some View {
+        if folded { foldedCard } else { openCard }
+    }
+
+    private var openCard: some View {
+        let spec = device.format == "builtin" ? BuiltInEffects.spec(device.identifier) : nil
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Button { model.toggleDeviceFold(device.id) } label: {
+                    Image(systemName: "chevron.left").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim)
+                        .frame(width: 14, height: 20).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).hint("Fold \(device.name) to its title. Double-click the title does the same.")
+                powerButton
                 Text(device.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { model.toggleDeviceFold(device.id) })
                 Spacer(minLength: 8)
                 if let spec, spec.sidechain { sidechainMenu }
                 if let spec, spec.isDynamics { GainReductionMeter(device: device, bands: spec.id == "multiband" ? 3 : 1) }

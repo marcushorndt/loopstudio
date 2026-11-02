@@ -52,7 +52,8 @@ final class AppSession: EditSession, @unchecked Sendable {
     func revision() async -> Int { await MainActor.run { model.revision } }
 
     func apply(_ command: Command, coalescingKey: String?) async throws {
-        try await MainActor.run { try model.tryApply(command, key: coalescingKey) }
+        do { try await MainActor.run { try model.tryApply(command, key: coalescingKey) } }
+        catch { throw ToolFailure("command rejected: \(error)") }
     }
 
     func undo() async throws -> Bool { await MainActor.run { let could = model.canUndo; model.undo(); return could } }

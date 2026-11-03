@@ -46,7 +46,11 @@ final class AppSession: EditSession, @unchecked Sendable {
         return SessionOpened(path: url.path)
     }
 
-    func save() async throws { await MainActor.run { model.save() } }
+    func save() async throws {
+        // A save that failed must not come back as success: the agent would go on with edits that are not on disk.
+        let saved = await MainActor.run { model.save() }
+        guard saved else { throw ToolFailure("save failed: \(await MainActor.run { model.status })") }
+    }
     func project() async throws -> Project { await MainActor.run { model.project } }
     func isDirty() async -> Bool { await MainActor.run { model.dirty } }
     func revision() async -> Int { await MainActor.run { model.revision } }

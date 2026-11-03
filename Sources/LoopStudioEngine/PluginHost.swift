@@ -25,7 +25,8 @@ public final class PluginHost {
     /// Returns true when the set of loaded plugins changed.
     public func sync(project: Project) async -> Bool {
         var wanted: [DeviceSlot] = []
-        for track in project.allTracks { wanted.append(contentsOf: track.devices.filter { $0.format == "audiounit" }) }
+        // Racks included: a plugin inside a chain is hosted like one on the track.
+        for track in project.allTracks { wanted.append(contentsOf: track.allDevices.filter { $0.format == "audiounit" }) }
         let wantedIDs = Set(wanted.map(\.id))
         self.wanted = Dictionary(wanted.map { ($0.id, $0.identifier) }, uniquingKeysWith: { a, _ in a })
         let started = generation

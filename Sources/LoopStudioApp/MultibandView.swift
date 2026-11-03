@@ -40,7 +40,11 @@ struct MultibandView: View {
     private func db(_ y: CGFloat) -> Double { Double(min(max(y, 0), Self.height) / Self.height) * Self.floorDb }
 
     /// The band under a point, by the crossovers.
-    private func band(at px: CGFloat) -> Int { px < x(value("lowX")) ? 0 : px < x(value("highX")) ? 1 : 2 }
+    private func band(at px: CGFloat) -> Int { px < x(value("lowX")) ? 0 : px < x(highXEffective) ? 1 : 2 }
+
+    /// The upper crossover as the DSP uses it: at least one and a half times the lower one, so the mid band
+    /// never closes. The display, the hit regions and the sound agree on this value, not on the raw knob.
+    private var highXEffective: Double { max(value("highX"), value("lowX") * 1.5) }
 
     var body: some View {
         HStack(alignment: .top, spacing: DeviceLayout.groupGap) {
@@ -64,7 +68,7 @@ struct MultibandView: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: model.engine.builtInEffect(device.id) == nil)) { _ in
             Canvas { ctx, size in
                 let dsp = model.engine.builtInEffect(device.id)
-                let edges = [x(Self.minHz), x(value("lowX")), x(value("highX")), x(Self.maxHz)]
+                let edges = [x(Self.minHz), x(value("lowX")), x(highXEffective), x(Self.maxHz)]
                 for (i, key) in Self.bandKeys.enumerated() {
                     let left = edges[i], right = edges[i + 1]
                     // The gain reduction, as a shade from the top, on the same dB scale as the thresholds.
@@ -88,10 +92,11 @@ struct MultibandView: View {
                 }
                 // The crossovers.
                 for key in ["lowX", "highX"] {
-                    let px = x(value(key))
+                    let hz = key == "highX" ? highXEffective : value(key)
+                    let px = x(hz)
                     ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: 0)); $0.addLine(to: CGPoint(x: px, y: size.height)) },
                                with: .color(Theme.text.opacity(0.7)), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
-                    let hzText = value(key) >= 1_000 ? String(format: "%.1fk", value(key) / 1_000) : "\(Int(value(key)))"
+                    let hzText = hz >= 1_000 ? String(format: "%.1fk", hz / 1_000) : "\(Int(hz))"
                     ctx.draw(Text(hzText).font(.system(size: 8)).foregroundStyle(Theme.dim), at: CGPoint(x: px + 2, y: size.height - 7), anchor: .leading)
                 }
             }
@@ -100,7 +105,7 @@ struct MultibandView: View {
 
     /// An S at the top right of each band: solo, to hear the band alone while it is set up.
     private var soloButtons: some View {
-        let edges = [x(Self.minHz), x(value("lowX")), x(value("highX")), x(Self.maxHz)]
+        let edges = [x(Self.minHz), x(value("lowX")), x(highXEffective), x(Self.maxHz)]
         return ZStack(alignment: .topLeading) {
             ForEach(0..<3, id: \.self) { i in
                 let key = Self.bandKeys[i] + ".solo"
@@ -125,7 +130,7 @@ struct MultibandView: View {
                 let option = NSEvent.modifierFlags.contains(.option)
                 if drag == nil {
                     let px = g.startLocation.x
-                    let target: Target = abs(px - x(value("lowX"))) < 6 ? .lowX : abs(px - x(value("highX"))) < 6 ? .highX : .band(band(at: px))
+                    let target: Target = abs(px - x(value("lowX"))) < 6 ? .lowX : abs(px - x(highXEffective)) < 6 ? .highX : .band(band(at: px))
                     drag = Drag(target: target, ratio: option, start: startValue(target, ratio: option))
                 }
                 guard var d = drag else { return }
@@ -138,9 +143,11 @@ struct MultibandView: View {
                 let dx = g.translation.width - d.anchor.width, dy = g.translation.height - d.anchor.height
                 switch d.target {
                 case .lowX:
-                    model.setDeviceParam(track.id, device.id, "lowX", (hz(x(d.start) + dx)).rounded())
+                    // The crossovers keep the DSP's minimum mid-band width between them, so a drag never
+                    // puts the line somewhere the sound does not split.
+                    model.setDeviceParam(track.id, device.id, "lowX", min(hz(x(d.start) + dx), value("highX") / 1.5).rounded())
                 case .highX:
-                    model.setDeviceParam(track.id, device.id, "highX", (hz(x(d.start) + dx)).rounded())
+                    model.setDeviceParam(track.id, device.id, "highX", max(hz(x(d.start) + dx), value("lowX") * 1.5).rounded())
                 case .band(let i):
                     let key = Self.bandKeys[i]
                     if d.ratio {

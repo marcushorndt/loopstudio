@@ -51,13 +51,15 @@ public final class MIDIInputMonitor: @unchecked Sendable {
         for _ in 0..<list.pointee.numPackets {
             let length = Int(packet.pointee.length), time = packet.pointee.timeStamp
             withUnsafeBytes(of: packet.pointee.data) { raw in
+                // A packet may be longer than the 256 bytes the struct declares. Only the declared bytes are read.
+                let available = min(length, raw.count)
                 var i = 0
-                while i < min(length, raw.count) {
+                while i < available {
                     let status = raw[i]
                     guard status >= 0x80 else { i += 1; continue }       // running status is not handled
                     if status >= 0xF0 { i += 1; continue }              // system messages are ignored
                     let size = (status & 0xF0 == 0xC0 || status & 0xF0 == 0xD0) ? 2 : 3
-                    guard i + size <= length else { break }
+                    guard i + size <= available else { break }
                     handler(status, raw[i + 1], size == 3 ? raw[i + 2] : 0, source, time)
                     i += size
                 }

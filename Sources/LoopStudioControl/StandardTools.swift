@@ -223,7 +223,10 @@ public enum StandardTools {
             let map = project.tempoMap
             let start = args.optionalInt("startTick").map { map.frame(at: Tick(Int64($0)), sampleRate: project.sampleRate).rawValue } ?? 0
             let end = args.optionalInt("endTick").map { map.frame(at: Tick(Int64($0)), sampleRate: project.sampleRate).rawValue }
-            let tail = Int64(((args.optionalDouble("tailSeconds") ?? 0) * project.sampleRate).rounded())
+            // A tail is seconds of silence to render after the clips. A huge or NaN value would trap in the frame count.
+            let tailSeconds = args.optionalDouble("tailSeconds") ?? 0
+            guard tailSeconds.isFinite, tailSeconds >= 0, tailSeconds <= 600 else { throw ToolFailure("tailSeconds must be between 0 and 600") }
+            let tail = Int64((tailSeconds * project.sampleRate).rounded())
             let audio = withExtendedLifetime(prepared.host) {
                 Bounce.render(plan, startFrame: start, endFrame: (end ?? prepared.endFrame) + tail)
             }

@@ -379,7 +379,9 @@ final class AppModel {
     @ObservationIgnored private var renderer: Renderer?
     @ObservationIgnored private var undoStack: [Command] = []
     @ObservationIgnored private var redoStack: [Command] = []
-    @ObservationIgnored private var lastKey: (String, Date)?
+    /// The last coalescing key, when it was used, and the kind of command it grouped. One gesture or one
+    /// agent key groups only edits of one kind: "volume then pan" under one key still gives two undo steps.
+    @ObservationIgnored private var lastKey: (String, Date, String)?
     @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var meterHold: [Int: Float] = [:]
@@ -1355,11 +1357,12 @@ final class AppModel {
     func tryApply(_ command: Command, key: String? = nil) throws {
         let inverse = try command.apply(to: &project)
         journalAppend(command)
-        if let key, let last = lastKey, last.0 == key, Date().timeIntervalSince(last.1) < 0.8, !undoStack.isEmpty {
-            lastKey = (key, Date()) // same gesture: keep the first inverse
+        let kind = Mirror(reflecting: command).children.first?.label ?? "\(command)"
+        if let key, let last = lastKey, last.0 == key, last.2 == kind, Date().timeIntervalSince(last.1) < 0.8, !undoStack.isEmpty {
+            lastKey = (key, Date(), kind) // same gesture: keep the first inverse
         } else {
             undoStack.append(inverse)
-            lastKey = key.map { ($0, Date()) }
+            lastKey = key.map { ($0, Date(), kind) }
         }
         redoStack.removeAll()
         changed()
@@ -1501,7 +1504,7 @@ final class AppModel {
     /// Stores the automatable parameters of each loaded plugin in the project. Not an edit: no undo step.
     private func recordPluginParams() {
         for track in project.allTracks {
-            for device in track.devices where device.format == "audiounit" {
+            for device in track.allDevices where device.format == "audiounit" {
                 guard let unit = host.units[device.id] else { continue }
                 let params = unit.automatableParameters()
                 guard params != (device.pluginParams ?? []) else { continue }
@@ -1514,6 +1517,8 @@ final class AppModel {
     /// A knob turned in a plugin window does not mark the project as changed. So on quit the plugin states
     /// are read, and the project is saved when they differ from the saved ones.
     private func saveOnQuit() {
+        // A take that still runs becomes its clips first; a quit in the middle of a recording kept nothing of it.
+        if recording { finishRecording() }
         let before = project
         captureStates()
         if dirty || project != before { save() }
@@ -1522,13 +1527,12 @@ final class AppModel {
     private func captureStates() {
         let states = host.states()
         guard !states.isEmpty else { return }
-        for i in project.tracks.indices {
-            for j in project.tracks[i].devices.indices {
-                if let data = states[project.tracks[i].devices[j].id] { project.tracks[i].devices[j].state = data }
+        // Racks included: `withDevice` reaches a plugin at any depth.
+        for (id, data) in states {
+            for i in project.tracks.indices where project.tracks[i].device(id) != nil {
+                try? project.tracks[i].withDevice(id) { $0.state = data }
             }
-        }
-        for j in project.master.devices.indices {
-            if let data = states[project.master.devices[j].id] { project.master.devices[j].state = data }
+            if project.master.device(id) != nil { try? project.master.withDevice(id) { $0.state = data } }
         }
     }
 
@@ -1828,7 +1832,9 @@ final class AppModel {
             asset.name = name ?? url.deletingPathExtension().lastPathComponent
             // The demo loops are made at 120 BPM.
             if url.path.contains("/LoopStudio/Demo Samples/") { asset.sourceTempo = 120 }
-            try Command.addAsset(asset: asset).apply(to: &project) // not an undo step: the file stays in the project
+            let add = Command.addAsset(asset: asset)
+            try add.apply(to: &project) // not an undo step: the file stays in the project
+            journalAppend(add) // but a crash before the autosave must find the asset, or the journaled clip fails to replay
             loadAudio(asset)
             return asset
         } catch {

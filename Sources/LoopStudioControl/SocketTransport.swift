@@ -36,6 +36,8 @@ public final class SocketTransport: @unchecked Sendable {
             throw Failure(description: "another LoopStudio already serves \(path)")
         }
         unlink(path)
+        // A client that hangs up before its answer arrives must not end the app: the write then fails with EPIPE.
+        signal(SIGPIPE, SIG_IGN)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw Failure(description: "socket: \(String(cString: strerror(errno)))") }
         var address = sockaddr_un()

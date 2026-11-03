@@ -247,6 +247,14 @@ final class KeyMonitor {
 
     func install(model: AppModel) {
         guard Self.token == nil else { return }
+        // The key-up of a note never arrives when another app takes the keyboard: release everything then.
+        NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self, weak model] _ in
+            guard let self, let model else { return }
+            MainActor.assumeIsolated {
+                for pitch in self.held.values { model.noteOff(pitch) }
+                self.held.removeAll()
+            }
+        }
         Self.token = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self, weak model] event in
             guard let self, let model else { return event }
             // Typing in a text field keeps its keys. So do the Settings window, a plugin's editor and a sheet.
@@ -267,6 +275,12 @@ final class KeyMonitor {
                 if model.macroMap != nil { model.endMacroMap(); return nil }
                 if model.keyboardMIDI { model.perform(.toggleKeyboardMIDI); return nil }
                 if model.drawMode { model.drawMode = false; model.status = "Draw mode off"; return nil }
+            }
+            // A key that sounds a note ends it on release, whatever modifier came down meanwhile: a note held
+            // through a ⌘ press must not stick.
+            if event.type == .keyUp, let pitch = held.removeValue(forKey: typed) {
+                model.noteOff(pitch)
+                return nil
             }
             let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
             if model.keyboardMIDI, plain {

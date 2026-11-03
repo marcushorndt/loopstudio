@@ -562,7 +562,25 @@ public final class LiveEngine: @unchecked Sendable {
         // 2. Render, with no lock held.
         renderer.midiOut = midiOut
         defer { midiOut.flush() }
-        if let previous, previous !== renderer { previous.midiOut = midiOut; renderer.takeOverNotes(from: previous, at: position, sessionFrame: sessionPosition) }
+        if let previous, previous !== renderer {
+            previous.midiOut = midiOut
+            // A new tempo keeps the beat, not the second (like Live): both clocks move to the frame of the
+            // tick they stood on. Without this, 10 s at 120 BPM would read as 10 beats after a change to 60 BPM.
+            let oldMap = previous.plan.tempoMap, newMap = renderer.plan.tempoMap
+            if oldMap != newMap {
+                // Through the fractional tick: whole ticks would move the clock by up to half a tick per change,
+                // and a Link follower changes the tempo every second.
+                func remap(_ frame: Int64) -> Int64 {
+                    let tick = oldMap.tickAt(seconds: Double(frame) / sampleRate)
+                    let whole = Tick(Int64(tick.rounded(.down)))
+                    let framesPerTick = sampleRate * 60 / (newMap.bpm(at: whole) * Double(Tick.perQuarter))
+                    return newMap.frame(at: whole, sampleRate: sampleRate).rawValue + Int64(((tick - tick.rounded(.down)) * framesPerTick).rounded())
+                }
+                position = remap(position)
+                sessionPosition = remap(sessionPosition)
+            }
+            renderer.takeOverNotes(from: previous, at: position, sessionFrame: sessionPosition)
+        }
         if reset { renderer.reset() } else if silence { renderer.silenceNotes() }
         renderer.captures = captures
         renderer.inputMonitor = monitor

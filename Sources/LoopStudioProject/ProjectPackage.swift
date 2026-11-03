@@ -41,6 +41,37 @@ public enum ProjectPackage {
         var assets: [Asset]
         var trackOrder: [TrackID]
         var master: TrackID
+
+        /// A header written before a field existed still opens: every optional part takes the project default.
+        /// `ports` and `launches` came in while the schema stayed at version 1, so no migration step covers them.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let blank = Project(name: "")
+            schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+            name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Untitled"
+            sampleRate = try c.decodeIfPresent(Double.self, forKey: .sampleRate) ?? blank.sampleRate
+            tempoMap = try c.decodeIfPresent(TempoMap.self, forKey: .tempoMap) ?? blank.tempoMap
+            timeSignatures = try c.decodeIfPresent([TimeSignatureChange].self, forKey: .timeSignatures) ?? blank.timeSignatures
+            markers = try c.decodeIfPresent([Marker].self, forKey: .markers) ?? []
+            loop = try c.decodeIfPresent(LoopRegion.self, forKey: .loop)
+            randomSeed = try c.decodeIfPresent(UInt32.self, forKey: .randomSeed) ?? blank.randomSeed
+            defaultFadeMs = try c.decodeIfPresent(Double.self, forKey: .defaultFadeMs) ?? blank.defaultFadeMs
+            autoLoop = try c.decodeIfPresent(AutoLoopRule.self, forKey: .autoLoop) ?? blank.autoLoop
+            ports = try c.decodeIfPresent([IOPort].self, forKey: .ports) ?? []
+            launches = try c.decodeIfPresent([Launch].self, forKey: .launches) ?? []
+            assets = try c.decodeIfPresent([Asset].self, forKey: .assets) ?? []
+            trackOrder = try c.decode([TrackID].self, forKey: .trackOrder)
+            master = try c.decode(TrackID.self, forKey: .master)
+        }
+
+        init(schemaVersion: Int, name: String, sampleRate: Double, tempoMap: TempoMap, timeSignatures: [TimeSignatureChange],
+             markers: [Marker], loop: LoopRegion?, randomSeed: UInt32, defaultFadeMs: Double, autoLoop: AutoLoopRule,
+             ports: [IOPort], launches: [Launch], assets: [Asset], trackOrder: [TrackID], master: TrackID) {
+            self.schemaVersion = schemaVersion; self.name = name; self.sampleRate = sampleRate; self.tempoMap = tempoMap
+            self.timeSignatures = timeSignatures; self.markers = markers; self.loop = loop; self.randomSeed = randomSeed
+            self.defaultFadeMs = defaultFadeMs; self.autoLoop = autoLoop; self.ports = ports; self.launches = launches
+            self.assets = assets; self.trackOrder = trackOrder; self.master = master
+        }
     }
 
     public static func write(_ project: Project, to url: URL) throws {
@@ -75,7 +106,7 @@ public enum ProjectPackage {
     }
 
     private struct Paths {
-        let tracks, staged, old, header, stagedHeader, marker: URL
+        let tracks, staged, old, header, stagedHeader, marker, journal: URL
         init(_ url: URL) {
             tracks = url.appendingPathComponent("tracks", isDirectory: true)
             staged = url.appendingPathComponent("tracks.new", isDirectory: true)
@@ -83,8 +114,12 @@ public enum ProjectPackage {
             header = url.appendingPathComponent("project.json")
             stagedHeader = url.appendingPathComponent("project.json.new")
             marker = url.appendingPathComponent("save.commit")
+            journal = url.appendingPathComponent(journalName)
         }
     }
+
+    /// The crash journal next to the package files. A save commits the edits it holds, so the commit removes it.
+    public static let journalName = "journal.jsonl"
 
     /// Finishes a save that reached its commit marker, or throws away one that did not.
     static func recover(_ url: URL) throws {
@@ -110,6 +145,9 @@ public enum ProjectPackage {
                 throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: paths.header.path])
             }
         }
+        // The package now holds every journaled edit. The journal goes with the same commit: a crash between
+        // the save and a separate journal reset would otherwise replay the saved edits a second time.
+        if fm.fileExists(atPath: paths.journal.path) { try fm.removeItem(at: paths.journal) }
         try fm.removeItem(at: paths.marker)
         if fm.fileExists(atPath: paths.old.path) { try fm.removeItem(at: paths.old) }
     }

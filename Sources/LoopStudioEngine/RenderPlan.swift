@@ -212,7 +212,9 @@ public struct RenderPlan {
     /// The knob values (macros, selector) of every MIDI rack, by device. An effect rack carries its own in its plan.
     var rackParams: [DeviceID: [String: Double]] = [:]
 
-    public static func dB(_ db: Double) -> Float { db <= -96 ? 0 : Float(pow(10.0, db / 20.0)) }
+    /// Gain for a level in dB. Silent at and below -96 dB; capped at +60 dB, so an absurd automation value
+    /// (a finite 1000 dB passes the command check) cannot turn into an infinite gain.
+    public static func dB(_ db: Double) -> Float { db <= -96 ? 0 : Float(pow(10.0, min(db, 60) / 20.0)) }
 
     /// Balance pan law: unity in the centre, the far side fades to silence at the extreme.
     static func balance(_ pan: Double) -> (Float, Float) {
@@ -274,7 +276,7 @@ public struct RenderPlan {
         // A sidechain listens to another track: that track renders first, like a source of a send.
         var listeners: [TrackID: [TrackID]] = [:]
         for t in tracks {
-            for d in t.devices {
+            for d in t.allDevices { // a compressor inside a rack listens too
                 guard let source = d.sidechain, source != t.id, project.track(source) != nil, !d.bypassed else { continue }
                 listeners[source, default: []].append(t.id)
             }

@@ -29,7 +29,7 @@ public final class Journal: @unchecked Sendable {
     public let url: URL
     private let durable: Bool
     private let lock = NSLock()
-    private let handle: FileHandle
+    private var handle: FileHandle
     private let encoder = Coding.lineEncoder()
 
     /// `durable` makes every append wait for the disk (fsync). Turn it off only in tests.
@@ -58,11 +58,15 @@ public final class Journal: @unchecked Sendable {
     }
 
     /// Empties the journal. Call it right after a successful save.
+    /// The save's commit removes the journal file (`ProjectPackage.finishCommit`), so this starts a new file:
+    /// a truncate of the removed one would write into an unlinked inode and lose every later edit.
     public func reset() throws {
         lock.lock()
         defer { lock.unlock() }
-        try handle.truncate(atOffset: 0)
-        try handle.seek(toOffset: 0)
+        try? handle.close()
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+        guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw CocoaError(.fileWriteUnknown) }
+        handle = try FileHandle(forWritingTo: url)
         if durable { try handle.synchronize() }
     }
 

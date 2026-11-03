@@ -186,23 +186,63 @@ public struct MIDIControlEvent: Hashable, Codable, Sendable {
     public var status: UInt8
     public var data1: UInt8
     public var data2: UInt8
+    /// A breakpoint of an envelope: the value moves in a straight line to the next event of the same kind
+    /// (the player sends the steps in between). False: the value holds until the next event, like a recorded message.
+    public var ramp: Bool
 
-    public init(tick: Tick, status: UInt8, data1: UInt8, data2: UInt8) {
+    public init(tick: Tick, status: UInt8, data1: UInt8, data2: UInt8, ramp: Bool = false) {
         self.tick = tick
         self.status = status
         self.data1 = min(data1, 127)
         self.data2 = min(data2, 127)
+        self.ramp = ramp
+    }
+
+    private enum CodingKeys: String, CodingKey { case tick, status, data1, data2, ramp }
+
+    /// Events from before envelopes had ramps have no `ramp` key.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        tick = try c.decode(Tick.self, forKey: .tick)
+        status = try c.decode(UInt8.self, forKey: .status)
+        data1 = min(try c.decode(UInt8.self, forKey: .data1), 127)
+        data2 = min(try c.decode(UInt8.self, forKey: .data2), 127)
+        ramp = try c.decodeIfPresent(Bool.self, forKey: .ramp) ?? false
     }
 
     /// A controller change on `channel`.
-    public static func controller(_ number: UInt8, _ value: UInt8, tick: Tick, channel: UInt8 = 0) -> MIDIControlEvent {
-        MIDIControlEvent(tick: tick, status: 0xB0 | (channel & 15), data1: number, data2: value)
+    public static func controller(_ number: UInt8, _ value: UInt8, tick: Tick, channel: UInt8 = 0, ramp: Bool = false) -> MIDIControlEvent {
+        MIDIControlEvent(tick: tick, status: 0xB0 | (channel & 15), data1: number, data2: value, ramp: ramp)
     }
 
     /// A pitch bend of `amount` (-8192...8191, 0 is the centre) on `channel`.
-    public static func pitchBend(_ amount: Int, tick: Tick, channel: UInt8 = 0) -> MIDIControlEvent {
+    public static func pitchBend(_ amount: Int, tick: Tick, channel: UInt8 = 0, ramp: Bool = false) -> MIDIControlEvent {
         let v = UInt16(min(max(amount, -8192), 8191) + 8192)
-        return MIDIControlEvent(tick: tick, status: 0xE0 | (channel & 15), data1: UInt8(v & 0x7F), data2: UInt8(v >> 7))
+        return MIDIControlEvent(tick: tick, status: 0xE0 | (channel & 15), data1: UInt8(v & 0x7F), data2: UInt8(v >> 7), ramp: ramp)
+    }
+
+    /// True when `other` is the same kind of control on the same channel: the same controller number, or
+    /// both a bend, both a channel pressure, both a program change, the same key's pressure.
+    public func sameKind(as other: MIDIControlEvent) -> Bool {
+        guard status == other.status else { return false }
+        return (kind == 0xB0 || kind == 0xA0) ? data1 == other.data1 : true
+    }
+
+    /// The value as one number: the bend's 14 bits (0...16383), else the 7-bit value.
+    public var wideValue: Int { isPitchBend ? Int(data2) << 7 | Int(data1) : Int(value) }
+
+    /// The same event with its value set from `wideValue`.
+    public func with(wideValue v: Int) -> MIDIControlEvent {
+        var e = self
+        if isPitchBend {
+            let w = min(max(v, 0), 16_383)
+            e.data1 = UInt8(w & 0x7F); e.data2 = UInt8(w >> 7)
+        } else if isController {
+            e.data2 = UInt8(min(max(v, 0), 127))
+        } else {
+            e.data1 = UInt8(min(max(v, 0), 127))
+        }
+        return e
     }
 
     public var kind: UInt8 { status & 0xF0 }

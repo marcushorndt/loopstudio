@@ -77,9 +77,12 @@ extension RenderPlan {
             if let o = nodes[i].output { nodes[i].outputDelay = max(0, arrivalIn[o] - arrival[i]) }
             for k in nodes[i].sends.indices { nodes[i].sends[k].delay = max(0, arrivalIn[nodes[i].sends[k].target] - arrival[i]) }
             nodes[i].tapDelays = nodes[i].taps.map { max(0, arrivalIn[$0] - arrival[i]) }
-            // The signal at an effect is late by the node's inputs plus the devices before it in the chain.
+            // The node's own clips and notes play as late as its inputs arrive, so both line up inside it.
+            // The signal at an effect is late by that plus the devices before it in the chain.
+            nodes[i].inputShift = arrivalIn[i]
+            nodes[i].outputShift = arrival[i]
             let instrumentLatency = nodes[i].instrument?.latencySamples ?? nodes[i].rackSynth?.latency ?? 0
-            Self.delaySidechains(&nodes[i].effects, inputArrival: arrivalIn[i] + instrumentLatency, arrival: arrival, rate: rate)
+            Self.align(&nodes[i].effects, inputArrival: arrivalIn[i] + instrumentLatency, shift: arrivalIn[i] + instrumentLatency, arrival: arrival, rate: rate)
         }
         // The whole mix is late by the master's arrival time. Say so, so a caller can account for it.
         latencyFrames = arrival.last ?? 0
@@ -95,21 +98,26 @@ extension RenderPlan {
         return result
     }
 
-    /// Sets `sidechainDelay` on every listening effect of a chain whose input arrives `inputArrival` frames late.
-    private static func delaySidechains(_ effects: inout [EffectPlan], inputArrival: Int, arrival: [Int], rate: Double) {
-        var here = inputArrival
+    /// Sets `sidechainDelay` and `shift` on every effect of a chain whose input arrives `inputArrival` frames
+    /// late against the song. `shift` is what the chain's first effect reads its automation late by: the
+    /// node's shift for a track chain, 0 for the chain of a rack (the rack's slot is already shifted).
+    private static func align(_ effects: inout [EffectPlan], inputArrival: Int, shift: Int, arrival: [Int], rate: Double) {
+        var here = inputArrival, late = shift
         for k in effects.indices {
             if let s = effects[k].sidechain, s < arrival.count { effects[k].sidechainDelay = max(0, here - arrival[s]) }
+            effects[k].shift = late
             if var rack = effects[k].rack {
                 for c in rack.chains.indices {
                     let chainInstrument = rack.chains[c].instrument?.latencySamples ?? rack.chains[c].rackSynth?.latency ?? 0
-                    delaySidechains(&rack.chains[c].effects, inputArrival: here + chainInstrument, arrival: arrival, rate: rate)
+                    align(&rack.chains[c].effects, inputArrival: here + chainInstrument, shift: chainInstrument, arrival: arrival, rate: rate)
                 }
                 effects[k].rack = rack
             }
             guard !effects[k].bypassed else { continue }
-            here += effects[k].unit?.latencySamples ?? effects[k].rack?.latency
+            let latency = effects[k].unit?.latencySamples ?? effects[k].rack?.latency
                 ?? DSPEffect.latency(kind: effects[k].kind, params: effects[k].params, sampleRate: rate)
+            here += latency
+            late += latency
         }
     }
 }

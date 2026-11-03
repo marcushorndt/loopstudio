@@ -75,6 +75,10 @@ struct EffectPlan {
     var sidechain: Int? = nil
     /// Frames the sidechain signal waits so it lines up with this effect's input, from delay compensation.
     var sidechainDelay = 0
+    /// How late the sound at this effect's input is against the song clock: the node's `inputShift` plus the
+    /// devices in front of it (inside a rack: the chain's devices in front of it). Its automation is read
+    /// that much earlier, so a curve moves the sound it was drawn on.
+    var shift = 0
     /// An audio effect rack: its chains. The slot of this plan holds the macros and the selector.
     var rack: RackPlan? = nil
     /// Keys a macro of an enclosing rack drives. Their automation is ignored; the macro sets them.
@@ -234,6 +238,10 @@ struct NodePlan {
     var tapDelays: [Int] = []
     /// How late this node's sound is after its fader, from the plugins on its way there.
     var arrival = 0
+    /// Frames this node's own clips and notes play late, so they line up with the sound it takes from other
+    /// nodes (its inputs arrive this late). The fader and the sends read their automation `outputShift` late.
+    var inputShift = 0
+    var outputShift = 0
 }
 
 /// Everything the renderer needs, compiled from a project. Immutable; built off the audio thread.
@@ -790,11 +798,27 @@ public struct RenderPlan {
                     events.append(MIDIEvent(frame: b, status: 0x80 | (n.channel & 15), data1: n.pitch, data2: 0))
                     endFrame = max(endFrame, b)
                 }
-                // Sustain, mod wheel, pitch bend: at their ticks, looping with the clip like the notes.
-                for k in c.controls where k.tick.rawValue < length && MIDIControlEvent.isControl(status: k.status) {
+                // Sustain, mod wheel, pitch bend: at their ticks, looping with the clip like the notes. A ramp
+                // sends the steps between it and the next event of its kind, one per 1/128 note where the value changes.
+                let controls = c.controls.filter { $0.tick.rawValue < length && MIDIControlEvent.isControl(status: $0.status) }.sorted { $0.tick < $1.tick }
+                for (i, k) in controls.enumerated() {
                     let at = base + k.tick.rawValue
                     if at >= limit.rawValue { continue }
                     events.append(MIDIEvent(frame: map.frame(at: Tick(at), sampleRate: rate).rawValue, status: k.status, data1: k.data1, data2: k.data2))
+                    guard k.ramp, let next = controls[(i + 1)...].first(where: { k.sameKind(as: $0) }), next.tick > k.tick else { continue }
+                    let step = Tick.perQuarter / 32
+                    let from = k.wideValue, to = next.wideValue
+                    var last = from
+                    var t = k.tick.rawValue + step
+                    while t < next.tick.rawValue && base + t < limit.rawValue {
+                        let value = from + Int((Double(to - from) * Double(t - k.tick.rawValue) / Double(next.tick.rawValue - k.tick.rawValue)).rounded())
+                        if value != last {
+                            let e = k.with(wideValue: value)
+                            events.append(MIDIEvent(frame: map.frame(at: Tick(base + t), sampleRate: rate).rawValue, status: e.status, data1: e.data1, data2: e.data2))
+                            last = value
+                        }
+                        t += step
+                    }
                 }
                 pass += 1
             } while repeating && origin.rawValue + length * pass < limit.rawValue

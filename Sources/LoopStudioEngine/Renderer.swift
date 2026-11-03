@@ -72,10 +72,13 @@ public final class Renderer {
         let sidechainLine: DelayLine?
         /// A rack: `effect` is nil, the chains run here. `live` holds its macros and selector.
         let rack: RackRuntime?
+        /// Frames the sound at this effect is late against the song (see `EffectPlan.shift`): its automation
+        /// and its tempo clock read that much earlier.
+        let shift: Int64
         init(effect: DSPEffect?, unit: AudioUnitEffect?, bypassed: Bool, auto: [String: AutoLane], params: [String: Double], sidechain: Int? = nil,
-             sidechainLine: DelayLine? = nil, rack: RackRuntime? = nil, mapped: Set<String> = [], spec: EffectSpec? = nil) {
+             sidechainLine: DelayLine? = nil, rack: RackRuntime? = nil, mapped: Set<String> = [], spec: EffectSpec? = nil, shift: Int = 0) {
             self.effect = effect; self.unit = unit; self.bypassed = bypassed; self.sidechain = sidechain; self.rack = rack
-            self.sidechainLine = sidechainLine
+            self.sidechainLine = sidechainLine; self.shift = Int64(shift)
             let sorted = auto.map { ($0.key, $0.value) }.sorted { $0.0 < $1.0 }
             self.auto = sorted
             self.autoActive = sorted.map { !mapped.contains($0.0) }
@@ -156,7 +159,7 @@ public final class Renderer {
             var chain: [Slot] = []
             for e in effects {
                 if let unit = e.unit {
-                    let slot = Slot(effect: nil, unit: unit, bypassed: e.bypassed, auto: e.auto, params: [:], mapped: e.mappedKeys)
+                    let slot = Slot(effect: nil, unit: unit, bypassed: e.bypassed, auto: e.auto, params: [:], mapped: e.mappedKeys, shift: e.shift)
                     slotIndex[e.device.rawValue] = (slot, nil)
                     chain.append(slot); continue
                 }
@@ -164,7 +167,7 @@ public final class Renderer {
                     let runtime = makeRack(rackPlan)
                     let spec = BuiltInEffects.spec(e.kind)
                     let slot = Slot(effect: nil, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params, rack: runtime,
-                                    mapped: e.mappedKeys, spec: spec)
+                                    mapped: e.mappedKeys, spec: spec, shift: e.shift)
                     slotIndex[e.device.rawValue] = (slot, spec)
                     runtime.resolveLinks(rackPlan.mappings, slot: slot, lookup: slotIndex)
                     chain.append(slot)
@@ -174,7 +177,7 @@ public final class Renderer {
                 made[e.device] = found.0
                 let scLine = e.sidechain == nil ? nil : line(e.sidechainDelay, "sc|\(e.device.rawValue.uuidString)")
                 let slot = Slot(effect: found.0, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params, sidechain: e.sidechain,
-                                sidechainLine: scLine, mapped: e.mappedKeys)
+                                sidechainLine: scLine, mapped: e.mappedKeys, shift: e.shift)
                 slot.needsConfigure = found.running
                 slotIndex[e.device.rawValue] = (slot, found.0.spec)
                 chain.append(slot)
@@ -451,7 +454,7 @@ public final class Renderer {
             }
             let base = old.held + i * 2048
             for k in 0..<2048 where base[k] > 0 {
-                let keep = (unitKept || hwKept) && nodes[j].noteIndex.heldAt(k, frame: frame)
+                let keep = (unitKept || hwKept) && nodes[j].noteIndex.heldAt(k, frame: frame - Int64(nodes[j].inputShift))
                 if keep { held[j * 2048 + k] &+= base[k] }
                 off(k, unitToo: !(keep && unitKept), hwToo: !(keep && hwKept))
                 base[k] = 0
@@ -459,7 +462,7 @@ public final class Renderer {
             // Session notes: the same rule. A note that was moved or deleted while it sounded ends here.
             let session = old.sessionHeld + i * 2048
             for k in 0..<2048 where session[k] > 0 {
-                let ahead = (unitKept || hwKept) && nodes[j].sessionNoteIndex.heldAt(k, frame: sessionFrame)
+                let ahead = (unitKept || hwKept) && nodes[j].sessionNoteIndex.heldAt(k, frame: sessionFrame - Int64(nodes[j].inputShift))
                 let keepUnit = unitKept && ahead, keepHw = hwKept && ahead
                 if keepUnit || keepHw { sessionHeld[j * 2048 + k] &+= session[k] }
                 off(k, unitToo: !keepUnit, hwToo: !keepHw)
@@ -630,13 +633,16 @@ public final class Renderer {
             let node = nodes[i]
             let l = left(i), r = right(i)
 
+            // The node's own clips and notes play `inputShift` late, so they line up with the sound it takes from
+            // other nodes (delay compensation). `song` is the song frame at the start of this block for them.
+            let song = startFrame - Int64(node.inputShift)
             // How much of this block the arrangement still plays: a session take-over cuts it on the session clock.
             var arrangement = frames
-            if let end = node.arrangementEnd { arrangement = Int(max(0, min(Int64(frames), end - (startFrame + sessionOffset)))) }
+            if let end = node.arrangementEnd { arrangement = Int(max(0, min(Int64(frames), end - (song + sessionOffset)))) }
             if transport {
                 for clip in node.clips {
-                    if clip.session { mix(clip, into: l, r, blockStart: startFrame + sessionOffset, frames: frames) }
-                    else if arrangement > 0 { mix(clip, into: l, r, blockStart: startFrame, frames: arrangement) }
+                    if clip.session { mix(clip, into: l, r, blockStart: song + sessionOffset, frames: frames) }
+                    else if arrangement > 0 { mix(clip, into: l, r, blockStart: song, frames: arrangement) }
                 }
             }
             if inputReady, let monitor, let input = node.input {
@@ -648,29 +654,32 @@ public final class Renderer {
             let sink = noteSink(i)
             if transport, sink != nil || out != nil {
                 if arrangement > 0 {
-                    send(sink, out, target, node.midi, startFrame: startFrame, sessionShift: sessionOffset, frames: arrangement, held: held + i * 2048)
+                    send(sink, out, target, node.midi, startFrame: song, sessionShift: sessionOffset, frames: arrangement, held: held + i * 2048)
                 }
-                if arrangement < frames { releaseNotes(of: i, frame: startFrame + sessionOffset + Int64(arrangement)) }
-                send(sink, out, target, node.sessionMidi, startFrame: startFrame + sessionOffset, sessionShift: 0, frames: frames,
+                if arrangement < frames { releaseNotes(of: i, frame: song + sessionOffset + Int64(arrangement)) }
+                send(sink, out, target, node.sessionMidi, startFrame: song + sessionOffset, sessionShift: 0, frames: frames,
                      held: sessionHeld + i * 2048)
             }
             if let instrument = node.instrument {
-                if let slot = instrumentSlots[i] { scheduleAutomation(slot, startFrame: startFrame, frames: frames) }
+                if let slot = instrumentSlots[i] { scheduleAutomation(slot, startFrame: song, frames: frames) }
                 play(instrument, into: l, r, frames: frames)
             } else if let synth = node.synthUnit, let slot = synthSlots[i] {
-                runSynth(synth, slot, l, r, startFrame: startFrame, frames: frames)
+                runSynth(synth, slot, l, r, startFrame: song, frames: frames)
             } else if let rack = rackSynths[i], let slot = rackSynthSlots[i] {
-                runRackSlot(rack, slot, l, r, startFrame: startFrame, frames: frames, instrument: true)
+                runRackSlot(rack, slot, l, r, startFrame: song, frames: frames, instrument: true)
             }
-            for slot in chains[i] where !slot.bypassed { runSlot(slot, l, r, startFrame: startFrame, frames: frames) }
+            // Each effect reads its automation as late as the sound reaches it; the fader and the sends, as
+            // late as the sound leaves the node.
+            for slot in chains[i] where !slot.bypassed { runSlot(slot, l, r, startFrame: startFrame - slot.shift, frames: frames) }
+            let leaves = startFrame - Int64(node.outputShift)
 
-            for (k, send) in node.sends.enumerated() where send.preFader { sendOut(send, sendLines[i][k], l, r, startFrame: startFrame, frames: frames) }
+            for (k, send) in node.sends.enumerated() where send.preFader { sendOut(send, sendLines[i][k], l, r, startFrame: leaves, frames: frames) }
 
             let peak: (Float, Float)
             if node.isMaster {
-                peak = fader(node, l, r, outLeft, outRight, startFrame: startFrame, frames: frames)
+                peak = fader(node, l, r, outLeft, outRight, startFrame: leaves, frames: frames)
             } else {
-                peak = fader(node, l, r, l, r, startFrame: startFrame, frames: frames)
+                peak = fader(node, l, r, l, r, startFrame: leaves, frames: frames)
             }
             peaks[2 * i] = max(peaks[2 * i], peak.0)
             peaks[2 * i + 1] = max(peaks[2 * i + 1], peak.1)
@@ -684,7 +693,7 @@ public final class Renderer {
                 }
             }
             if node.isMaster { continue }
-            for (k, send) in node.sends.enumerated() where !send.preFader { sendOut(send, sendLines[i][k], l, r, startFrame: startFrame, frames: frames) }
+            for (k, send) in node.sends.enumerated() where !send.preFader { sendOut(send, sendLines[i][k], l, r, startFrame: leaves, frames: frames) }
             if let target = node.output { addDelayed(l, r, to: target, line: outputLines[i], frames: frames) }
             if let port = node.port {
                 let pl = portBuffers + port * 2 * maxBlock, pr = pl + maxBlock
@@ -1179,7 +1188,7 @@ extension Renderer {
                 chain.bufL.update(from: rack.inL, count: frames)
                 chain.bufR.update(from: rack.inR, count: frames)
             }
-            for s in chain.slots where !s.bypassed { runSlot(s, chain.bufL, chain.bufR, startFrame: startFrame, frames: frames) }
+            for s in chain.slots where !s.bypassed { runSlot(s, chain.bufL, chain.bufR, startFrame: startFrame - s.shift, frames: frames) }
             var outL = UnsafePointer(chain.bufL), outR = UnsafePointer(chain.bufR)
             if let line = chain.line {
                 line.process(chain.bufL, chain.bufR, frames: frames)

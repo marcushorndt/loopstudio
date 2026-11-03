@@ -107,6 +107,12 @@ struct PianoRoll: View {
     @State private var lane: ControlLane = .velocity
     /// Values drawn into a control lane during one drag, by tick. They become one edit when the drag ends.
     @State private var controlDraft: [Int64: Int] = [:]
+    /// What a drag in a control lane does: draw steps on empty space, or move one breakpoint.
+    private enum LaneDrag { case draw, move(MIDIControlEvent) }
+    @State private var laneDrag: LaneDrag?
+    @State private var movedPoint: (tick: Int64, value: Int)?
+    /// The last click on a breakpoint: a second one right after removes it.
+    @State private var lastLaneTap: (date: Date, tick: Int64)?
 
     private var beats: Double { max(1, Double(clip.length.rawValue) / Double(Tick.perQuarter)) }
     /// Room past the end of the clip, so the loop can be made longer.
@@ -317,6 +323,8 @@ struct PianoRoll: View {
             }
             if lane != .velocity, !laneControls.isEmpty {
                 Divider()
+                if laneControls.contains(where: { !$0.ramp }) { Button("Make Ramps") { setLaneRamps(true) } }
+                if laneControls.contains(where: \.ramp) { Button("Make Steps") { setLaneRamps(false) } }
                 Button("Clear \(lane.name)") { clearLane() }
             }
         } label: {
@@ -325,7 +333,42 @@ struct PianoRoll: View {
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden)
         .frame(width: keysWidth - 4, height: 16)
-        .hint("The lane under the notes: velocities, or a recorded control such as the sustain pedal, the mod wheel or pitch bend. A dot marks a lane the clip holds. Drag in a control lane to draw its values.")
+        .hint("The lane under the notes: velocities, or a control such as the sustain pedal, the mod wheel or pitch bend. A dot marks a lane the clip holds. Click in a control lane to add a breakpoint, drag to draw steps. Make Ramps joins the points with lines; Make Steps holds each value.")
+    }
+
+    /// Every control of the lane becomes a ramp (a line to the next point) or a step (it holds).
+    private func setLaneRamps(_ ramp: Bool) {
+        let controls = clip.controls.map { c in
+            var c = c
+            if lane.matches(c) { c.ramp = ramp }
+            return c
+        }
+        model.apply(.setMIDIControls(clip: clip.id, controls: controls))
+    }
+
+    /// A control of the shown lane at `tick` with `value`: pitch bend around 0, a controller 0...127.
+    private func laneEvent(tick: Int64, value: Int, ramp: Bool) -> MIDIControlEvent? {
+        switch lane {
+        case .bend: MIDIControlEvent.pitchBend(value, tick: Tick(tick), ramp: ramp)
+        case .controller(let n): MIDIControlEvent.controller(n, UInt8(min(127, max(0, value))), tick: Tick(tick), ramp: ramp)
+        case .velocity: nil
+        }
+    }
+
+    private func laneValue(of c: MIDIControlEvent) -> Int { lane == .bend ? (c.bend ?? 0) : Int(c.value) }
+
+    /// The breakpoint of the lane within a few points of `p`, if one is there.
+    private func lanePoint(near p: CGPoint, height: CGFloat) -> MIDIControlEvent? {
+        laneControls.filter {
+            abs(CGFloat(Double($0.tick.rawValue) / Double(Tick.perQuarter)) * pxPerBeat - p.x) <= 5 && abs(laneY(laneValue(of: $0), height: height) - p.y) <= 6
+        }.min { abs(CGFloat(Double($0.tick.rawValue) / Double(Tick.perQuarter)) * pxPerBeat - p.x) < abs(CGFloat(Double($1.tick.rawValue) / Double(Tick.perQuarter)) * pxPerBeat - p.x) }
+    }
+
+    /// The tick under `x`, on the grid and inside the clip.
+    private func laneTick(atX x: CGFloat) -> Int64 {
+        let step = max(1, division)
+        let raw = Int64((Double(max(0, x) / pxPerBeat) * Double(Tick.perQuarter)).rounded())
+        return min(raw / step * step, max(0, clip.length.rawValue - 1))
     }
 
     /// The controls of the shown lane, in tick order.
@@ -360,8 +403,9 @@ struct PianoRoll: View {
         }
     }
 
-    /// A recorded control as a step curve, like Live's clip envelope: each value holds until the next.
-    /// A drag draws new values on the grid; the drawn stretch replaces what was there.
+    /// A control lane as Live's clip envelope: breakpoints joined by lines (ramps) or held values (steps).
+    /// A click adds a breakpoint, a drag on a point moves it, a second click right after removes it. A drag
+    /// on empty space draws steps on the grid; the drawn stretch replaces what was there.
     private var controlLane: some View {
         let laneHeight = Self.laneHeight
         return Canvas { ctx, size in
@@ -378,61 +422,96 @@ struct PianoRoll: View {
                 let mid = laneY(0, height: size.height)
                 ctx.fill(Path(CGRect(x: 0, y: mid, width: size.width, height: 1)), with: .color(.white.opacity(0.15)))
             }
-            // Recorded values, then the draft over them.
-            var points = laneControls.map { (tick: $0.tick.rawValue, value: lane == .bend ? ($0.bend ?? 0) : Int($0.value)) }
+            // The clip's points, then the draft (drawn steps, or the point being moved) over them.
+            var points = laneControls.map { (tick: $0.tick.rawValue, value: laneValue(of: $0), ramp: $0.ramp) }
             if !controlDraft.isEmpty {
                 let lo = controlDraft.keys.min()!, hi = controlDraft.keys.max()!
                 points.removeAll { $0.tick >= lo && $0.tick <= hi }
-                points += controlDraft.map { (tick: $0.key, value: $0.value) }
+                points += controlDraft.map { (tick: $0.key, value: $0.value, ramp: false) }
+                points.sort { $0.tick < $1.tick }
+            }
+            if case .move(let original) = laneDrag, let moved = movedPoint {
+                points.removeAll { $0.tick == original.tick.rawValue || $0.tick == moved.tick }
+                points.append((tick: moved.tick, value: moved.value, ramp: original.ramp))
                 points.sort { $0.tick < $1.tick }
             }
             guard let first = points.first else {
-                ctx.draw(Text("Drag to draw \(lane.name)").font(.system(size: 9)).foregroundStyle(Theme.dim), at: CGPoint(x: 8, y: 10), anchor: .leading)
+                ctx.draw(Text("Click to add a \(lane.name) point, drag to draw").font(.system(size: 9)).foregroundStyle(Theme.dim), at: CGPoint(x: 8, y: 10), anchor: .leading)
                 return
             }
             var path = Path()
-            var x = CGFloat(Double(first.tick) / Double(Tick.perQuarter)) * pxPerBeat
             var y = laneY(first.value, height: size.height)
-            path.move(to: CGPoint(x: x, y: y))
+            var ramp = first.ramp
+            path.move(to: CGPoint(x: CGFloat(Double(first.tick) / Double(Tick.perQuarter)) * pxPerBeat, y: y))
             for p in points.dropFirst() {
                 let nx = CGFloat(Double(p.tick) / Double(Tick.perQuarter)) * pxPerBeat
-                path.addLine(to: CGPoint(x: nx, y: y))
-                y = laneY(p.value, height: size.height)
-                path.addLine(to: CGPoint(x: nx, y: y))
-                x = nx
+                let ny = laneY(p.value, height: size.height)
+                // A ramp runs straight to the next point; a step holds, then jumps.
+                if !ramp { path.addLine(to: CGPoint(x: nx, y: y)) }
+                path.addLine(to: CGPoint(x: nx, y: ny))
+                y = ny; ramp = p.ramp
             }
             path.addLine(to: CGPoint(x: CGFloat(beats) * pxPerBeat, y: y))
             ctx.stroke(path, with: .color(tint), lineWidth: 1.5)
             for p in points {
                 let px = CGFloat(Double(p.tick) / Double(Tick.perQuarter)) * pxPerBeat
-                ctx.fill(Path(ellipseIn: CGRect(x: px - 2, y: laneY(p.value, height: size.height) - 2, width: 4, height: 4)), with: .color(tint))
+                let rect = CGRect(x: px - 2.5, y: laneY(p.value, height: size.height) - 2.5, width: 5, height: 5)
+                // A ramp point is round, a step point square, like the two kinds of segment they start.
+                ctx.fill(p.ramp ? Path(ellipseIn: rect) : Path(rect), with: .color(tint))
             }
-            _ = x
         }
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { g in
-                // One value per grid step under the pointer, in the lane's range.
-                let step = max(1, division)
-                let raw = Int64((Double(max(0, g.location.x) / pxPerBeat) * Double(Tick.perQuarter)).rounded())
-                let tick = min(raw / step * step, max(0, clip.length.rawValue - 1))
-                controlDraft[tick] = laneValue(atY: g.location.y, height: laneHeight)
+                if laneDrag == nil {
+                    laneDrag = lanePoint(near: g.startLocation, height: laneHeight).map { .move($0) } ?? .draw
+                }
+                let tick = laneTick(atX: g.location.x)
+                let value = laneValue(atY: g.location.y, height: laneHeight)
+                switch laneDrag {
+                case .move: movedPoint = (tick, value)
+                default: controlDraft[tick] = value // one value per grid step under the pointer
+                }
             }
-            .onEnded { _ in commitControlDraft() })
-        .hint("\(lane.name) lane. Drag to draw values on the grid; the drawn stretch replaces what was there. Choose another lane, or clear this one, in the menu at the left.")
+            .onEnded { g in
+                defer { laneDrag = nil; movedPoint = nil; controlDraft = [:] }
+                let still = abs(g.translation.width) < 3 && abs(g.translation.height) < 3
+                switch laneDrag {
+                case .move(let original):
+                    if still {
+                        // A click on a point marks it; a second click right after removes it.
+                        if let last = lastLaneTap, last.tick == original.tick.rawValue, Date().timeIntervalSince(last.date) < 0.45 {
+                            lastLaneTap = nil
+                            model.apply(.setMIDIControls(clip: clip.id, controls: clip.controls.filter { $0 != original }))
+                        } else {
+                            lastLaneTap = (Date(), original.tick.rawValue)
+                        }
+                        return
+                    }
+                    guard let moved = movedPoint else { return }
+                    var point = original.with(wideValue: lane == .bend ? moved.value + 8192 : moved.value)
+                    point.tick = Tick(moved.tick)
+                    let controls = clip.controls.filter { $0 != original && !(lane.matches($0) && $0.tick.rawValue == moved.tick) } + [point]
+                    model.apply(.setMIDIControls(clip: clip.id, controls: controls))
+                case .draw where still:
+                    // A click on empty space adds a breakpoint; it ramps to the next point, like Live's envelope.
+                    let tick = laneTick(atX: g.location.x)
+                    guard let point = laneEvent(tick: tick, value: laneValue(atY: g.location.y, height: laneHeight), ramp: true) else { return }
+                    lastLaneTap = (Date(), tick)
+                    model.apply(.setMIDIControls(clip: clip.id, controls: clip.controls.filter { !(lane.matches($0) && $0.tick.rawValue == tick) } + [point]))
+                default:
+                    commitControlDraft()
+                }
+            })
+        .hint("\(lane.name) lane. Click to add a breakpoint, drag a point to move it, click it twice to remove it. Drag on empty space to draw steps on the grid; the drawn stretch replaces what was there. The menu at the left turns the lane into ramps or steps, or clears it.")
     }
 
     /// The drawn stretch replaces the controls of this kind between its first and last tick, as one undo step.
     private func commitControlDraft() {
-        defer { controlDraft = [:] }
         guard let lo = controlDraft.keys.min(), let hi = controlDraft.keys.max() else { return }
         var controls = clip.controls.filter { !(lane.matches($0) && $0.tick.rawValue >= lo && $0.tick.rawValue <= hi) }
         for (tick, value) in controlDraft {
-            switch lane {
-            case .bend: controls.append(MIDIControlEvent.pitchBend(value, tick: Tick(tick)))
-            case .controller(let n): controls.append(MIDIControlEvent.controller(n, UInt8(min(127, max(0, value))), tick: Tick(tick)))
-            case .velocity: break
-            }
+            if let e = laneEvent(tick: tick, value: value, ramp: false) { controls.append(e) }
         }
         model.apply(.setMIDIControls(clip: clip.id, controls: controls))
     }

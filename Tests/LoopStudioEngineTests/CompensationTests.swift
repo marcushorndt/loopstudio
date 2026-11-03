@@ -144,3 +144,73 @@ private let rate = 48_000.0
     renderer.silenceNotes()
     #expect(renderer.heldMask(track: track.id) == (0, 0))
 }
+
+/// A track that plays its own clips and takes another track's sound: its clips wait as long as that sound is
+/// late, so the two line up inside the track and the detector of a compressor there sees them together.
+@Test func aNodesOwnClipsWaitForItsInputs() throws {
+    var project = Project(name: "Own", sampleRate: rate)
+    let bank = AudioBank()
+    let n = Int(rate)
+    var impulse = [Float](repeating: 0, count: n)
+    impulse[0] = 0.5
+    let asset = Asset(sha256: "impulse", name: "click", frames: Int64(n), sampleRate: rate, channels: 2)
+    try Command.addAsset(asset: asset).apply(to: &project)
+    bank.insert(PCMBuffer(samples: [impulse, impulse], sampleRate: rate), for: asset.id)
+    var kick = Track(name: "Kick", kind: .audio)
+    var limiter = BuiltInEffects.makeSlot("limiter")!
+    limiter.params["lookahead"] = 10 // 480 frames
+    kick.devices = [limiter]
+    let bus = Track(name: "Bus", kind: .audio)
+    try Command.insertTrack(track: kick, index: 0).apply(to: &project)
+    try Command.insertTrack(track: bus, index: 1).apply(to: &project)
+    try Command.setInputTrack(id: bus.id, source: kick.id).apply(to: &project)
+    for id in [kick.id, bus.id] {
+        var c = project.makeAudioClip(asset: asset.id, start: 0, length: 15_360)
+        c.fadeInMs = 0; c.fadeOutMs = 0
+        try Command.insertClip(track: id, clip: .audio(c)).apply(to: &project)
+    }
+    let plan = RenderPlan.compile(project, bank: bank)
+    let busNode = plan.trackOrder.firstIndex(of: bus.id)!
+    #expect(plan.nodes[busNode].inputShift == 480 && plan.nodes[busNode].outputShift == 480)
+    #expect(plan.latencyFrames == 480)
+    let renderer = Renderer(plan: plan, maxBlock: 512)
+    var l = [Float](repeating: 0, count: 1024), r = l
+    l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in
+        renderer.process(startFrame: 0, frames: 512, outLeft: lp.baseAddress!, outRight: rp.baseAddress!)
+        renderer.process(startFrame: 512, frames: 512, outLeft: lp.baseAddress! + 512, outRight: rp.baseAddress! + 512)
+    } }
+    // Both impulses reach the master at frame 480: the kick's through the limiter, the bus's own by waiting.
+    #expect(abs(l[0]) < 1e-6, "the bus's own click no longer plays early: \(l[0])")
+    #expect(l[480] > 0.9, "both clicks together at 480: \(l[480])")
+    #expect(l[0..<480].allSatisfy { abs($0) < 1e-6 } && l[481...].allSatisfy { abs($0) < 1e-6 })
+}
+
+/// A ramp breakpoint sends the values between it and the next point of its kind, one per 1/128 note where the
+/// value changes; a step sends nothing between. Another kind of control does not end the ramp.
+@Test func aRampSendsTheStepsBetweenItsBreakpoints() throws {
+    var project = Project(name: "Ramp", sampleRate: rate)
+    var track = Track(name: "Keys", kind: .midi)
+    track.devices = [BuiltInEffects.makeSlot("acid")!]
+    try Command.insertTrack(track: track, index: 0).apply(to: &project)
+    let beat = Tick.perQuarter
+    let clip = MIDIClip(start: 0, length: Tick(2 * beat), loop: false, notes: [],
+                        controls: [MIDIControlEvent.controller(1, 0, tick: 0, ramp: true),
+                                   MIDIControlEvent.controller(64, 127, tick: Tick(beat / 2)), // another kind in the middle of the ramp
+                                   MIDIControlEvent.controller(1, 127, tick: Tick(beat)),
+                                   MIDIControlEvent.controller(64, 0, tick: Tick(beat)),
+                                   MIDIControlEvent.pitchBend(-8192, tick: Tick(beat), ramp: true),
+                                   MIDIControlEvent.pitchBend(8191, tick: Tick(2 * beat - 1))])
+    try Command.insertClip(track: track.id, clip: .midi(clip)).apply(to: &project)
+    let plan = RenderPlan.compile(project, bank: AudioBank())
+    let mod = plan.nodes[0].midi.filter { $0.status == 0xB0 && $0.data1 == 1 }
+    #expect(mod.count == 33, "\(mod.count) mod wheel messages: 2 points and 31 steps between")
+    #expect(mod.map(\.data2) == mod.map(\.data2).sorted() && Set(mod.map(\.data2)).count == mod.count, "the values climb")
+    let beatFrames = Int64(rate / 2) // one beat at 120 BPM
+    #expect(mod.first?.frame == 0 && mod.last?.frame == beatFrames)
+    #expect(mod.first { $0.frame == beatFrames / 2 }?.data2 == 64, "halfway: \(mod.first { $0.frame == beatFrames / 2 }?.data2 ?? 255)")
+    #expect(plan.nodes[0].midi.filter { $0.status == 0xB0 && $0.data1 == 64 }.count == 2, "a step sends only its points")
+    let bends = plan.nodes[0].midi.filter { $0.status & 0xF0 == 0xE0 }
+    #expect(bends.count == 33 && bends.first?.data2 == 0 && bends.last?.data2 == 127, "\(bends.count) bends from bottom to top")
+    let frames = plan.nodes[0].midi.map(\.frame)
+    #expect(frames == frames.sorted(), "in frame order")
+}

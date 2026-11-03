@@ -788,7 +788,8 @@ final class AppModel {
     }
 
     /// Turns what was played into MIDI clips on the armed MIDI tracks, and the audio take into audio clips.
-    func finishRecording() {
+    /// `now`: the audio takes are cut and imported here, not on a worker (a quit or a project switch).
+    func finishRecording(now: Bool = false) {
         guard recording else { return }
         recording = false
         recordArmed = false
@@ -825,8 +826,7 @@ final class AppModel {
             }
         }
         if recordingAudio {
-            finishAudioRecording()
-            if let midiText { status = midiText + ". " + status }
+            finishAudioRecording(now: now, prefix: midiText)
         } else {
             status = midiText ?? "Nothing recorded"
         }
@@ -1528,7 +1528,7 @@ final class AppModel {
     /// are read, and the project is saved when they differ from the saved ones.
     private func saveOnQuit() {
         // A take that still runs becomes its clips first; a quit in the middle of a recording kept nothing of it.
-        if recording { finishRecording() }
+        if recording { finishRecording(now: true) }
         let before = project
         captureStates()
         if dirty || project != before { save() }
@@ -1851,11 +1851,11 @@ final class AppModel {
 
     /// What an import makes before the project learns of it: the asset (hashed and copied into the package),
     /// its audio at the project rate, and its waveform.
-    private struct Imported: Sendable { var asset: Asset; var pcm: PCMBuffer; var waveform: [Float] }
+    struct Imported: Sendable { var asset: Asset; var pcm: PCMBuffer; var waveform: [Float] }
 
     /// The heavy part of an import: the hash, the copy into the package, the decode and the waveform. No
     /// project state, so it can run on any thread.
-    private nonisolated static func importWork(_ url: URL, package: URL, rate: Double) throws -> Imported {
+    nonisolated static func importWork(_ url: URL, package: URL, rate: Double) throws -> Imported {
         let asset = try AssetStore.importFile(url, into: package)
         guard let file = AssetStore.fileURL(for: asset, in: package) else { throw CocoaError(.fileNoSuchFile) }
         let pcm = try AudioBank.decode(file, targetRate: rate)
@@ -1882,8 +1882,8 @@ final class AppModel {
         }
     }
 
-    /// Imports on the calling thread, for a take that was just recorded: the file is on disk and the clip
-    /// must be in place when the status says so. `name`: the asset's name, when it is not the file's.
+    /// Imports on the calling thread: the demo set-up, and a take when the app quits. `name`: the asset's
+    /// name, when it is not the file's.
     func importAudioNow(_ url: URL, name: String? = nil) -> Asset? {
         do {
             return register(try Self.importWork(url, package: packageURL, rate: sampleRate), from: url, name: name)
@@ -1894,7 +1894,7 @@ final class AppModel {
     }
 
     /// Puts an imported file into the project: a file the project has already (the same hash) is that asset.
-    private func register(_ imported: Imported, from url: URL, name: String?) -> Asset? {
+    func register(_ imported: Imported, from url: URL, name: String?) -> Asset? {
         if let existing = project.assets.first(where: { $0.sha256 == imported.asset.sha256 }) {
             if bank.buffer(for: existing.id) == nil { bank.insert(imported.pcm, for: existing.id); waveforms[existing.id] = imported.waveform }
             return existing
@@ -2290,6 +2290,8 @@ final class AppModel {
         guard panel.runModal() == .OK, var url = panel.url else { return }
         if url.pathExtension != "loopstudio" { url.appendPathExtension("loopstudio") }
         guard url.standardizedFileURL != packageURL.standardizedFileURL else { save(); return }
+        // A take that still runs becomes its clips in this package first, so the copy has it.
+        if recording { finishRecording(now: true) }
         captureStates()
         let fm = FileManager.default
         do {
@@ -2327,6 +2329,8 @@ final class AppModel {
 
     private func reset(to new: Project, at url: URL) {
         saveTask?.cancel()
+        // A take that still runs goes into the project it was recorded in, before that project goes away.
+        if recording { finishRecording(now: true) }
         pause()
         if new.sampleRate != engine.sampleRate {
             // A project at another rate: the engine renders at its rate, so it plays at the right speed.

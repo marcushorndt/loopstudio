@@ -16,11 +16,15 @@ public struct EffectParam: Sendable, Hashable {
     public var syncable = false
     /// A stepped parameter drawn as a knob that clicks through its choices (a note value), not as a menu.
     public var rotary = false
+    /// A value the plan is compiled with (a limiter's look-ahead sets its latency, which the delay compensation
+    /// lines the other tracks up by). A knob turn rebuilds the plan; automation and macros cannot move it,
+    /// or the compensation would be wrong between rebuilds.
+    public var fixed = false
 
     public init(_ key: String, _ name: String, _ min: Double, _ max: Double, _ def: Double,
-                unit: String = "", choices: [String] = [], log: Bool = false) {
+                unit: String = "", choices: [String] = [], log: Bool = false, fixed: Bool = false) {
         self.key = key; self.name = name; self.min = min; self.max = max; self.def = def
-        self.unit = unit; self.choices = choices; self.logarithmic = log
+        self.unit = unit; self.choices = choices; self.logarithmic = log; self.fixed = fixed
         syncKey = key + "Sync"; divisionKey = key + "Division"
     }
 
@@ -267,7 +271,7 @@ public enum BuiltInEffects {
         var spec = EffectSpec(id: "limiter", name: "Limiter", params: [
             EffectParam("gain", "Gain", 0, 24, 0, unit: "dB"),
             EffectParam("ceiling", "Ceiling", -12, 0, -0.3, unit: "dB"),
-            EffectParam("lookahead", "Lookahead", 0, 10, 2, unit: "ms"),
+            EffectParam("lookahead", "Lookahead", 0, 10, 2, unit: "ms", fixed: true),
             EffectParam("release", "Release", 10, 500, 80, unit: "ms", log: true),
         ])
         spec.groups = [EffectGroup("Limit", ["gain", "ceiling"]), EffectGroup("Time", ["lookahead", "release"])]

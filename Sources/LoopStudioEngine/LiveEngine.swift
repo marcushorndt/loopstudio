@@ -97,6 +97,8 @@ public final class LiveEngine: @unchecked Sendable {
     /// Meter peaks per node, handed over at the end of each callback.
     private let meterCapacity = 1024
     private let meters: UnsafeMutablePointer<Float>
+    /// The keys each node held at the end of the last callback (two masks per node), for the key lights.
+    private let heldMasks: UnsafeMutablePointer<UInt64>
     /// Notes for hardware MIDI destinations. The renderer pushes, a sender thread puts them on the wire.
     public let midiOut = MIDIOutQueue()
     /// The rate the plans render at. It follows the open project; the output converts to the device rate.
@@ -115,6 +117,8 @@ public final class LiveEngine: @unchecked Sendable {
         livePending = .allocate(capacity: liveCapacity)
         meters = .allocate(capacity: meterCapacity)
         meters.initialize(repeating: 0, count: meterCapacity)
+        heldMasks = .allocate(capacity: meterCapacity)
+        heldMasks.initialize(repeating: 0, count: meterCapacity)
         midiOut.hostTime = { [weak self] frame in self?.hostTime(forSessionFrame: frame) ?? 0 }
         midiOut.ticksPerFrame = Double(HostClock.ticks(fromSeconds: 1)) / sampleRate
     }
@@ -126,6 +130,7 @@ public final class LiveEngine: @unchecked Sendable {
         liveTaken.deallocate()
         livePending.deallocate()
         meters.deallocate()
+        heldMasks.deallocate()
     }
 
     public func start() throws {
@@ -464,9 +469,12 @@ public final class LiveEngine: @unchecked Sendable {
         locked { renderer?.instance(device) }
     }
 
-    /// The keys a track holds now (see `Renderer.heldMask`). For the key lights.
+    /// The keys a track holds now (see `Renderer.heldMask`), from the snapshot of the last callback. For the key lights.
     public func heldNotes(track: TrackID) -> (low: UInt64, high: UInt64) {
-        locked { renderer?.heldMask(track: track) ?? (0, 0) }
+        locked {
+            guard let renderer, let i = renderer.plan.trackOrder.firstIndex(of: track), 2 * i + 1 < meterCapacity else { return (0, 0) }
+            return (heldMasks[2 * i], heldMasks[2 * i + 1])
+        }
     }
 
     /// The peak of a node since the last call, left and right. For meters.
@@ -648,6 +656,7 @@ public final class LiveEngine: @unchecked Sendable {
             self.startHost = startHost
         }
         renderer.movePeaks(into: meters, capacity: meterCapacity)
+        renderer.copyMasks(into: heldMasks, capacity: meterCapacity)
         os_unfair_lock_unlock(lock)
     }
 

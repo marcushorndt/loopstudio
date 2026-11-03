@@ -73,6 +73,8 @@ struct EffectPlan {
     var unit: AudioUnitEffect? = nil
     /// The node whose output the effect listens to (a sidechain). It renders before this node.
     var sidechain: Int? = nil
+    /// Frames the sidechain signal waits so it lines up with this effect's input, from delay compensation.
+    var sidechainDelay = 0
     /// An audio effect rack: its chains. The slot of this plan holds the macros and the selector.
     var rack: RackPlan? = nil
     /// Keys a macro of an enclosing rack drives. Their automation is ignored; the macro sets them.
@@ -123,6 +125,43 @@ struct MIDIEvent {
     var data2: UInt8
 }
 
+/// Where each key (channel << 7 | pitch) of a node's notes goes on and off, as sorted frames. The plan swap
+/// asks "is this key inside a note at frame f" for every held key: two binary searches here, where a scan of
+/// the event list took as long as the song is.
+struct NoteIndex {
+    private var ons: [Int: [Int64]] = [:]
+    private var offs: [Int: [Int64]] = [:]
+
+    init() {}
+
+    /// `events` sorted by frame, note-off before note-on on the same frame.
+    init(_ events: [MIDIEvent]) {
+        for e in events {
+            let kind = e.status & 0xF0
+            guard kind == 0x80 || kind == 0x90 else { continue }
+            let key = Int(e.status & 0x0F) << 7 | Int(e.data1 & 127)
+            if kind == 0x90 && e.data2 > 0 { ons[key, default: []].append(e.frame) } else { offs[key, default: []].append(e.frame) }
+        }
+    }
+
+    /// True when the next event of `key` at or after `frame` is a note-off: the key is inside a note there.
+    /// No allocation: two lookups and two binary searches.
+    func heldAt(_ key: Int, frame: Int64) -> Bool {
+        guard let off = offs[key].flatMap({ Self.first($0, atOrAfter: frame) }) else { return false }
+        guard let on = ons[key].flatMap({ Self.first($0, atOrAfter: frame) }) else { return true }
+        return off <= on
+    }
+
+    private static func first(_ frames: [Int64], atOrAfter frame: Int64) -> Int64? {
+        var lo = 0, hi = frames.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if frames[mid] < frame { lo = mid + 1 } else { hi = mid }
+        }
+        return lo < frames.count ? frames[lo] : nil
+    }
+}
+
 /// A built-in instrument on a MIDI track. The renderer makes (or keeps) its `DSPInstrument`.
 struct SynthPlan {
     var device: DeviceID
@@ -171,6 +210,9 @@ struct NodePlan {
     var midi: [MIDIEvent] = []
     /// Notes of the session clips, in session frames.
     var sessionMidi: [MIDIEvent] = []
+    /// `midi` and `sessionMidi` by key, for the note takeover at a plan swap.
+    var noteIndex = NoteIndex()
+    var sessionNoteIndex = NoteIndex()
     /// A hardware destination that gets the notes too (or instead of an instrument). Live: "MIDI To".
     var midiOut: MIDIOutTarget? = nil
     /// Session frame from which this track's arrangement clips and notes are silent, because a session clip
@@ -367,7 +409,8 @@ public struct RenderPlan {
             var result: [String: AutoLane] = [:]
             guard let d = track.device(device) else { return result }
             if let spec = BuiltInEffects.spec(d.identifier), d.format == "builtin" {
-                for p in spec.params { if let l = lane(device.rawValue, p.key) { result[p.key] = l } }
+                // A fixed parameter (a look-ahead) sets the latency this plan compensates: a curve cannot move it.
+                for p in spec.params where !p.fixed { if let l = lane(device.rawValue, p.key) { result[p.key] = l } }
             } else {
                 for p in d.pluginParams ?? [] { if let l = lane(device.rawValue, p.key) { result[p.key] = l } }
             }
@@ -490,6 +533,8 @@ public struct RenderPlan {
                 effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, instrumentAuto: instrumentAuto, synth: synth,
                 rackSynth: compiled.rackSynth, instrumentDevice: instrumentDevice, midi: midi, sessionMidi: sessionMidi,
                 midiOut: midiOut, arrangementEnd: arrangementEnds[t.id]))
+            nodes[nodes.count - 1].noteIndex = NoteIndex(midi)
+            nodes[nodes.count - 1].sessionNoteIndex = NoteIndex(sessionMidi)
             if let input {
                 nodes[nodes.count - 1].input = (input.channels.first, input.channels.stereo ? input.channels.first + 1 : nil)
             }

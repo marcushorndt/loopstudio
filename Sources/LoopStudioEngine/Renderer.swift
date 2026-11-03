@@ -31,6 +31,9 @@ public final class Renderer {
     /// instrument releases its own notes; hardware gets an explicit note-off for each one on stop.
     private let sessionHeld: UnsafeMutablePointer<UInt8>
     private let liveHeld: UnsafeMutablePointer<UInt8>
+    /// The keys each node holds, as two 64-bit masks (see `heldMask`), made once per block from the three
+    /// tables above. The engine copies them out under its lock, so the key lights never read a table while it changes.
+    private let masks: UnsafeMutablePointer<UInt64>
     /// The session frame at which notes released after this block (a loop wrap) sound on hardware.
     private var releaseFrame = MIDIOutQueue.now
     /// Tracks whose sound after the fader is recorded (resampling), each with the ring it goes to.
@@ -64,11 +67,15 @@ public final class Renderer {
         let unitAuto: [(address: AUParameterAddress, lane: AutoLane)]
         /// The node this effect listens to (a sidechain), rendered before this one.
         let sidechain: Int?
+        /// Delay compensation for the sidechain: the source's sound waits here until this effect's input, which
+        /// went through more latency, catches up. `nil` when both arrive together.
+        let sidechainLine: DelayLine?
         /// A rack: `effect` is nil, the chains run here. `live` holds its macros and selector.
         let rack: RackRuntime?
         init(effect: DSPEffect?, unit: AudioUnitEffect?, bypassed: Bool, auto: [String: AutoLane], params: [String: Double], sidechain: Int? = nil,
-             rack: RackRuntime? = nil, mapped: Set<String> = [], spec: EffectSpec? = nil) {
+             sidechainLine: DelayLine? = nil, rack: RackRuntime? = nil, mapped: Set<String> = [], spec: EffectSpec? = nil) {
             self.effect = effect; self.unit = unit; self.bypassed = bypassed; self.sidechain = sidechain; self.rack = rack
+            self.sidechainLine = sidechainLine
             let sorted = auto.map { ($0.key, $0.value) }.sorted { $0.0 < $1.0 }
             self.auto = sorted
             self.autoActive = sorted.map { !mapped.contains($0.0) }
@@ -122,6 +129,18 @@ public final class Renderer {
         var allRacks: [RackRuntime] = []
         /// Every slot by its device, so a rack's macro links find the slot they move (any depth).
         var slotIndex: [UUID: (Slot, EffectSpec?)] = [:]
+        // A connection that keeps its ends and its delay keeps its line, so an edit does not insert
+        // a stretch of silence into a compensated path. Only one renderer runs at a time, so sharing is safe.
+        var kept: [String: DelayLine] = [:]
+        func line(_ d: Int, _ key: String) -> DelayLine? {
+            guard d > 0 else { return nil }
+            var full = "\(key)|\(d)"
+            while kept[full] != nil { full += "+" } // two equal connections never share one line
+            if let old = old?.delayLines[full], old.maxBlock == maxBlock { kept[full] = old; return old }
+            let new = DelayLine(delay: d, maxBlock: maxBlock)
+            kept[full] = new
+            return new
+        }
         /// A built-in device: the one the old renderer runs when it is the same device of the same kind, else a new one.
         func builtIn(_ device: DeviceID, kind: String, params: [String: Double]) -> (DSPEffect, running: Bool)? {
             if let kept = old?.instances[device], kept.spec.id == kind, kept.sampleRate == plan.sampleRate { return (kept, true) }
@@ -153,7 +172,9 @@ public final class Renderer {
                 }
                 guard let found = builtIn(e.device, kind: e.kind, params: e.params) else { continue }
                 made[e.device] = found.0
-                let slot = Slot(effect: found.0, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params, sidechain: e.sidechain, mapped: e.mappedKeys)
+                let scLine = e.sidechain == nil ? nil : line(e.sidechainDelay, "sc|\(e.device.rawValue.uuidString)")
+                let slot = Slot(effect: found.0, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params, sidechain: e.sidechain,
+                                sidechainLine: scLine, mapped: e.mappedKeys)
                 slot.needsConfigure = found.running
                 slotIndex[e.device.rawValue] = (slot, found.0.spec)
                 chain.append(slot)
@@ -219,19 +240,7 @@ public final class Renderer {
         rackSynths = rackSynthList
         rackSynthSlots = rackSynthSlotList
         racks = allRacks
-        // A connection that keeps its ends and its delay keeps its line, so an edit does not insert
-        // a stretch of silence into a compensated path. Only one renderer runs at a time, so sharing is safe.
-        var kept: [String: DelayLine] = [:]
         func name(_ node: Int?) -> String { node.flatMap { plan.trackOrder.indices.contains($0) ? plan.trackOrder[$0]?.description : nil } ?? "master" }
-        func line(_ d: Int, _ key: String) -> DelayLine? {
-            guard d > 0 else { return nil }
-            var full = "\(key)|\(d)"
-            while kept[full] != nil { full += "+" } // two equal connections never share one line
-            if let old = old?.delayLines[full], old.maxBlock == maxBlock { kept[full] = old; return old }
-            let new = DelayLine(delay: d, maxBlock: maxBlock)
-            kept[full] = new
-            return new
-        }
         outputLines = plan.nodes.indices.map { i in line(plan.nodes[i].outputDelay, "out|\(name(i))|\(name(plan.nodes[i].output))") }
         sendLines = plan.nodes.indices.map { i in
             plan.nodes[i].sends.map { line($0.delay, "send|\(name(i))|\(name($0.target))|\($0.preFader)") }
@@ -265,6 +274,8 @@ public final class Renderer {
         sessionHeld.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
         liveHeld = .allocate(capacity: max(1, nodeCount) * 2048)
         liveHeld.initialize(repeating: 0, count: max(1, nodeCount) * 2048)
+        masks = .allocate(capacity: 2 * max(1, nodeCount))
+        masks.initialize(repeating: 0, count: 2 * max(1, nodeCount))
         portCount = plan.outputPorts.count
         portBuffers = .allocate(capacity: max(1, portCount) * 2 * maxBlock)
         portBuffers.initialize(repeating: 0, count: max(1, portCount) * 2 * maxBlock)
@@ -278,6 +289,7 @@ public final class Renderer {
         held.deallocate()
         sessionHeld.deallocate()
         liveHeld.deallocate()
+        masks.deallocate()
         portBuffers.deallocate()
         scratchIn.deallocate(); scratchOut.deallocate(); inPointers.deallocate(); outPointers.deallocate()
     }
@@ -319,6 +331,7 @@ public final class Renderer {
             if kind == 0x90 || kind == 0x80 {
                 let k = Int(status & 0x0F) << 7 | Int(data1 & 127), live = liveHeld + i * 2048
                 if kind == 0x90 && data2 > 0 { live[k] &+= 1 } else if live[k] > 0 { live[k] -= 1 }
+                updateMask(i)
             }
             return
         }
@@ -337,6 +350,7 @@ public final class Renderer {
         held.update(repeating: 0, count: max(1, nodeCount) * 2048)
         sessionHeld.update(repeating: 0, count: max(1, nodeCount) * 2048)
         liveHeld.update(repeating: 0, count: max(1, nodeCount) * 2048)
+        masks.update(repeating: 0, count: 2 * max(1, nodeCount))
     }
 
     /// Note-offs on hardware for every count in `base`, then zero.
@@ -349,18 +363,46 @@ public final class Renderer {
     }
 
     /// The keys a track holds now, from its clips and from live playing, as two 64-bit masks (pitches 0...63
-    /// and 64...127), all channels together. For the key lights of the piano roll and the pads.
+    /// and 64...127), all channels together. For the key lights of the piano roll and the pads. From the
+    /// snapshot of the last block, so it is coherent even while the audio thread plays.
     public func heldMask(track: TrackID) -> (low: UInt64, high: UInt64) {
-        var low: UInt64 = 0, high: UInt64 = 0
         let order = plan.trackOrder
-        for i in 0..<min(order.count, nodeCount) where order[i] == track {
-            let a = held + i * 2048, b = sessionHeld + i * 2048, c = liveHeld + i * 2048
-            for k in 0..<2048 where a[k] > 0 || b[k] > 0 || c[k] > 0 {
-                let pitch = k & 127
-                if pitch < 64 { low |= 1 << UInt64(pitch) } else { high |= 1 << UInt64(pitch - 64) }
-            }
+        for i in 0..<min(order.count, nodeCount) where order[i] == track { return (masks[2 * i], masks[2 * i + 1]) }
+        return (0, 0)
+    }
+
+    /// Makes the masks of every node that plays notes. Eight keys per load: a node with no held notes costs
+    /// 768 loads, so the pass is cheap for any number of tracks.
+    private func updateMasks() {
+        for i in 0..<nodeCount where nodes[i].instrument != nil || nodes[i].synthUnit != nil || rackSynths[i] != nil || nodes[i].midiOut != nil {
+            updateMask(i)
         }
-        return (low, high)
+    }
+
+    private func updateMask(_ i: Int) {
+        do {
+            var low: UInt64 = 0, high: UInt64 = 0
+            let a = UnsafeRawPointer(held + i * 2048), b = UnsafeRawPointer(sessionHeld + i * 2048), c = UnsafeRawPointer(liveHeld + i * 2048)
+            var k = 0
+            while k < 2048 {
+                let word = a.loadUnaligned(fromByteOffset: k, as: UInt64.self) | b.loadUnaligned(fromByteOffset: k, as: UInt64.self)
+                    | c.loadUnaligned(fromByteOffset: k, as: UInt64.self)
+                if word != 0 {
+                    for j in 0..<8 where (word >> (UInt64(j) * 8)) & 0xFF != 0 {
+                        let pitch = (k + j) & 127
+                        if pitch < 64 { low |= 1 << UInt64(pitch) } else { high |= 1 << UInt64(pitch - 64) }
+                    }
+                }
+                k += 8
+            }
+            masks[2 * i] = low; masks[2 * i + 1] = high
+        }
+    }
+
+    /// Copies the held-key masks of the last block into `out`, two per node. Realtime safe; the engine calls
+    /// it under its lock at the end of each callback, like `movePeaks`.
+    public func copyMasks(into out: UnsafeMutablePointer<UInt64>, capacity: Int) {
+        out.update(from: masks, count: min(2 * nodeCount, capacity))
     }
 
     /// Releases only the arrangement notes that are still on. Called when the loop wraps,
@@ -397,7 +439,7 @@ public final class Renderer {
             }
             let base = old.held + i * 2048
             for k in 0..<2048 where base[k] > 0 {
-                let keep = (unitKept || hwKept) && Self.hasNoteOff(nodes[j].midi, key: k, from: frame)
+                let keep = (unitKept || hwKept) && nodes[j].noteIndex.heldAt(k, frame: frame)
                 if keep { held[j * 2048 + k] &+= base[k] }
                 off(k, unitToo: !(keep && unitKept), hwToo: !(keep && hwKept))
                 base[k] = 0
@@ -405,7 +447,7 @@ public final class Renderer {
             // Session notes: the same rule. A note that was moved or deleted while it sounded ends here.
             let session = old.sessionHeld + i * 2048
             for k in 0..<2048 where session[k] > 0 {
-                let ahead = (unitKept || hwKept) && Self.hasNoteOff(nodes[j].sessionMidi, key: k, from: sessionFrame)
+                let ahead = (unitKept || hwKept) && nodes[j].sessionNoteIndex.heldAt(k, frame: sessionFrame)
                 let keepUnit = unitKept && ahead, keepHw = hwKept && ahead
                 if keepUnit || keepHw { sessionHeld[j * 2048 + k] &+= session[k] }
                 off(k, unitToo: !keepUnit, hwToo: !keepHw)
@@ -639,6 +681,7 @@ public final class Renderer {
             for (k, tap) in node.taps.enumerated() { addDelayed(l, r, to: tap, line: tapLines[i][k], frames: frames) }
         }
         if transport { releaseFrame = startFrame + sessionOffset + Int64(frames) }
+        updateMasks()
     }
 
     // MARK: Automation
@@ -730,8 +773,13 @@ public final class Renderer {
         if let rack = slot.rack { runRackSlot(rack, slot, l, r, startFrame: startFrame, frames: frames, instrument: false); return }
         guard let effect = slot.effect else { return }
         if slot.needsConfigure || slot.dirty { effect.configure(slot.live); slot.needsConfigure = false; slot.dirty = false }
-        // A sidechain reads the output of a node that rendered before this one in this block.
-        let scL = slot.sidechain.map { UnsafePointer(left($0)) }, scR = slot.sidechain.map { UnsafePointer(right($0)) }
+        // A sidechain reads the output of a node that rendered before this one in this block. When this
+        // effect's own input went through more latency, the source waits in a line by the difference.
+        var scL = slot.sidechain.map { UnsafePointer(left($0)) }, scR = slot.sidechain.map { UnsafePointer(right($0)) }
+        if let line = slot.sidechainLine, let sl = scL, let sr = scR {
+            line.process(sl, sr, frames: frames)
+            scL = UnsafePointer(line.outLeft); scR = UnsafePointer(line.outRight)
+        }
         guard !slot.auto.isEmpty || effect.followsTempo else { effect.process(l, r, sidechainL: scL, sidechainR: scR, frames: frames); return }
         eachGridChunk(startFrame: startFrame, frames: frames) { offset, count, grid, _ in
             var changed = false
@@ -958,7 +1006,10 @@ final class RackRuntime: MIDIReceiver {
                 guard key.hasPrefix("au."), let address = AUParameterAddress(key.dropFirst(3)), let range = unit.parameterRange(address) else { return nil }
                 return MacroLink(macro: m.macro, min: m.min, max: m.max, curve: m.curve, target: .unit(unit, address, range.min, range.max))
             }
-            return MacroLink(macro: m.macro, min: m.min, max: m.max, curve: m.curve, target: .param(target, key, spec?.params.first { $0.key == key }))
+            let param = spec?.params.first { $0.key == key }
+            // A fixed parameter sets the plan's latency: a macro cannot move it between rebuilds.
+            if param?.fixed == true { return nil }
+            return MacroLink(macro: m.macro, min: m.min, max: m.max, curve: m.curve, target: .param(target, key, param))
         }
     }
 

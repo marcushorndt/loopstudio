@@ -60,6 +60,9 @@ extension RenderPlan {
             if let o = node.output { incoming[o].append(i) }
             for s in node.sends { incoming[s.target].append(i) }
             for t in node.taps { incoming[t].append(i) }
+            // A sidechain is an input too: the listener's other inputs wait for the source, and the
+            // detector waits for them (below), so the ducking lands on the beat it listens to.
+            for s in Self.sidechains(of: node.effects) where s != i { incoming[i].append(s) }
         }
         // Nodes are sorted sources first, so one pass in order is enough.
         var arrival = [Int](repeating: 0, count: count)
@@ -68,13 +71,45 @@ extension RenderPlan {
             arrivalIn[i] = incoming[i].map { arrival[$0] }.max() ?? 0
             arrival[i] = arrivalIn[i] + nodes[i].latency
         }
+        let rate = sampleRate
         for i in 0..<count {
             nodes[i].arrival = arrival[i]
             if let o = nodes[i].output { nodes[i].outputDelay = max(0, arrivalIn[o] - arrival[i]) }
             for k in nodes[i].sends.indices { nodes[i].sends[k].delay = max(0, arrivalIn[nodes[i].sends[k].target] - arrival[i]) }
             nodes[i].tapDelays = nodes[i].taps.map { max(0, arrivalIn[$0] - arrival[i]) }
+            // The signal at an effect is late by the node's inputs plus the devices before it in the chain.
+            let instrumentLatency = nodes[i].instrument?.latencySamples ?? nodes[i].rackSynth?.latency ?? 0
+            Self.delaySidechains(&nodes[i].effects, inputArrival: arrivalIn[i] + instrumentLatency, arrival: arrival, rate: rate)
         }
         // The whole mix is late by the master's arrival time. Say so, so a caller can account for it.
         latencyFrames = arrival.last ?? 0
+    }
+
+    /// The nodes the effects of a chain listen to, racks included.
+    private static func sidechains(of effects: [EffectPlan]) -> [Int] {
+        var result: [Int] = []
+        for e in effects where !e.bypassed {
+            if let s = e.sidechain { result.append(s) }
+            if let rack = e.rack { for c in rack.chains { result += sidechains(of: c.effects) } }
+        }
+        return result
+    }
+
+    /// Sets `sidechainDelay` on every listening effect of a chain whose input arrives `inputArrival` frames late.
+    private static func delaySidechains(_ effects: inout [EffectPlan], inputArrival: Int, arrival: [Int], rate: Double) {
+        var here = inputArrival
+        for k in effects.indices {
+            if let s = effects[k].sidechain, s < arrival.count { effects[k].sidechainDelay = max(0, here - arrival[s]) }
+            if var rack = effects[k].rack {
+                for c in rack.chains.indices {
+                    let chainInstrument = rack.chains[c].instrument?.latencySamples ?? rack.chains[c].rackSynth?.latency ?? 0
+                    delaySidechains(&rack.chains[c].effects, inputArrival: here + chainInstrument, arrival: arrival, rate: rate)
+                }
+                effects[k].rack = rack
+            }
+            guard !effects[k].bypassed else { continue }
+            here += effects[k].unit?.latencySamples ?? effects[k].rack?.latency
+                ?? DSPEffect.latency(kind: effects[k].kind, params: effects[k].params, sampleRate: rate)
+        }
     }
 }

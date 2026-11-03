@@ -59,6 +59,19 @@ struct Knob: View {
                 .font(.system(size: 10)).foregroundStyle(Theme.dim).lineLimit(1)
             if rotary { Text(param.format(value)).font(.system(size: 10, design: .monospaced)) }
         }
+        // One element per knob for VoiceOver: its name, its value, and up and down with the arrow keys.
+        .accessibilityElement(children: param.isSwitch || rotary ? .ignore : .contain)
+        .accessibilityLabel(param.name)
+        .accessibilityValue(param.isSwitch ? (value >= 0.5 ? "On" : "Off") : param.format(value))
+        .accessibilityAddTraits(param.isSwitch ? .isButton : [])
+        .accessibilityAction { if param.isSwitch { onChange(value >= 0.5 ? 0 : 1) } }
+        .accessibilityAdjustableAction { direction in
+            guard !param.isSwitch else { onChange(value >= 0.5 ? 0 : 1); return }
+            // A continuous knob moves a fiftieth of its travel; a stepped one, one step.
+            let step = param.choices.isEmpty ? 0.02 : 1 / Double(max(1, param.choices.count - 1))
+            let position = param.position(value) + (direction == .increment ? step : -step)
+            onChange(param.clamp(param.value(atPosition: min(max(position, 0), 1))))
+        }
         .frame(width: 66)
         .hint(param.isSwitch ? "\(param.name): \(value >= 0.5 ? "On" : "Off"). Click to switch."
               : "\(param.name): \(param.format(value)). Drag up or down; double-click resets. Right-click for automation.")

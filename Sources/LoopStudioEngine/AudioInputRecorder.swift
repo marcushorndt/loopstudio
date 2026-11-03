@@ -114,6 +114,10 @@ public final class AudioInputRecorder: @unchecked Sendable {
 
     /// The monitor of the open input, for the output engine. `nil` while the input is closed.
     public private(set) var monitor: InputMonitor?
+    /// Called on the main queue when the input device changed its setup or went away while the input was
+    /// open: the engine has stopped, a take gets no more sound. The owner ends the take or opens the input again.
+    public var onConfigurationChange: (@Sendable () -> Void)?
+    private var configObserver: NSObjectProtocol?
 
     public init() {
         rt = .allocate(capacity: 1)
@@ -230,7 +234,16 @@ public final class AudioInputRecorder: @unchecked Sendable {
             throw error
         }
         self.monitor = monitor
+        if configObserver == nil {
+            configObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+                guard let self, !self.engine.isRunning else { return }
+                self.onConfigurationChange?()
+            }
+        }
     }
+
+    /// True while the input engine runs. False after the device went away, until the input is opened again.
+    public var isRunning: Bool { engine.isRunning }
 
     /// Stops the input engine. Only when nothing records.
     private func close() {

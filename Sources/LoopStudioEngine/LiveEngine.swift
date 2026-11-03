@@ -498,52 +498,131 @@ public final class LiveEngine: @unchecked Sendable {
         return body()
     }
 
+    /// Holds the control lock while `body` runs. For tests of the audio thread's behaviour under contention only.
+    func withLockHeldForTesting(_ body: () -> Void) { locked(body) }
+
     // MARK: Audio thread
+
+    /// The control state as the audio thread last took it, and the clocks as it left them. Audio thread only.
+    /// When a control thread holds the lock at the start of a callback, the callback renders with this.
+    private struct Taken {
+        var renderer: Renderer?
+        var captures: CaptureSet?
+        var monitor: InputMonitor?
+        var playing = false
+        var position: Int64 = 0
+        var sessionPosition: Int64 = 0
+        var anchorHost: UInt64 = 0
+        var anchorFrame: Int64 = 0
+        var loop: Range<Int64>?
+        var click = Click()
+        var countInRemaining: Int64 = 0
+        var countInDone: Int64 = 0
+        var countInClick = true
+        var stampPending = false
+        var startHost: UInt64 = 0
+        var clockGeneration: UInt64 = 0
+        var stateGeneration: UInt64 = 0
+        var sampleRate = 48_000.0
+        var outputLatency: Int64 = 0
+        var routes = Routes()
+    }
+    private var taken = Taken()
+    /// The clocks of the last block could not be written back (the lock was held): do it at the next chance.
+    private var writeBackPending = false
+    /// Callbacks that found the lock held at their start or end. For diagnostics; the sound was not affected.
+    public private(set) var missedLocks: UInt64 = 0
+
+    /// Writes the clocks and the transport state of the last block into the control fields, unless a control
+    /// thread moved them meanwhile (a seek, a play, a pause). Under the lock.
+    private func writeBack() {
+        if clockGeneration == taken.clockGeneration {
+            position = taken.position
+            sessionPosition = taken.sessionPosition
+            anchorHost = taken.anchorHost
+            anchorFrame = taken.anchorFrame
+        }
+        if stateGeneration == taken.stateGeneration {
+            playing = taken.playing
+            countInRemaining = taken.countInRemaining
+            countInDone = taken.countInDone
+            stampPending = taken.stampPending
+            startHost = taken.startHost
+        }
+    }
 
     func render(frameCount: Int, bufferList: UnsafeMutablePointer<AudioBufferList>, host: UInt64) {
         let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
         guard buffers.count >= 2 else { return }
 
-        // 1. Take the control state. Plain copies and reference counts only; nothing is allocated or freed.
-        os_unfair_lock_lock(lock)
-        callbacks &+= 1
+        // 1. Take the control state: plain copies and reference counts only; nothing is allocated or freed.
+        // The audio thread never waits for the lock. A control thread holds it for a few copies at most, but
+        // it can be preempted while it does: then this block renders with the state of the last one, and
+        // takes the new state a block later. Nothing is lost: a live note or a plan swap arrives one block
+        // late, the clocks are written back at the next chance.
         let host = smoothHost(host, frames: frameCount)
-        // When the first frame of this buffer comes out of the speaker.
-        let sounds = host &+ HostClock.ticks(fromSeconds: Double(outputLatency) / sampleRate)
-        // A timed start: wait in silence for the frames up to that host time, then play. `sounds` is when
-        // this buffer is heard, so the wait is exact to the frame.
-        if startAtHost != 0 {
-            let wait = HostClock.frames(from: sounds, to: startAtHost, rate: sampleRate)
-            if wait > 0 { countInRemaining = wait; countInDone = 0; countInClick = false }
-            else { playing = true; stampPending = true }
-            startAtHost = 0
+        var previous: Renderer?
+        var reset = false, silence = false
+        var liveTakenCount = 0
+        if os_unfair_lock_trylock(lock) {
+            callbacks &+= 1
+            if writeBackPending { writeBack(); writeBackPending = false }
+            // When the first frame of this buffer comes out of the speaker.
+            let sounds = host &+ HostClock.ticks(fromSeconds: Double(outputLatency) / sampleRate)
+            // A timed start: wait in silence for the frames up to that host time, then play. `sounds` is when
+            // this buffer is heard, so the wait is exact to the frame.
+            if startAtHost != 0 {
+                let wait = HostClock.frames(from: sounds, to: startAtHost, rate: sampleRate)
+                if wait > 0 { countInRemaining = wait; countInDone = 0; countInClick = false }
+                else { playing = true; stampPending = true }
+                startAtHost = 0
+            }
+            taken.renderer = renderer
+            // No renderer yet (a sample-rate change): the handover waits, so its held notes get their note-offs.
+            previous = renderer == nil ? nil : handover
+            if renderer != nil { handover = nil }
+            reset = resetPending; silence = silencePending
+            resetPending = false; silencePending = false
+            taken.captures = captures
+            taken.monitor = inputMonitor
+            liveTakenCount = liveCount
+            liveTaken.update(from: live, count: liveCount)
+            liveCount = 0
+            taken.playing = playing
+            taken.position = position
+            taken.sessionPosition = sessionPosition
+            taken.loop = loop
+            taken.click = click
+            taken.countInRemaining = countInRemaining
+            taken.countInDone = countInDone
+            taken.countInClick = countInClick
+            taken.stampPending = stampPending
+            taken.startHost = startHost
+            taken.clockGeneration = clockGeneration
+            taken.stateGeneration = stateGeneration
+            taken.sampleRate = sampleRate
+            taken.outputLatency = outputLatency
+            taken.routes = routes
+            os_unfair_lock_unlock(lock)
+        } else {
+            missedLocks &+= 1
         }
-        let renderer = self.renderer
-        // No renderer yet (a sample-rate change): the handover waits, so its held notes get their note-offs.
-        let previous = renderer == nil ? nil : handover
-        if renderer != nil { handover = nil }
-        let reset = resetPending, silence = silencePending
-        resetPending = false; silencePending = false
-        let captures = self.captures
-        let monitor = inputMonitor
-        let liveTakenCount = liveCount
-        liveTaken.update(from: live, count: liveCount)
-        liveCount = 0
-        var playing = self.playing
-        var position = self.position
-        var sessionPosition = self.sessionPosition
-        let loop = self.loop
-        let click = self.click
-        var countInRemaining = self.countInRemaining
-        var countInDone = self.countInDone
-        let countInClick = self.countInClick
-        var stampPending = self.stampPending
-        var startHost = self.startHost
-        let clockGeneration = self.clockGeneration
-        let stateGeneration = self.stateGeneration
-        let sampleRate = self.sampleRate
-        let routes = self.routes
-        os_unfair_lock_unlock(lock)
+        let renderer = taken.renderer
+        let captures = taken.captures
+        let monitor = taken.monitor
+        var playing = taken.playing
+        var position = taken.position
+        var sessionPosition = taken.sessionPosition
+        let loop = taken.loop
+        let click = taken.click
+        var countInRemaining = taken.countInRemaining
+        var countInDone = taken.countInDone
+        let countInClick = taken.countInClick
+        var stampPending = taken.stampPending
+        var startHost = taken.startHost
+        let sampleRate = taken.sampleRate
+        let routes = taken.routes
+        let sounds = host &+ HostClock.ticks(fromSeconds: Double(taken.outputLatency) / sampleRate)
 
         // Every channel starts silent. The master goes to its pair; with direct ports on, to the pair it is routed to.
         for b in 0..<buffers.count { buffers[b].mData?.assumingMemoryBound(to: Float.self).update(repeating: 0, count: frameCount) }
@@ -640,24 +719,27 @@ public final class LiveEngine: @unchecked Sendable {
             if let loop, position >= loop.upperBound { position = loop.lowerBound; renderer.releaseArrangementNotes() }
         }
 
-        // 3. Write back what nobody changed meanwhile, and hand over the meter peaks.
-        os_unfair_lock_lock(lock)
-        if self.clockGeneration == clockGeneration {
-            self.position = position
-            self.sessionPosition = sessionPosition
-            self.anchorHost = anchorHost
-            self.anchorFrame = anchorFrame
+        // 3. Write back what nobody changed meanwhile, and hand over the meter peaks. The lock held: the
+        // values wait in `taken` for the next callback; the peaks keep their maximum in the renderer.
+        taken.position = position
+        taken.sessionPosition = sessionPosition
+        taken.anchorHost = anchorHost
+        taken.anchorFrame = anchorFrame
+        taken.playing = playing
+        taken.countInRemaining = countInRemaining
+        taken.countInDone = countInDone
+        taken.stampPending = stampPending
+        taken.startHost = startHost
+        if os_unfair_lock_trylock(lock) {
+            writeBack()
+            writeBackPending = false
+            renderer.movePeaks(into: meters, capacity: meterCapacity)
+            renderer.copyMasks(into: heldMasks, capacity: meterCapacity)
+            os_unfair_lock_unlock(lock)
+        } else {
+            writeBackPending = true
+            missedLocks &+= 1
         }
-        if self.stateGeneration == stateGeneration {
-            self.playing = playing
-            self.countInRemaining = countInRemaining
-            self.countInDone = countInDone
-            self.stampPending = stampPending
-            self.startHost = startHost
-        }
-        renderer.movePeaks(into: meters, capacity: meterCapacity)
-        renderer.copyMasks(into: heldMasks, capacity: meterCapacity)
-        os_unfair_lock_unlock(lock)
     }
 
     /// Adds the click for `count` frames. `clock` is the frame count since a beat grid that starts at 0.

@@ -50,3 +50,38 @@ private func plan(bpm: Double) -> RenderPlan {
     callback()
     #expect(engine.positionFrame == 10240 + 1024)
 }
+
+/// A control thread that holds the lock never holds up the audio thread: the callback returns at once, renders
+/// with the state of the last block, and writes its clocks back when the lock is free again.
+@Test func aHeldLockNeverStopsTheAudioThread() {
+    let engine = LiveEngine(sampleRate: rate)
+    let frames = 512
+    let list = AudioBufferList.allocate(maximumBuffers: 2)
+    let channels = (0..<2).map { _ in UnsafeMutablePointer<Float>.allocate(capacity: frames) }
+    defer { channels.forEach { $0.deallocate() }; list.unsafeMutablePointer.deallocate() }
+    for (i, c) in channels.enumerated() { list[i] = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(frames * 4), mData: c) }
+    func callback() { engine.render(frameCount: frames, bufferList: list.unsafeMutablePointer, host: 0) }
+
+    engine.setRenderer(Renderer(plan: plan(bpm: 120)))
+    engine.play()
+    callback()
+    #expect(engine.positionFrame == 512)
+
+    // Hold the lock on another thread while three callbacks run.
+    let held = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+    Thread.detachNewThread {
+        engine.withLockHeldForTesting { held.signal(); release.wait() }
+    }
+    held.wait()
+    let began = Date()
+    for _ in 0..<3 { callback() }
+    let took = Date().timeIntervalSince(began)
+    #expect(took < 0.05, "the callbacks did not wait: \(took) s")
+    #expect(engine.missedLocks >= 3)
+    release.signal()
+    // The lock is free: the next callback writes the four blocks back.
+    usleep(20_000)
+    callback()
+    #expect(engine.positionFrame == 5 * 512, "\(engine.positionFrame)")
+    #expect(engine.sessionFrame == 5 * 512)
+}

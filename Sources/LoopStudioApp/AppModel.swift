@@ -1616,6 +1616,24 @@ final class AppModel {
         engine.onConfigurationChange = { [weak self] in
             Task { @MainActor in self?.status = "The sound card setup changed. Audio runs again." }
         }
+        audioRecorder.onConfigurationChange = { [weak self] in
+            Task { @MainActor in self?.inputConfigurationChanged() }
+        }
+    }
+
+    /// The input device changed its setup or went away while it was open. A running take ends and keeps
+    /// what it got; monitoring opens the input again on the device that is there now.
+    func inputConfigurationChanged() {
+        if recording, recordingAudio, audioRecorder.isRecording {
+            finishRecording()
+            status = "The input device changed or went away. The take was kept up to there. " + status
+            // The take closed the input: monitoring tracks open it again below.
+        }
+        guard !appliedInputs.isEmpty else { return }
+        try? audioRecorder.setMonitoring(false, deviceUID: inputUID)
+        engine.setInputMonitor(nil)
+        updateInputMonitoring(appliedInputs, force: true)
+        if !recording { status = audioRecorder.isRunning ? "The input device changed. Monitoring runs again." : "The input device went away. Monitoring is off until it is back." }
     }
 
     /// A sound card or MIDI device was plugged in or out, or the system default changed.
@@ -1831,27 +1849,66 @@ final class AppModel {
         return Tick.quarters(Double(asset.frames) / asset.sampleRate * tempo / 60)
     }
 
-    /// `name`: the asset's name, when it is not the file's (a take recorded into a file with a random name).
-    func importAudio(_ url: URL, name: String? = nil) -> Asset? {
+    /// What an import makes before the project learns of it: the asset (hashed and copied into the package),
+    /// its audio at the project rate, and its waveform.
+    private struct Imported: Sendable { var asset: Asset; var pcm: PCMBuffer; var waveform: [Float] }
+
+    /// The heavy part of an import: the hash, the copy into the package, the decode and the waveform. No
+    /// project state, so it can run on any thread.
+    private nonisolated static func importWork(_ url: URL, package: URL, rate: Double) throws -> Imported {
+        let asset = try AssetStore.importFile(url, into: package)
+        guard let file = AssetStore.fileURL(for: asset, in: package) else { throw CocoaError(.fileNoSuchFile) }
+        let pcm = try AudioBank.decode(file, targetRate: rate)
+        return Imported(asset: asset, pcm: pcm, waveform: peaks(of: pcm, bins: 1_000))
+    }
+
+    /// Imports a file with the heavy work on a worker, so a long file does not freeze the window: the hash,
+    /// the copy and the decode run there, then the asset joins the project here. `name`: the asset's name,
+    /// when it is not the file's.
+    func importAudio(_ url: URL, name: String? = nil) async -> Asset? {
+        let package = packageURL, rate = sampleRate
+        status = "Importing \(url.lastPathComponent)…"
+        let result = await Task.detached(priority: .userInitiated) { () -> Result<Imported, Error> in
+            do { return .success(try Self.importWork(url, package: package, rate: rate)) } catch { return .failure(error) }
+        }.value
+        guard packageURL == package else { status = "The project changed while \(url.lastPathComponent) was imported"; return nil }
+        switch result {
+        case .failure(let error):
+            status = "Cannot import \(url.lastPathComponent): \(error.localizedDescription)"
+            return nil
+        case .success(let imported):
+            if status.hasPrefix("Importing ") { status = "Imported \(url.lastPathComponent)" }
+            return register(imported, from: url, name: name)
+        }
+    }
+
+    /// Imports on the calling thread, for a take that was just recorded: the file is on disk and the clip
+    /// must be in place when the status says so. `name`: the asset's name, when it is not the file's.
+    func importAudioNow(_ url: URL, name: String? = nil) -> Asset? {
         do {
-            let imported = try AssetStore.importFile(url, into: packageURL)
-            if let existing = project.assets.first(where: { $0.sha256 == imported.sha256 }) {
-                loadAudio(existing)
-                return existing
-            }
-            var asset = imported
-            asset.name = name ?? url.deletingPathExtension().lastPathComponent
-            // The demo loops are made at 120 BPM.
-            if url.path.contains("/LoopStudio/Demo Samples/") { asset.sourceTempo = 120 }
-            let add = Command.addAsset(asset: asset)
-            try add.apply(to: &project) // not an undo step: the file stays in the project
-            journalAppend(add) // but a crash before the autosave must find the asset, or the journaled clip fails to replay
-            loadAudio(asset)
-            return asset
+            return register(try Self.importWork(url, package: packageURL, rate: sampleRate), from: url, name: name)
         } catch {
             status = "Cannot import \(url.lastPathComponent): \(error.localizedDescription)"
             return nil
         }
+    }
+
+    /// Puts an imported file into the project: a file the project has already (the same hash) is that asset.
+    private func register(_ imported: Imported, from url: URL, name: String?) -> Asset? {
+        if let existing = project.assets.first(where: { $0.sha256 == imported.asset.sha256 }) {
+            if bank.buffer(for: existing.id) == nil { bank.insert(imported.pcm, for: existing.id); waveforms[existing.id] = imported.waveform }
+            return existing
+        }
+        var asset = imported.asset
+        asset.name = name ?? url.deletingPathExtension().lastPathComponent
+        // The demo loops are made at 120 BPM.
+        if url.path.contains("/LoopStudio/Demo Samples/") { asset.sourceTempo = 120 }
+        let add = Command.addAsset(asset: asset)
+        do { try add.apply(to: &project) } catch { status = "Cannot import \(url.lastPathComponent): \(error)"; return nil } // not an undo step: the file stays in the project
+        journalAppend(add) // but a crash before the autosave must find the asset, or the journaled clip fails to replay
+        bank.insert(imported.pcm, for: asset.id)
+        waveforms[asset.id] = imported.waveform
+        return asset
     }
 
     private func loadAudio(_ asset: Asset) {
@@ -1921,18 +1978,22 @@ final class AppModel {
         project.naturalLength(of: asset, from: start)
     }
 
+    /// Files dropped on Session slots: each goes into the next slot down, in the order dropped. The import
+    /// runs off the main thread; the clips appear as the files are ready. True: the drop was taken.
     @discardableResult
     func dropOnSlot(_ urls: [URL], track: TrackID, row: Int) -> Bool {
         guard let t = project.track(track), t.kind == .audio else { status = "Audio files go on audio tracks"; return false }
-        var at = row
-        for url in urls {
-            guard let asset = importAudio(url) else { continue }
-            var length = lengthTicks(of: asset, from: 0)
-            let clip = project.makeAudioClip(asset: asset.id, start: 0, length: length)
-            length = clip.length
-            apply(.setSlot(track: track, index: at, slot: SessionSlot(clip: .audio(clip))))
-            selectedClip = clip.id
-            at += 1
+        Task { @MainActor [weak self] in
+            var at = row
+            for url in urls {
+                guard let self, let asset = await self.importAudio(url), self.project.track(track) != nil else { continue }
+                var length = self.lengthTicks(of: asset, from: 0)
+                let clip = self.project.makeAudioClip(asset: asset.id, start: 0, length: length)
+                length = clip.length
+                self.apply(.setSlot(track: track, index: at, slot: SessionSlot(clip: .audio(clip))))
+                self.selectedClip = clip.id
+                at += 1
+            }
         }
         return true
     }
@@ -1940,14 +2001,17 @@ final class AppModel {
     @discardableResult
     func dropOnTimeline(_ urls: [URL], track: TrackID, at tick: Tick) -> Bool {
         guard let t = project.track(track), t.kind == .audio else { status = "Audio files go on audio tracks"; return false }
-        var start = snap(tick)
-        for url in urls {
-            guard let asset = importAudio(url) else { continue }
-            let length = lengthTicks(of: asset, from: start)
-            let clip = project.makeAudioClip(asset: asset.id, start: start, length: length)
-            apply(.insertClip(track: track, clip: .audio(clip)))
-            selectedClip = clip.id
-            start = start + length
+        let first = snap(tick)
+        Task { @MainActor [weak self] in
+            var start = first
+            for url in urls {
+                guard let self, let asset = await self.importAudio(url), self.project.track(track) != nil else { continue }
+                let length = self.lengthTicks(of: asset, from: start)
+                let clip = self.project.makeAudioClip(asset: asset.id, start: start, length: length)
+                self.apply(.insertClip(track: track, clip: .audio(clip)))
+                self.selectedClip = clip.id
+                start = start + length
+            }
         }
         return true
     }
@@ -1955,11 +2019,17 @@ final class AppModel {
     /// Dropping files on empty space makes a new audio track for each file.
     @discardableResult
     func dropOnNewTrack(_ urls: [URL]) -> Bool {
-        for url in urls {
-            addTrack(kind: .audio)
-            guard let t = project.tracks.last else { continue }
-            dropOnSlot([url], track: t.id, row: 0)
-            apply(.setTrackName(id: t.id, name: url.deletingPathExtension().lastPathComponent))
+        Task { @MainActor [weak self] in
+            for url in urls {
+                guard let self else { return }
+                self.addTrack(kind: .audio)
+                guard let t = self.project.tracks.last else { continue }
+                self.apply(.setTrackName(id: t.id, name: url.deletingPathExtension().lastPathComponent))
+                guard let asset = await self.importAudio(url), self.project.track(t.id) != nil else { continue }
+                let clip = self.project.makeAudioClip(asset: asset.id, start: 0, length: self.lengthTicks(of: asset, from: 0))
+                self.apply(.setSlot(track: t.id, index: 0, slot: SessionSlot(clip: .audio(clip))))
+                self.selectedClip = clip.id
+            }
         }
         return true
     }
@@ -2389,7 +2459,7 @@ final class AppModel {
         for (index, (_, _, samples)) in layout.enumerated() {
             let trackID = project.tracks[index].id
             for (row, sample) in samples.enumerated() {
-                guard let sample, let asset = importAudio(DemoSamples.url(sample)) else { continue }
+                guard let sample, let asset = importAudioNow(DemoSamples.url(sample)) else { continue }
                 var clip = project.makeAudioClip(asset: asset.id, start: 0, length: lengthTicks(of: asset, from: 0))
                 if sample == "Crash" || sample == "Clap" { clip.loop = false }
                 var slot = SessionSlot(clip: .audio(clip))

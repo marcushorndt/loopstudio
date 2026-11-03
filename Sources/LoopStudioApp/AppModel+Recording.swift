@@ -160,7 +160,7 @@ extension AppModel {
         let url = writer.url
         var notes: [String] = []
         guard !tracks.isEmpty, result.frames > 0, let first = result.firstFrame else { return (0, []) }
-        guard let asset = importAudio(url, name: nextTakeName()) else { return (0, ["Could not import the recording"]) }
+        guard let asset = importAudioNow(url, name: nextTakeName()) else { return (0, ["Could not import the recording"]) }
         let sr = sampleRate
         // The source's plugins made its sound late; the take moves back by as much. Before the song start,
         // the late head is skipped instead.
@@ -241,7 +241,7 @@ extension AppModel {
             try? FileManager.default.removeItem(at: take.url); try? FileManager.default.removeItem(at: trimmed.url)
             return "Nothing recorded"
         }
-        guard let asset = importAudio(trimmed.url) else {
+        guard let asset = importAudioNow(trimmed.url) else {
             try? FileManager.default.removeItem(at: trimmed.url)
             return "Could not import the recording. The take is kept at \(take.url.path)"
         }

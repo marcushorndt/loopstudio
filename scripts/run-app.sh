@@ -43,6 +43,16 @@ fi
 # nehelper: "not platform entitled"), so Link finds no peer on the LAN. A process started from a
 # terminal runs under the terminal's grant. `open` afterwards only brings the running app to the front.
 nohup "$app/Contents/MacOS/LoopStudioApp" >/dev/null 2>&1 &
+pid=$!
 disown
-sleep 1
-open "$app"
+# `open` before LaunchServices knows the process starts a second instance (two Link sessions, two
+# sockets). Wait until it is registered, up to five seconds; only then bring it to the front.
+for _ in $(seq 1 50); do
+    if lsappinfo find "pid=$pid" 2>/dev/null | grep -q ASN; then break; fi
+    sleep 0.1
+done
+if lsappinfo find "pid=$pid" 2>/dev/null | grep -q ASN; then
+    open "$app"
+else
+    echo "LoopStudio is running (pid $pid) but not yet registered with LaunchServices; not opened a second time." >&2
+fi

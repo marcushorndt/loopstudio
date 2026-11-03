@@ -213,6 +213,9 @@ struct NodePlan {
     /// `midi` and `sessionMidi` by key, for the note takeover at a plan swap.
     var noteIndex = NoteIndex()
     var sessionNoteIndex = NoteIndex()
+    /// The channels (bit n = channel n) whose clips hold a sustain pedal or a pitch bend. A stop releases
+    /// the pedal and centres the bend on these, and only these.
+    var controlChannels: UInt16 = 0
     /// A hardware destination that gets the notes too (or instead of an instrument). Live: "MIDI To".
     var midiOut: MIDIOutTarget? = nil
     /// Session frame from which this track's arrangement clips and notes are silent, because a session clip
@@ -535,6 +538,9 @@ public struct RenderPlan {
                 midiOut: midiOut, arrangementEnd: arrangementEnds[t.id]))
             nodes[nodes.count - 1].noteIndex = NoteIndex(midi)
             nodes[nodes.count - 1].sessionNoteIndex = NoteIndex(sessionMidi)
+            var channels: UInt16 = 0
+            for e in midi + sessionMidi where e.status & 0xF0 == 0xE0 || (e.status & 0xF0 == 0xB0 && e.data1 == 64) { channels |= 1 << UInt16(e.status & 0x0F) }
+            nodes[nodes.count - 1].controlChannels = channels
             if let input {
                 nodes[nodes.count - 1].input = (input.channels.first, input.channels.stereo ? input.channels.first + 1 : nil)
             }
@@ -784,6 +790,12 @@ public struct RenderPlan {
                     events.append(MIDIEvent(frame: b, status: 0x80 | (n.channel & 15), data1: n.pitch, data2: 0))
                     endFrame = max(endFrame, b)
                 }
+                // Sustain, mod wheel, pitch bend: at their ticks, looping with the clip like the notes.
+                for k in c.controls where k.tick.rawValue < length && MIDIControlEvent.isControl(status: k.status) {
+                    let at = base + k.tick.rawValue
+                    if at >= limit.rawValue { continue }
+                    events.append(MIDIEvent(frame: map.frame(at: Tick(at), sampleRate: rate).rawValue, status: k.status, data1: k.data1, data2: k.data2))
+                }
                 pass += 1
             } while repeating && origin.rawValue + length * pass < limit.rawValue
         }
@@ -796,8 +808,10 @@ public struct RenderPlan {
                 }
             }
         }
-        // Note-off before note-on on the same frame, so repeated notes retrigger.
-        events.sort { ($0.frame, $0.status & 0xF0 == 0x90 ? 1 : 0) < ($1.frame, $1.status & 0xF0 == 0x90 ? 1 : 0) }
+        // Note-off before note-on on the same frame, so repeated notes retrigger; a control (a bend, the
+        // sustain pedal) before the note-on it belongs to.
+        func rank(_ status: UInt8) -> Int { status & 0xF0 == 0x80 ? 0 : (status & 0xF0 == 0x90 ? 2 : 1) }
+        events.sort { ($0.frame, rank($0.status)) < ($1.frame, rank($1.status)) }
         return events
     }
 }

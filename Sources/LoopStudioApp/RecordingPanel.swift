@@ -16,7 +16,7 @@ extension AppModel {
     func liveTake(of id: TrackID) -> LiveTake {
         if project.track(id)?.kind == .midi {
             let offset = recordFrameOffset, sr = sampleRate, map = project.tempoMap, start = recordStartTick.rawValue
-            let notes = MIDIRecorder.notes(from: recorder.snapshot(), endFrame: engine.sessionFrame) { frame in
+            let notes = MIDIRecorder.notes(from: recorder.snapshot(track: id), endFrame: engine.sessionFrame) { frame in
                 max(0, map.tick(atFrame: Frame(frame + offset), sampleRate: sr).rawValue - start)
             }
             return .notes(notes, length: max(0, (recordSlots.isEmpty ? currentTick : sessionTick).rawValue - start))

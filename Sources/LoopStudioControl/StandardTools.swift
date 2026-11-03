@@ -584,6 +584,8 @@ public enum StandardTools {
             ("setClipAutomationLength (unlink: a 16-bar curve over a 1-bar loop; null links it again)",
              .setClipAutomationLength(clip: ClipID(uuid(4)), length: 61_440)),
             ("setMIDINotes (muted: the note stays but does not play)", .setMIDINotes(clip: ClipID(uuid(9)), notes: [MIDINote(tick: 0, length: 480, pitch: 60, velocity: 100)])),
+            ("setMIDIControls (controllers, pitch bend and pressure of the clip; status 0xB0 + channel = controller, 0xE0 = pitch bend with data1 low and data2 high 7 bits; 64 = sustain, 1 = mod wheel)",
+             .setMIDIControls(clip: ClipID(uuid(9)), controls: [MIDIControlEvent.controller(64, 127, tick: 0), MIDIControlEvent.controller(64, 0, tick: 1920), MIDIControlEvent.pitchBend(4096, tick: 480)])),
             ("setClipGroove (a template from effect_catalog \"grooves\"; timing and velocity 0...1; null plays straight)",
              .setClipGroove(clip: ClipID(uuid(9)), groove: GrooveSetting(groove: "swing16-58", timing: 1, velocity: 0.5))),
             ("commitGroove (burns the groove into the notes)", .commitGroove(clip: ClipID(uuid(9)))),

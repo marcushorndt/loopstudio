@@ -800,18 +800,28 @@ final class AppModel {
             let offset = recordFrameOffset
             let endFrame = engine.sessionFrame
             let sr = sampleRate, map = project.tempoMap, start = recordStartTick.rawValue
-            let allNotes = MIDIRecorder.notes(from: events, endFrame: endFrame) { frame in
-                max(0, map.tick(atFrame: Frame(frame + offset), sampleRate: sr).rawValue - start)
+            let toTick: (Int64) -> Int64 = { frame in max(0, map.tick(atFrame: Frame(frame + offset), sampleRate: sr).rawValue - start) }
+            // Controls keep a negative tick for what was played before the start (a pedal already down).
+            let toSignedTick: (Int64) -> Int64 = { frame in map.tick(atFrame: Frame(frame + offset), sampleRate: sr).rawValue - start }
+            let elapsed = max(1, project.tempoMap.tick(atFrame: Frame(endFrame + offset), sampleRate: sr).rawValue - start)
+            let bars = max(1, (elapsed + barTicks - 1) / barTicks)
+            var noteCount = 0, controlCount = 0, takes = 0
+            // Each track gets what its own input played. A take with nothing on a track leaves that track alone.
+            for id in midiTracks where project.track(id)?.kind == .midi {
+                let own = MIDIRecorder.events(events, of: id)
+                let allNotes = MIDIRecorder.notes(from: own, endFrame: endFrame, toTick: toTick)
+                // Notes played before a grid-synced start land on tick 0 with no length: they were not part of the take.
+                let notes = recordStartsAt == nil ? allNotes : allNotes.filter { !($0.tick == 0 && $0.length.rawValue <= 1) }
+                let controls = MIDIRecorder.controls(from: own, endFrame: endFrame, toTick: toSignedTick)
+                guard !notes.isEmpty || !controls.isEmpty else { continue }
+                placeTake(.midi(MIDIClip(start: recordStartTick, length: Tick(bars * barTicks), loop: false, notes: notes, controls: controls)), on: id)
+                noteCount += notes.count; controlCount += controls.count; takes += 1
             }
-            // Notes played before a grid-synced start land on tick 0 with no length: they were not part of the take.
-            let notes = recordStartsAt == nil ? allNotes : allNotes.filter { !($0.tick == 0 && $0.length.rawValue <= 1) }
-            if !notes.isEmpty {
-                let elapsed = max(1, project.tempoMap.tick(atFrame: Frame(endFrame + offset), sampleRate: sr).rawValue - start)
-                let bars = max(1, (elapsed + barTicks - 1) / barTicks)
-                for id in midiTracks where project.track(id)?.kind == .midi {
-                    placeTake(.midi(MIDIClip(start: recordStartTick, length: Tick(bars * barTicks), loop: false, notes: notes)), on: id)
-                }
-                midiText = "Recorded \(notes.count) note\(notes.count == 1 ? "" : "s")"
+            if takes > 0 {
+                var text = "Recorded \(noteCount) note\(noteCount == 1 ? "" : "s")"
+                if controlCount > 0 { text += " and \(controlCount) control\(controlCount == 1 ? "" : "s")" }
+                if takes > 1 { text += " on \(takes) tracks" }
+                midiText = text
             }
         }
         if recordingAudio {
@@ -1656,15 +1666,16 @@ final class AppModel {
             let kind = status & 0xF0, key = UInt16(status & 0x0F) << 8 | UInt16(a)
             if kind == 0x80 || (kind == 0x90 && b == 0), let noted = held.tracks.removeValue(forKey: key) {
                 for track in noted { engine.sendLiveMIDI(track: track, status, a, b, atHost: due) }
-                if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: heard), status, a, b) }
+                if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: heard), tracks: noted, status, a, b) }
                 return
             }
-            // Every listening track whose input matches plays the note; the take records it once.
+            // Every listening track whose input matches plays the message, and the take records it for
+            // each of them: two keyboards on two armed tracks make two takes.
             let tracks = t.listeners.filter { $0.accepts(source: src, status: status) }.map(\.track)
             guard !tracks.isEmpty else { return }
             if kind == 0x90 && b > 0 { held.tracks[key] = tracks }
             for track in tracks { engine.sendLiveMIDI(track: track, status, a, b, atHost: due) }
-            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: heard), status, a, b) }
+            if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: heard), tracks: tracks, status, a, b) }
         }
         midiMonitor = monitor
         refreshDeviceLists()
@@ -1700,7 +1711,7 @@ final class AppModel {
         guard !tracks.isEmpty else { return }
         heldKeys[pitch] = tracks
         for track in tracks { engine.sendLiveMIDI(track: track, 0x90, pitch, velocity) }
-        if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: mach_absolute_time()), 0x90, pitch, velocity) }
+        if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: mach_absolute_time()), tracks: tracks, 0x90, pitch, velocity) }
     }
 
     /// The release goes to the instruments that got the note, even if other tracks are armed now.
@@ -1708,7 +1719,7 @@ final class AppModel {
         let tracks = heldKeys.removeValue(forKey: pitch) ?? liveTarget.current.tracks
         guard !tracks.isEmpty else { return }
         for track in tracks { engine.sendLiveMIDI(track: track, 0x80, pitch, 0) }
-        if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: mach_absolute_time()), 0x80, pitch, 0) }
+        if engine.isPlaying { recorder.capture(frame: engine.sessionFrame(atHost: mach_absolute_time()), tracks: tracks, 0x80, pitch, 0) }
     }
 
     /// A short note, for clicking in the piano roll.

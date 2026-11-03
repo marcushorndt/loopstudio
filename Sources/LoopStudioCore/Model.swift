@@ -177,12 +177,61 @@ public struct MIDINote: Hashable, Codable, Sendable {
     }
 }
 
+/// A MIDI message in a clip that is not a note: a controller (sustain, mod wheel), pitch bend, channel or
+/// key pressure, a program change. Played at its tick like a note, recorded from the keyboard like one.
+/// `status` carries the kind and the channel; `data1` and `data2` are the message bytes.
+public struct MIDIControlEvent: Hashable, Codable, Sendable {
+    /// Relative to the clip start.
+    public var tick: Tick
+    public var status: UInt8
+    public var data1: UInt8
+    public var data2: UInt8
+
+    public init(tick: Tick, status: UInt8, data1: UInt8, data2: UInt8) {
+        self.tick = tick
+        self.status = status
+        self.data1 = min(data1, 127)
+        self.data2 = min(data2, 127)
+    }
+
+    /// A controller change on `channel`.
+    public static func controller(_ number: UInt8, _ value: UInt8, tick: Tick, channel: UInt8 = 0) -> MIDIControlEvent {
+        MIDIControlEvent(tick: tick, status: 0xB0 | (channel & 15), data1: number, data2: value)
+    }
+
+    /// A pitch bend of `amount` (-8192...8191, 0 is the centre) on `channel`.
+    public static func pitchBend(_ amount: Int, tick: Tick, channel: UInt8 = 0) -> MIDIControlEvent {
+        let v = UInt16(min(max(amount, -8192), 8191) + 8192)
+        return MIDIControlEvent(tick: tick, status: 0xE0 | (channel & 15), data1: UInt8(v & 0x7F), data2: UInt8(v >> 7))
+    }
+
+    public var kind: UInt8 { status & 0xF0 }
+    public var channel: UInt8 { status & 0x0F }
+    public var isController: Bool { kind == 0xB0 }
+    public var isPitchBend: Bool { kind == 0xE0 }
+    public var isChannelPressure: Bool { kind == 0xD0 }
+    /// The controller number of a controller change.
+    public var controller: UInt8? { isController ? data1 : nil }
+    /// The signed bend amount of a pitch bend, -8192...8191.
+    public var bend: Int? { isPitchBend ? Int(data2) << 7 | Int(data1) - 8192 : nil }
+    /// The value of the message, 0...127: a controller's value, the pressure, the program, or the bend's coarse byte.
+    public var value: UInt8 { isController ? data2 : (isPitchBend ? data2 : data1) }
+
+    /// The messages that are controls, from a MIDI status byte: not notes, not system messages.
+    public static func isControl(status: UInt8) -> Bool {
+        let kind = status & 0xF0
+        return kind == 0xA0 || kind == 0xB0 || kind == 0xC0 || kind == 0xD0 || kind == 0xE0
+    }
+}
+
 public struct MIDIClip: Hashable, Codable, Sendable, Identifiable {
     public var id: ClipID
     public var start: Tick
     public var length: Tick
     public var loop: Bool
     public var notes: [MIDINote]
+    /// Controllers, pitch bend and pressure, sorted by tick. They loop with the clip like the notes.
+    public var controls: [MIDIControlEvent]
     public var colorIndex: Int?
     public var name: String?
     /// Clip automation of the track's parameters, ticks from the clip start. `nil`: none. See `Clip.lanes`.
@@ -193,12 +242,41 @@ public struct MIDIClip: Hashable, Codable, Sendable, Identifiable {
     /// A timing and accent template the clip plays with. The notes stay; `playedNotes` has them moved.
     public var groove: GrooveSetting?
 
-    public init(id: ClipID = ClipID(), start: Tick = 0, length: Tick, loop: Bool = false, notes: [MIDINote] = []) {
+    public init(id: ClipID = ClipID(), start: Tick = 0, length: Tick, loop: Bool = false, notes: [MIDINote] = [], controls: [MIDIControlEvent] = []) {
         self.id = id
         self.start = start
         self.length = length
         self.loop = loop
         self.notes = notes
+        self.controls = controls
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, start, length, loop, notes, controls, colorIndex, name, lanes, automationLength, groove }
+
+    /// Projects from before clips held controls have no `controls` key.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(ClipID.self, forKey: .id)
+        start = try c.decode(Tick.self, forKey: .start)
+        length = try c.decode(Tick.self, forKey: .length)
+        loop = try c.decode(Bool.self, forKey: .loop)
+        notes = try c.decode([MIDINote].self, forKey: .notes)
+        controls = try c.decodeIfPresent([MIDIControlEvent].self, forKey: .controls) ?? []
+        colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex)
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        lanes = try c.decodeIfPresent([AutomationLane].self, forKey: .lanes)
+        automationLength = try c.decodeIfPresent(Tick.self, forKey: .automationLength)
+        groove = try c.decodeIfPresent(GrooveSetting.self, forKey: .groove)
+    }
+
+    /// The controls of one kind, in tick order: a controller number, or pitch bend (`controller` nil).
+    public func controls(controller: UInt8?, channel: UInt8? = nil) -> [MIDIControlEvent] {
+        controls.filter { ($0.controller == controller && (controller != nil || $0.isPitchBend)) && (channel == nil || $0.channel == channel) }
+    }
+
+    /// The controller numbers the clip holds, and whether it holds pitch bend.
+    public var controlKinds: (controllers: [UInt8], pitchBend: Bool) {
+        (Array(Set(controls.compactMap(\.controller))).sorted(), controls.contains { $0.isPitchBend })
     }
 }
 

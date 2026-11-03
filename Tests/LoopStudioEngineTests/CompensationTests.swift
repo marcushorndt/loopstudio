@@ -110,3 +110,37 @@ private let rate = 48_000.0
     #expect(out[2_047] == last && out[0] == last - 2_047, "\(out[0]) ... \(out[2_047])")
     #expect(tap.generation == 2)
 }
+
+/// Clip controls play at their ticks with the notes, a bend before the note-on it belongs to, and loop with the
+/// clip. A stop releases the pedal and centres the bend.
+@Test func clipControlsPlayWithTheNotesAndLoop() throws {
+    var project = Project(name: "Controls", sampleRate: rate)
+    var track = Track(name: "Keys", kind: .midi)
+    track.devices = [BuiltInEffects.makeSlot("acid")!]
+    try Command.insertTrack(track: track, index: 0).apply(to: &project)
+    let clip = MIDIClip(start: 0, length: 3840, loop: true,
+                        notes: [MIDINote(tick: 0, length: 960, pitch: 48)],
+                        controls: [MIDIControlEvent.pitchBend(4096, tick: 0), MIDIControlEvent.controller(64, 127, tick: 960), MIDIControlEvent.controller(64, 0, tick: 2880)])
+    try Command.setSlot(track: track.id, index: 0, slot: SessionSlot(clip: .midi(clip), quantize: .none)).apply(to: &project)
+    try Command.setLaunches(launches: [Launch(track: track.id, slot: 0, tick: 0)]).apply(to: &project)
+    let plan = RenderPlan.compile(project, bank: AudioBank(), session: SessionSimulator.run(project, horizon: 38_400))
+    let events = plan.nodes[0].sessionMidi
+    #expect(events.count >= 6, "\(events.count) events")
+    guard events.count >= 6 else { return }
+    let kinds = events.prefix(4).map { $0.status & 0xF0 }
+    // The note ends on the frame the pedal goes down: note-off, then the control, then any note-on.
+    #expect(kinds == [0xE0, 0x90, 0x80, 0xB0], "bend, note-on, note-off, pedal: \(events.prefix(6).map { "\($0.frame):\(String($0.status, radix: 16)):\($0.data1):\($0.data2)" })")
+    #expect(events[0].data2 == 96 && events[0].data1 == 0)
+    let bar = Int64(rate * 2) // one bar at 120 BPM
+    let secondPass = events.filter { $0.frame >= bar && $0.frame < 2 * bar }
+    #expect(secondPass.filter { $0.status & 0xF0 == 0xB0 }.count == 2, "the pedal loops with the clip")
+    #expect(plan.nodes[0].noteIndex.heldAt(48, frame: 0) == false && plan.nodes[0].sessionNoteIndex.heldAt(48, frame: 100))
+    // The renderer runs the controls without a trap and silences them on a stop.
+    let renderer = Renderer(plan: plan, maxBlock: 512)
+    var l = [Float](repeating: 0, count: 512), r = l
+    l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in
+        for i in 0..<8 { renderer.process(startFrame: Int64(i * 512), sessionFrame: Int64(i * 512), frames: 512, outLeft: lp.baseAddress!, outRight: rp.baseAddress!) }
+    } }
+    renderer.silenceNotes()
+    #expect(renderer.heldMask(track: track.id) == (0, 0))
+}

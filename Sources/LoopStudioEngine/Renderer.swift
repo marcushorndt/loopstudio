@@ -338,9 +338,21 @@ public final class Renderer {
     }
 
     /// Releases every note of every hosted instrument and every note sent to hardware. Called on stop and on a jump.
+    /// A clip's sustain pedal and pitch bend end here too: a stop inside a held pedal leaves nothing hanging.
     public func silenceNotes() {
         for i in 0..<nodeCount {
-            noteSink(i)?.silenceNotes()
+            let sink = noteSink(i)
+            sink?.silenceNotes()
+            if nodes[i].controlChannels != 0, sink != nil || nodes[i].midiOut != nil {
+                for channel: UInt8 in 0..<16 where nodes[i].controlChannels & (1 << UInt16(channel)) != 0 {
+                    sink?.sendMIDI(0xB0 | channel, 64, 0, sampleOffset: 0)
+                    sink?.sendMIDI(0xE0 | channel, 0, 64, sampleOffset: 0)
+                    if let target = nodes[i].midiOut, let out = midiOut {
+                        out.push(target, frame: MIDIOutQueue.now, 0xB0 | channel, 64, 0)
+                        out.push(target, frame: MIDIOutQueue.now, 0xE0 | channel, 0, 64)
+                    }
+                }
+            }
             if let target = nodes[i].midiOut, let out = midiOut {
                 releaseAll(held + i * 2048, target, out, frame: MIDIOutQueue.now)
                 releaseAll(sessionHeld + i * 2048, target, out, frame: MIDIOutQueue.now)

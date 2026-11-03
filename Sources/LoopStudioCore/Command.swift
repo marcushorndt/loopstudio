@@ -83,6 +83,8 @@ public enum Command: Codable, Sendable {
     case setDummyAutomation(clip: ClipID, target: ParameterAddress, points: [AutomationPoint])
     /// Replaces the notes of a MIDI clip. Notes are kept sorted by time, then pitch.
     case setMIDINotes(clip: ClipID, notes: [MIDINote])
+    /// Replaces the controllers, pitch bend and pressure of a MIDI clip (sustain, mod wheel, bend).
+    case setMIDIControls(clip: ClipID, controls: [MIDIControlEvent])
     /// The groove a MIDI clip plays with. `nil` plays the notes straight.
     case setClipGroove(clip: ClipID, groove: GrooveSetting?)
     /// Burns the groove of a MIDI clip into its notes: they move and take their accents, the setting goes.
@@ -408,6 +410,17 @@ extension Project {
             c.notes = notes.sorted { ($0.tick, $0.pitch) < ($1.tick, $1.pitch) }
             try withTrack(trackID) { t in try t.replaceClip(.midi(c)) }
             return .setMIDINotes(clip: id, notes: old)
+
+        case .setMIDIControls(let id, let controls):
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            guard case .midi(var c) = clip else { throw CommandError.invalidValue("only MIDI clips have controls") }
+            guard controls.allSatisfy({ MIDIControlEvent.isControl(status: $0.status) && $0.tick >= 0 }) else {
+                throw CommandError.invalidValue("a control is a controller, pitch bend, pressure or program change at a tick of 0 or more")
+            }
+            let old = c.controls
+            c.controls = controls.sorted { ($0.tick, $0.status, $0.data1) < ($1.tick, $1.status, $1.data1) }
+            try withTrack(trackID) { t in try t.replaceClip(.midi(c)) }
+            return .setMIDIControls(clip: id, controls: old)
 
         case .setClipGroove(let id, let groove):
             guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }

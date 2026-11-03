@@ -23,6 +23,42 @@ func gridName(_ step: Int64, bar: Int64) -> String {
     return whole % step == 0 ? "1/\(whole / step)" : "\(step) ticks"
 }
 
+/// What the lane under the notes shows.
+enum ControlLane: Hashable {
+    case velocity
+    case bend
+    case controller(UInt8)
+
+    private static let names: [UInt8: String] = [1: "Mod Wheel", 2: "Breath", 7: "Volume", 10: "Pan", 11: "Expression", 64: "Sustain", 71: "Resonance", 74: "Cutoff"]
+
+    var name: String {
+        switch self {
+        case .velocity: "Velocity"
+        case .bend: "Pitch Bend"
+        case .controller(let n): Self.names[n].map { "\($0) (CC \(n))" } ?? "CC \(n)"
+        }
+    }
+
+    /// The label at the left of the lane.
+    var short: String {
+        switch self {
+        case .velocity: "Vel"
+        case .bend: "Bend"
+        case .controller(64): "Sus"
+        case .controller(1): "Mod"
+        case .controller(let n): "CC\(n)"
+        }
+    }
+
+    func matches(_ c: MIDIControlEvent) -> Bool {
+        switch self {
+        case .velocity: false
+        case .bend: c.isPitchBend
+        case .controller(let n): c.controller == n
+        }
+    }
+}
+
 /// A piano roll for one MIDI clip. At zoom 1 the clip fills the width of the panel.
 /// Double-click an empty cell to add a note, click a note to select it, drag it to move it, drag an edge
 /// to change its length, double-click it to delete it. A drag on empty space marks the notes in a rectangle.
@@ -67,6 +103,10 @@ struct PianoRoll: View {
     @State private var velocityLineTool = false
     @State private var lineDrag: (start: CGPoint, end: CGPoint)?
     @State private var quantizeOpen = false
+    /// What the lane under the notes shows: the velocities, or one kind of recorded control (Live's clip envelopes).
+    @State private var lane: ControlLane = .velocity
+    /// Values drawn into a control lane during one drag, by tick. They become one edit when the drag ends.
+    @State private var controlDraft: [Int64: Int] = [:]
 
     private var beats: Double { max(1, Double(clip.length.rawValue) / Double(Tick.perQuarter)) }
     /// Room past the end of the clip, so the loop can be made longer.
@@ -84,7 +124,7 @@ struct PianoRoll: View {
         VStack(spacing: 4) {
             HStack(spacing: 8) {
                 previewToggle
-                Text("\(clip.notes.count) notes").font(.caption).foregroundStyle(Theme.dim)
+                Text("\(clip.notes.count) notes" + (clip.controls.isEmpty ? "" : " · \(clip.controls.count) controls")).font(.caption).foregroundStyle(Theme.dim)
                 if !marked.isEmpty {
                     Text("\(marked.count) marked · vel \(velocityText)").font(.caption).foregroundStyle(Theme.dim)
                 }
@@ -179,8 +219,9 @@ struct PianoRoll: View {
                     // The velocity lane is pinned to the bottom of the view; scrolled all the way down it sits under the rows.
                     HStack(spacing: 0) {
                         Rectangle().fill(Theme.panel).frame(width: keysWidth, height: Self.laneHeight)
-                            .overlay(alignment: .topLeading) { Text("Vel").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.dim).padding(4) }
-                        velocityLane.frame(width: width, height: Self.laneHeight)
+                            .overlay(alignment: .topLeading) { laneMenu.padding(2) }
+                        if lane == .velocity { velocityLane.frame(width: width, height: Self.laneHeight) }
+                        else { controlLane.frame(width: width, height: Self.laneHeight) }
                     }
                     .offset(y: laneOffset).zIndex(1)
                     }
@@ -259,6 +300,142 @@ struct PianoRoll: View {
     }
 
     private var marked: [MIDINote] { clip.notes.filter { model.selectedNotes.contains($0) } }
+
+    // MARK: Control lanes
+
+    /// The lane picker at the left of the lane: velocity, pitch bend, the usual controllers, and every
+    /// controller the clip holds. A lane with data can be cleared here.
+    private var laneMenu: some View {
+        let kinds = clip.controlKinds
+        var controllers = Set(kinds.controllers)
+        controllers.insert(1); controllers.insert(64)
+        return Menu {
+            Button("Velocity") { lane = .velocity }
+            Button(ControlLane.bend.name + (kinds.pitchBend ? " •" : "")) { lane = .bend }
+            ForEach(controllers.sorted(), id: \.self) { n in
+                Button(ControlLane.controller(n).name + (kinds.controllers.contains(n) ? " •" : "")) { lane = .controller(n) }
+            }
+            if lane != .velocity, !laneControls.isEmpty {
+                Divider()
+                Button("Clear \(lane.name)") { clearLane() }
+            }
+        } label: {
+            Text(lane.short).font(.system(size: 9, weight: .semibold)).foregroundStyle(lane == .velocity ? Theme.dim : tint)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden)
+        .frame(width: keysWidth - 4, height: 16)
+        .hint("The lane under the notes: velocities, or a recorded control such as the sustain pedal, the mod wheel or pitch bend. A dot marks a lane the clip holds. Drag in a control lane to draw its values.")
+    }
+
+    /// The controls of the shown lane, in tick order.
+    private var laneControls: [MIDIControlEvent] {
+        switch lane {
+        case .velocity: return []
+        case .bend: return clip.controls(controller: nil)
+        case .controller(let n): return clip.controls(controller: n)
+        }
+    }
+
+    private func clearLane() {
+        let keep = clip.controls.filter { !lane.matches($0) }
+        model.apply(.setMIDIControls(clip: clip.id, controls: keep))
+    }
+
+    /// Where a control value sits in the lane: pitch bend around the middle, a controller from the bottom.
+    private func laneY(_ value: Int, height: CGFloat) -> CGFloat {
+        let top: CGFloat = 6
+        switch lane {
+        case .bend: return top + (1 - CGFloat(value + 8192) / 16_383) * (height - top - 1)
+        default: return height - 1 - CGFloat(value) / 127 * (height - top - 1)
+        }
+    }
+
+    private func laneValue(atY y: CGFloat, height: CGFloat) -> Int {
+        let top: CGFloat = 6
+        let t = Double(min(max((height - 1 - y) / (height - top - 1), 0), 1))
+        switch lane {
+        case .bend: return Int((t * 16_383).rounded()) - 8192
+        default: return Int((t * 127).rounded())
+        }
+    }
+
+    /// A recorded control as a step curve, like Live's clip envelope: each value holds until the next.
+    /// A drag draws new values on the grid; the drawn stretch replaces what was there.
+    private var controlLane: some View {
+        let laneHeight = Self.laneHeight
+        return Canvas { ctx, size in
+            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.panel))
+            ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: 1)), with: .color(Theme.line))
+            let bar = max(Tick.perQuarter, model.barTicks)
+            var tick: Int64 = 0
+            while Double(tick) <= roomBeats * Double(Tick.perQuarter) {
+                let x = CGFloat(Double(tick) / Double(Tick.perQuarter)) * pxPerBeat
+                ctx.fill(Path(CGRect(x: x, y: 1, width: 1, height: size.height - 1)), with: .color(.white.opacity(tick % bar == 0 ? 0.2 : 0.08)))
+                tick += Tick.perQuarter
+            }
+            if lane == .bend {
+                let mid = laneY(0, height: size.height)
+                ctx.fill(Path(CGRect(x: 0, y: mid, width: size.width, height: 1)), with: .color(.white.opacity(0.15)))
+            }
+            // Recorded values, then the draft over them.
+            var points = laneControls.map { (tick: $0.tick.rawValue, value: lane == .bend ? ($0.bend ?? 0) : Int($0.value)) }
+            if !controlDraft.isEmpty {
+                let lo = controlDraft.keys.min()!, hi = controlDraft.keys.max()!
+                points.removeAll { $0.tick >= lo && $0.tick <= hi }
+                points += controlDraft.map { (tick: $0.key, value: $0.value) }
+                points.sort { $0.tick < $1.tick }
+            }
+            guard let first = points.first else {
+                ctx.draw(Text("Drag to draw \(lane.name)").font(.system(size: 9)).foregroundStyle(Theme.dim), at: CGPoint(x: 8, y: 10), anchor: .leading)
+                return
+            }
+            var path = Path()
+            var x = CGFloat(Double(first.tick) / Double(Tick.perQuarter)) * pxPerBeat
+            var y = laneY(first.value, height: size.height)
+            path.move(to: CGPoint(x: x, y: y))
+            for p in points.dropFirst() {
+                let nx = CGFloat(Double(p.tick) / Double(Tick.perQuarter)) * pxPerBeat
+                path.addLine(to: CGPoint(x: nx, y: y))
+                y = laneY(p.value, height: size.height)
+                path.addLine(to: CGPoint(x: nx, y: y))
+                x = nx
+            }
+            path.addLine(to: CGPoint(x: CGFloat(beats) * pxPerBeat, y: y))
+            ctx.stroke(path, with: .color(tint), lineWidth: 1.5)
+            for p in points {
+                let px = CGFloat(Double(p.tick) / Double(Tick.perQuarter)) * pxPerBeat
+                ctx.fill(Path(ellipseIn: CGRect(x: px - 2, y: laneY(p.value, height: size.height) - 2, width: 4, height: 4)), with: .color(tint))
+            }
+            _ = x
+        }
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { g in
+                // One value per grid step under the pointer, in the lane's range.
+                let step = max(1, division)
+                let raw = Int64((Double(max(0, g.location.x) / pxPerBeat) * Double(Tick.perQuarter)).rounded())
+                let tick = min(raw / step * step, max(0, clip.length.rawValue - 1))
+                controlDraft[tick] = laneValue(atY: g.location.y, height: laneHeight)
+            }
+            .onEnded { _ in commitControlDraft() })
+        .hint("\(lane.name) lane. Drag to draw values on the grid; the drawn stretch replaces what was there. Choose another lane, or clear this one, in the menu at the left.")
+    }
+
+    /// The drawn stretch replaces the controls of this kind between its first and last tick, as one undo step.
+    private func commitControlDraft() {
+        defer { controlDraft = [:] }
+        guard let lo = controlDraft.keys.min(), let hi = controlDraft.keys.max() else { return }
+        var controls = clip.controls.filter { !(lane.matches($0) && $0.tick.rawValue >= lo && $0.tick.rawValue <= hi) }
+        for (tick, value) in controlDraft {
+            switch lane {
+            case .bend: controls.append(MIDIControlEvent.pitchBend(value, tick: Tick(tick)))
+            case .controller(let n): controls.append(MIDIControlEvent.controller(n, UInt8(min(127, max(0, value))), tick: Tick(tick)))
+            case .velocity: break
+            }
+        }
+        model.apply(.setMIDIControls(clip: clip.id, controls: controls))
+    }
 
     /// The velocity of the marked notes: one value, or the range.
     private var velocityText: String {

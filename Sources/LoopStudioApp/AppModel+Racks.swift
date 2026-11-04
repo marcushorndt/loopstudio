@@ -166,7 +166,7 @@ extension AppModel {
 
     /// Adds a built-in effect or instrument to a chain of a rack. An instrument goes to a MIDI rack's chain
     /// in front of its effects; a chain holds one instrument.
-    func addEffect(_ id: String, toChain chain: ChainID, on trackID: TrackID) {
+    func addEffect(_ id: String, toChain chain: ChainID, on trackID: TrackID, at index: Int? = nil) {
         guard let spec = BuiltInEffects.spec(id), var slot = BuiltInEffects.makeSlot(id), let track = project.track(trackID),
               let holder = track.chain(chain), let rack = track.rackHolding(chain: chain) else { return }
         if spec.isInstrument {
@@ -181,10 +181,10 @@ extension AppModel {
             return
         }
         if id == "delay" { slot.params["timeMsSync"] = 1 }
-        apply(.insertDeviceInChain(track: trackID, chain: chain, device: slot, index: nil))
+        apply(.insertDeviceInChain(track: trackID, chain: chain, device: slot, index: index))
     }
 
-    func addAudioUnit(identifier: String, name: String, toChain chain: ChainID, on trackID: TrackID) {
+    func addAudioUnit(identifier: String, name: String, toChain chain: ChainID, on trackID: TrackID, at index: Int? = nil) {
         let slot = DeviceSlot(format: "audiounit", identifier: identifier, name: name)
         guard let track = project.track(trackID), let holder = track.chain(chain), let rack = track.rackHolding(chain: chain) else { return }
         if identifier.hasPrefix("aumu") {
@@ -197,34 +197,61 @@ extension AppModel {
             apply(.insertDeviceInChain(track: trackID, chain: chain, device: slot, index: 0))
             return
         }
-        apply(.insertDeviceInChain(track: trackID, chain: chain, device: slot, index: nil))
+        apply(.insertDeviceInChain(track: trackID, chain: chain, device: slot, index: index))
     }
 
-    /// Dropped browser items on a chain of a rack.
-    func dropDevices(_ items: [String], on track: TrackID, chain: ChainID) -> Bool {
+    /// Dropped browser items on a chain of a rack, and device cards dragged by their title. `index` nil: the end.
+    @discardableResult
+    func dropDevices(_ items: [String], on track: TrackID, chain: ChainID, at index: Int? = nil) -> Bool {
         var used = false
         for item in items {
-            if item.hasPrefix("fx:") { addEffect(String(item.dropFirst(3)), toChain: chain, on: track); used = true }
+            if item.hasPrefix("fx:") { addEffect(String(item.dropFirst(3)), toChain: chain, on: track, at: index); used = true }
             else if item.hasPrefix("au:") {
                 let parts = item.dropFirst(3).split(separator: "|", maxSplits: 1).map(String.init)
-                if parts.count == 2 { addAudioUnit(identifier: parts[0], name: parts[1], toChain: chain, on: track); used = true }
+                if parts.count == 2 { addAudioUnit(identifier: parts[0], name: parts[1], toChain: chain, on: track, at: index); used = true }
+            } else if item.hasPrefix("preset:") {
+                insertPreset(at: URL(fileURLWithPath: String(item.dropFirst(7))), on: track, chain: chain, at: index); used = true
+            } else if let id = Self.draggedDevice(item) {
+                moveDevice(id, on: track, toChain: chain, at: index); used = true
             }
         }
         if used { detailTab = .devices; detailOpen = true }
         return used
     }
 
-    /// Moves a device into another chain (or onto the track, `nil`) at the end. Automation and mappings stay.
-    func moveDevice(_ id: DeviceID, on trackID: TrackID, toChain chain: ChainID?) {
+    /// A drop on a device card: the item lands next to that device, in its list. `after`: to its right.
+    @discardableResult
+    func dropDevices(_ items: [String], on trackID: TrackID, chain: ChainID?, beside target: DeviceID, after: Bool) -> Bool {
+        guard let track = project.track(trackID) else { return false }
+        let list = chain.flatMap { track.chain($0)?.devices } ?? track.devices
+        guard let i = list.firstIndex(where: { $0.id == target }) else { return false }
+        let index = after ? i + 1 : i
+        if let chain { return dropDevices(items, on: trackID, chain: chain, at: index) }
+        return dropDevices(items, on: trackID, at: index)
+    }
+
+    /// Moves a device into another chain (or onto the track, `nil`), at `index` or at the end. Within its
+    /// own list it is a plain reorder. Automation and mappings stay with the device.
+    func moveDevice(_ id: DeviceID, on trackID: TrackID, toChain chain: ChainID?, at index: Int? = nil) {
         guard let track = project.track(trackID), let device = track.device(id) else { return }
         let from = track.chainHolding(id)
-        guard from?.id != chain else { return }
         // A rack cannot move into its own chain.
         if let chain, device.nestedChainIDs.contains(chain.rawValue) { status = "A rack cannot move into one of its own chains"; return }
+        if from?.id == chain {
+            // The same list: the command takes the index after the device has left the list.
+            let list = siblings(of: id, on: track)
+            guard let i = list.firstIndex(where: { $0.id == id }) else { return }
+            var to = index ?? list.count - 1
+            if i < to { to -= 1 }
+            to = max(0, min(to, list.count - 1))
+            guard to != i else { return }
+            apply(.moveDevice(track: trackID, device: id, to: to))
+            return
+        }
         var source = siblings(of: id, on: track)
         source.removeAll { $0.id == id }
         var destination = chain.flatMap { track.chain($0)?.devices } ?? track.devices
-        destination.append(device)
+        destination.insert(device, at: min(index ?? destination.count, destination.count))
         apply(.batch(commands: [.setDevices(track: trackID, chain: from?.id, devices: source),
                                 .setDevices(track: trackID, chain: chain, devices: destination)]))
     }

@@ -366,6 +366,11 @@ final class AppModel {
     private(set) var canRedo = false
     private(set) var previewing: URL?
     var audioFolders: [URL] = []
+    /// The device presets on disk, read once at launch and after every save, import or delete.
+    var presets: [PresetEntry] = []
+    /// "Save Preset…" asks for a name here; the device chain shows the prompt.
+    var presetPrompt: PresetPrompt?
+    @ObservationIgnored var presetLibrary = PresetLibrary.standard
 
     // Engine
     @ObservationIgnored let engine: LiveEngine
@@ -565,6 +570,7 @@ final class AppModel {
         watchDevices()
         watchHorizon()
         audioFolders = (UserDefaults.standard.stringArray(forKey: "audioFolders") ?? []).map { URL(fileURLWithPath: $0) }
+        reloadPresets()
 
         // Never overwrite a project at startup: open the last one, else the existing demo, else make a new demo.
         if let path = UserDefaults.standard.string(forKey: "lastProject"), FileManager.default.fileExists(atPath: path) {
@@ -1546,14 +1552,14 @@ final class AppModel {
         }
     }
 
-    func addAudioUnit(identifier: String, name: String, to track: TrackID? = nil) {
+    func addAudioUnit(identifier: String, name: String, to track: TrackID? = nil, at index: Int? = nil) {
         let slot = DeviceSlot(format: "audiounit", identifier: identifier, name: name)
         let target = (track ?? selectedTrack).flatMap { project.track($0) }
         if identifier.hasPrefix("aumu") {
             placeInstrument(slot, on: target)
         } else {
             guard let target = target ?? project.tracks.first else { status = "Add a track first"; return }
-            apply(.insertDevice(track: target.id, device: slot, index: nil))
+            apply(.insertDevice(track: target.id, device: slot, index: index))
             selectedTrack = target.id
         }
         detailTab = .devices
@@ -1568,7 +1574,7 @@ final class AppModel {
 
     /// Puts an instrument on a MIDI track. On a track that has one, it takes that one's place, like a drop in
     /// Live. Without a MIDI track it makes one, named after the instrument.
-    private func placeInstrument(_ slot: DeviceSlot, on target: Track?) {
+    func placeInstrument(_ slot: DeviceSlot, on target: Track?) {
         if let target, target.kind == .midi {
             if slot.isMIDIRack, let old = target.devices.first(where: isInstrument) {
                 // A MIDI Rack dropped on a track with an instrument takes the instrument in, like Group in Live.
@@ -1593,18 +1599,30 @@ final class AppModel {
         detailOpen = true
     }
 
-    /// Handles items dragged from the sidebar: "fx:<id>" for a built-in effect, "au:<identifier>|<name>" for a plugin.
+    /// Handles items dragged from the sidebar: "fx:<id>" for a built-in effect, "au:<identifier>|<name>" for a
+    /// plugin, "preset:<path>" for a preset. A device card dragged by its title ("device:<id>") moves to the
+    /// end of the track's chain. `index`: where in the chain, `nil` for the end.
     @discardableResult
-    func dropDevices(_ items: [String], on track: TrackID?) -> Bool {
+    func dropDevices(_ items: [String], on track: TrackID?, at index: Int? = nil) -> Bool {
         var used = false
         for item in items {
-            if item.hasPrefix("fx:") { addEffect(String(item.dropFirst(3)), to: track); used = true }
+            if item.hasPrefix("fx:") { addEffect(String(item.dropFirst(3)), to: track, at: index); used = true }
             else if item.hasPrefix("au:") {
                 let parts = item.dropFirst(3).split(separator: "|", maxSplits: 1).map(String.init)
-                if parts.count == 2 { addAudioUnit(identifier: parts[0], name: parts[1], to: track); used = true }
+                if parts.count == 2 { addAudioUnit(identifier: parts[0], name: parts[1], to: track, at: index); used = true }
+            } else if item.hasPrefix("preset:") {
+                insertPreset(at: URL(fileURLWithPath: String(item.dropFirst(7))), on: track, chain: nil, at: index); used = true
+            } else if let id = Self.draggedDevice(item), let track {
+                moveDevice(id, on: track, toChain: nil, at: index); used = true
             }
         }
         return used
+    }
+
+    /// The device ID behind a "device:<uuid>" drag string.
+    static func draggedDevice(_ item: String) -> DeviceID? {
+        guard item.hasPrefix("device:"), let uuid = UUID(uuidString: String(item.dropFirst(7))) else { return nil }
+        return DeviceID(uuid)
     }
 
     // MARK: Devices that come and go
@@ -1786,14 +1804,14 @@ final class AppModel {
 
     /// Adds a built-in effect at the end of a track's chain. Without a track it uses the selected one,
     /// then the first audio track.
-    func addEffect(_ id: String, to track: TrackID? = nil) {
+    func addEffect(_ id: String, to track: TrackID? = nil, at index: Int? = nil) {
         guard let spec = BuiltInEffects.spec(id), let slot = BuiltInEffects.makeSlot(id) else { return }
         if spec.isInstrument {
             placeInstrument(slot, on: (track ?? selectedTrack).flatMap { project.track($0) })
             return
         }
         guard let target = track ?? selectedTrack ?? project.tracks.first?.id else { status = "Add a track first"; return }
-        apply(.insertDevice(track: target, device: slot, index: nil))
+        apply(.insertDevice(track: target, device: slot, index: index))
         selectedTrack = target
         detailTab = .devices
         detailOpen = true

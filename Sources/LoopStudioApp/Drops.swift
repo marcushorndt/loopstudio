@@ -3,7 +3,7 @@ import LoopStudioCore
 import SwiftUI
 
 /// What a track takes from a drag: an audio file (a clip) or a device from the sidebar (an effect or an
-/// instrument, as the "fx:" and "au:" strings the sidebar drags). One drop target takes both, so an effect
+/// instrument or a preset, as the "fx:", "au:" and "preset:" strings the sidebar drags). One drop target takes both, so an effect
 /// dropped on a clip slot or a lane lands on that track, not only on the inspector's drop field.
 enum DropItem: Transferable {
     case file(URL)
@@ -18,7 +18,7 @@ enum DropItem: Transferable {
 extension Array where Element == DropItem {
     var files: [URL] { compactMap { if case .file(let url) = $0 { url } else { nil } } }
     /// Only the strings the sidebar drags. Any other text is ignored.
-    var devices: [String] { compactMap { if case .device(let s) = $0, s.hasPrefix("fx:") || s.hasPrefix("au:") { s } else { nil } } }
+    var devices: [String] { compactMap { if case .device(let s) = $0, s.hasPrefix("fx:") || s.hasPrefix("au:") || s.hasPrefix("preset:") { s } else { nil } } }
     /// Session slots dragged by their name: "slot:<track>:<row>".
     var slots: [(track: TrackID, row: Int)] {
         compactMap {

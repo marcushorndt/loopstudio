@@ -209,6 +209,7 @@ struct UnitList: View {
                     }
                 }
             }
+            presetSection
             Section("Audio Units") {
                 if !loaded { ProgressView().controlSize(.small) }
                 let shown = units.filter { $0.kind.localizedCaseInsensitiveContains(match) && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) }
@@ -236,6 +237,49 @@ struct UnitList: View {
             }
         }
         .listStyle(.sidebar)
+    }
+
+    /// The saved presets of this kind (effects here, instruments there). A preset adds like an effect, and
+    /// loads onto the marked device of its kind.
+    private var presetSection: some View {
+        let instruments = match == "instrument"
+        let shown = model.presets.filter {
+            model.presetIsInstrument($0) == instruments
+                && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || model.presetDeviceName($0).localizedCaseInsensitiveContains(search))
+        }
+        let marked: (track: Track, device: DeviceSlot)? = {
+            guard let t = model.selectedTrack.flatMap({ model.project.track($0) }), let d = model.selectedDevice.flatMap({ t.device($0) }) else { return nil }
+            return (t, d)
+        }()
+        return Section("Presets") {
+            if shown.isEmpty {
+                Text(search.isEmpty ? "No presets yet. Right-click a device: Save Preset…" : "No preset matches").font(.caption).foregroundStyle(Theme.dim)
+            }
+            ForEach(shown) { entry in
+                HStack(spacing: 6) {
+                    Image(systemName: "doc.badge.gearshape").foregroundStyle(Theme.dim)
+                    Text(entry.name).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(model.presetDeviceName(entry)).font(.caption).foregroundStyle(Theme.dim).lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { model.insertPreset(at: entry.url, on: nil, chain: nil, at: nil) }
+                .draggable("preset:\(entry.url.path)")
+                .contextMenu {
+                    Button("Add to Selected Track") { model.insertPreset(at: entry.url, on: nil, chain: nil, at: nil) }
+                    if let marked, marked.device.identifier == entry.identifier {
+                        Button("Load onto \(marked.device.name)") { model.loadPreset(entry, onto: marked.device.id, on: marked.track.id) }
+                    }
+                    Divider()
+                    Button("Show in Finder") { model.revealPreset(entry) }
+                    Button("Delete Preset", role: .destructive) { model.deletePreset(entry) }
+                }
+                .hint("\(entry.name), a \(model.presetDeviceName(entry)) preset. Double-click to add it to the selected track, or drag it onto a track or a device.")
+            }
+            Button { model.importPresets() } label: { Label("Import Presets…", systemImage: "square.and.arrow.down") }
+                .buttonStyle(.plain).foregroundStyle(Theme.accent)
+        }
     }
 }
 

@@ -304,6 +304,17 @@ struct DeviceMenu: View {
         }
         .disabled(automated.isEmpty)
         Divider()
+        // Presets: the device's settings as a file, for any project. Plugins keep their state, racks everything inside.
+        Button("Save Preset…") { model.presetPrompt = PresetPrompt(track: track.id, device: device.id, name: device.name) }
+        let presets = model.presets(for: device.identifier)
+        if !presets.isEmpty {
+            Menu("Load Preset") {
+                ForEach(presets) { p in Button(p.name) { model.loadPreset(p, onto: device.id, on: track.id) } }
+            }
+        }
+        Button("Import Preset…") { model.importPresets(onto: device.id, on: track.id) }
+        Button("Export Preset…") { model.exportPreset(track: track.id, device: device.id) }
+        Divider()
         AppAction.deleteSelection.button(model, title: "Delete") { model.apply(.removeDevice(track: track.id, device: device.id)) }
     }
 }

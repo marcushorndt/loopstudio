@@ -197,6 +197,7 @@ struct DeviceChainView: View {
             .dropDestination(for: String.self) { items, _ in
                 return model.dropDevices(items, on: track.id)
             }
+            .presetNamePrompt()
         } else {
             VStack { Spacer(); Text("Select a track to see its devices.").foregroundStyle(Theme.dim); Spacer() }.frame(maxWidth: .infinity)
         }
@@ -236,12 +237,87 @@ struct DeviceChainView: View {
     }
 }
 
+/// "Save Preset…" asks for the name here: an alert with a text field over the device chain.
+private struct PresetNamePrompt: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @State private var name = ""
+
+    func body(content: Content) -> some View {
+        @Bindable var model = model
+        content.alert("Save Preset", isPresented: Binding(get: { model.presetPrompt != nil }, set: { if !$0 { model.presetPrompt = nil } }),
+                      presenting: model.presetPrompt) { prompt in
+            TextField("Name", text: $name)
+            Button("Save") { model.savePreset(track: prompt.track, device: prompt.device, name: name) }
+            Button("Cancel", role: .cancel) {}
+        } message: { prompt in
+            Text("The settings of \(prompt.name) as a preset in the library. A preset of the same name is replaced.")
+        }
+        .onChange(of: model.presetPrompt) { _, prompt in if let prompt { name = prompt.name } }
+    }
+}
+
+extension View {
+    func presetNamePrompt() -> some View { modifier(PresetNamePrompt()) }
+}
+
+/// A drop on a device card. The card tells the delegate its width; the delegate reports which half the
+/// pointer is in, so the card draws the insertion line there, and performs the drop on that side.
+private struct DeviceCardDrop: DropDelegate {
+    let width: CGFloat
+    let side: Binding<Int>
+    let perform: @MainActor @Sendable (String, Bool) -> Void
+
+    private func update(_ info: DropInfo) {
+        side.wrappedValue = info.location.x > width / 2 ? 1 : -1
+    }
+
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.text]) }
+    func dropEntered(info: DropInfo) { update(info) }
+    func dropUpdated(info: DropInfo) -> DropProposal? { update(info); return DropProposal(operation: .move) }
+    func dropExited(info: DropInfo) { side.wrappedValue = 0 }
+
+    func performDrop(info: DropInfo) -> Bool {
+        side.wrappedValue = 0
+        let after = info.location.x > width / 2
+        guard let provider = info.itemProviders(for: [.text]).first else { return false }
+        let perform = perform
+        _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let text = object as? NSString else { return }
+            let item = String(text)
+            Task { @MainActor in perform(item, after) }
+        }
+        return true
+    }
+}
+
 struct DeviceCard: View {
     @Environment(AppModel.self) private var model
     let track: Track
     let device: DeviceSlot
     /// The chain this card sits in, or `nil` on the track itself.
     var chain: ChainID? = nil
+    /// Where a drag over the card would land: -1 left of it, 1 right of it, 0 nothing hovers.
+    @State private var dropSide = 0
+    @State private var width: CGFloat = 200
+
+    /// The string the card drags: the chain and the card drop targets move the device by it.
+    private var dragItem: String { "device:\(device.id.rawValue.uuidString)" }
+
+    /// The card takes drops of effects, presets and other cards: they land left or right of it.
+    private func dropTarget<V: View>(_ view: V) -> some View {
+        view
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            .onDrop(of: [.text], delegate: DeviceCardDrop(width: width, side: $dropSide) { [track, chain, device] item, after in
+                model.dropDevices([item], on: track.id, chain: chain, beside: device.id, after: after)
+            })
+            .overlay(alignment: dropSide < 0 ? .leading : .trailing) {
+                if dropSide != 0 {
+                    RoundedRectangle(cornerRadius: 1.5).fill(Theme.accent).frame(width: 3)
+                        .padding(.vertical, 4).offset(x: dropSide < 0 ? -5.5 : 5.5)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
 
     @ViewBuilder
     private var pluginBody: some View {
@@ -300,7 +376,15 @@ struct DeviceCard: View {
     }
 
     var body: some View {
-        if folded { foldedCard } else { openCard }
+        if folded { dropTarget(foldedCard.draggable(dragItem) { dragPreview }) } else { dropTarget(openCard) }
+    }
+
+    /// What the pointer carries while a card is dragged.
+    private var dragPreview: some View {
+        Text(device.name).font(.system(size: 12, weight: .semibold))
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.accent, lineWidth: 1))
     }
 
     private var openCard: some View {
@@ -313,10 +397,15 @@ struct DeviceCard: View {
                 }
                 .buttonStyle(.plain).hint("Fold \(device.name) to its title. Double-click the title does the same.")
                 powerButton
-                Text(device.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(TapGesture(count: 2).onEnded { model.toggleDeviceFold(device.id) })
-                Spacer(minLength: 8)
+                // The title is the handle: drag it to another place in the chain, or into a rack's chain.
+                HStack(spacing: 0) {
+                    Text(device.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    Spacer(minLength: 8)
+                }
+                .contentShape(Rectangle())
+                .simultaneousGesture(TapGesture(count: 2).onEnded { model.toggleDeviceFold(device.id) })
+                .draggable(dragItem) { dragPreview }
+                .hint("\(device.name). Drag the title to move the device. Double-click folds it.")
                 if let spec, spec.sidechain { sidechainMenu }
                 if let spec, spec.isDynamics { GainReductionMeter(device: device, bands: spec.id == "multiband" ? 3 : 1) }
                 Button { model.apply(.removeDevice(track: track.id, device: device.id)) } label: {

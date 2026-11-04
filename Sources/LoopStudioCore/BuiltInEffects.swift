@@ -191,10 +191,37 @@ public enum BuiltInEffects {
         reverb,
         tapeEcho,
         liveCut,
+        granulator,
         compressor,
         limiter,
         multiband,
     ] + (1...8).map(eq)
+
+    /// Granulator: the sound runs into an eight-second buffer, and grains are read from a position behind the
+    /// record head, each of a size and a window shape, at a rate, with a pitch and a random spread of position,
+    /// pitch and pan. Freeze stops the recording: the buffer stands still and the position reads through it like
+    /// a tape head. The display shows the buffer scrolling by, the read position (drag it) and the grains.
+    static let granulator: EffectSpec = {
+        var spec = EffectSpec(id: "granulator", name: "Granulator", params: [
+            EffectParam("record", "Record", 0, 1, 1, choices: ["Freeze", "Record"]),
+            EffectParam("position", "Position", 0, 1, 0.25),
+            EffectParam("feedback", "Feedback", 0, 0.9, 0),
+            EffectParam("sizeMs", "Size", 2, 2_000, 120, unit: "ms", log: true),
+            EffectParam("density", "Density", 0.5, 100, 16, unit: "/s", log: true),
+            EffectParam("window", "Window", 0, 5, 0, choices: ["Hann", "Triangle", "Box", "Gauss", "Decay", "Attack"]),
+            EffectParam("sprayMs", "Spray", 0, 2_000, 0, unit: "ms"),
+            EffectParam("pitch", "Pitch", -24, 24, 0, unit: "st"),
+            EffectParam("pitchSpread", "Pitch Rnd", 0, 24, 0, unit: "st"),
+            EffectParam("reverse", "Reverse", 0, 1, 0),
+            EffectParam("panSpread", "Pan Rnd", 0, 1, 0.3),
+            EffectParam("level", "Level", -24, 12, 0, unit: "dB"),
+            EffectParam("mix", "Dry/Wet", 0, 1, 1),
+        ])
+        spec.view = "granulator"
+        spec.groups = [EffectGroup("Buffer", ["record", "position", "feedback"]), EffectGroup("Grain", ["sizeMs", "density", "window", "sprayMs"]),
+                       EffectGroup("Pitch", ["pitch", "pitchSpread", "reverse"], row: 1), EffectGroup("Out", ["panSpread", "level", "mix"], row: 1)]
+        return spec
+    }()
 
     /// Live Cut: a breakbeat cutter on the sound that runs through it, after Livecut (Rémy Muller) and the
     /// BBCut library (Nick Collins). The bar is divided into units; a cut procedure groups units into blocks

@@ -340,6 +340,9 @@ struct DeviceCard: View {
                 } else if let spec, spec.id == "multiband" {
                     MultibandView(track: track, device: device, spec: spec)
                         .opacity(device.bypassed ? 0.4 : 1)
+                } else if let spec, spec.view == "granulator" {
+                    GranulatorView(track: track, device: device, spec: spec)
+                        .opacity(device.bypassed ? 0.4 : 1)
                 } else if let spec, !spec.groups.isEmpty {
                     GroupedKnobs(track: track, device: device, spec: spec)
                         .opacity(device.bypassed ? 0.4 : 1)

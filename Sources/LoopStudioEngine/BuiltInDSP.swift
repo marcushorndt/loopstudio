@@ -20,6 +20,15 @@ public class DSPEffect: @unchecked Sendable {
     public let meters: UnsafeMutablePointer<Float>
     /// The output of a device that draws a curve (the EQs, the multiband), for the spectrum behind it.
     public let spectrum: SpectrumTap?
+    /// A device with a buffer (the granulator) keeps its peaks here, `waveformBins` of them over the whole
+    /// buffer, oldest at the record head's next bin. Written by the audio thread, read by the display.
+    public static let waveformBins = 256
+    public internal(set) var waveform: UnsafeMutablePointer<Float>?
+    /// Where a device's voices read in its buffer, 0...1, or -1 for a silent voice (the granulator's grains).
+    public static let markCount = 64
+    public internal(set) var marks: UnsafeMutablePointer<Float>?
+    /// The granulator's buffer in seconds: the span of its display.
+    public static let granulatorSeconds = 8.0
 
     init(spec: EffectSpec, sampleRate: Double) {
         self.spec = spec
@@ -95,6 +104,7 @@ public class DSPEffect: @unchecked Sendable {
         case "multiband": effect = MultibandDSP(spec: spec, sampleRate: sampleRate)
         case "tapeEcho": effect = TapeEchoDSP(spec: spec, sampleRate: sampleRate)
         case "livecut": effect = LiveCutDSP(spec: spec, sampleRate: sampleRate)
+        case "granulator": effect = GranulatorDSP(spec: spec, sampleRate: sampleRate)
         case _ where spec.view == "eq" && spec.bands > 0: effect = EQDSP(spec: spec, sampleRate: sampleRate)
         default: return nil
         }

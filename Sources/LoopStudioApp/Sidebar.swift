@@ -279,6 +279,8 @@ struct UnitList: View {
             }
             Button { model.importPresets() } label: { Label("Import Presets…", systemImage: "square.and.arrow.down") }
                 .buttonStyle(.plain).foregroundStyle(Theme.accent)
+                // Files put into the folder from outside show up when the tab opens.
+                .onAppear { model.reloadPresets() }
         }
     }
 }

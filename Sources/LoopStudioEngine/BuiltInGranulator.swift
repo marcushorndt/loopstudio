@@ -80,9 +80,14 @@ final class GranulatorDSP: DSPEffect, @unchecked Sendable {
         reverseChance = Double(value(p, "reverse"))
         panSpread = Double(value(p, "panSpread"))
         level = powf(10, value(p, "level") / 20)
-        // The overlap: grains per second times a grain's length. Equal power over it.
+        // The level of the cloud matches the input. Grains at different positions add in power, not in
+        // amplitude: `overlap` grains sound at once, each with the window's mean power. A single grain (a
+        // sparse cloud) keeps its peak at the input's peak, so the output never exceeds the input.
         let overlap = density * Double(grainFrames) / sampleRate
-        scale = Float(1 / sqrt(max(1, overlap))) * 0.5
+        var power: Float = 0
+        for i in 0..<64 { let w = shape((Float(i) + 0.5) / 64, window); power += w * w }
+        power = max(0.05, power / 64)
+        scale = min(1, 1 / sqrt(Float(max(1, overlap)) * power))
         mix = value(p, "mix")
     }
 
@@ -131,6 +136,12 @@ final class GranulatorDSP: DSPEffect, @unchecked Sendable {
         grains[slot] = g
     }
 
+    /// A soft knee above 0.9 with a ceiling at 1.0: a feedback loop stays bounded without a hard edge.
+    @inline(__always) private static func knee(_ x: Float) -> Float {
+        let a = abs(x)
+        return a <= 0.9 ? x : copysign(0.9 + 0.1 * tanhf((a - 0.9) / 0.1), x)
+    }
+
     @inline(__always) private func read(_ buf: UnsafeMutablePointer<Float>, _ pos: Double) -> Float {
         var p = pos
         if p >= Double(size) { p -= Double(size) }
@@ -162,8 +173,9 @@ final class GranulatorDSP: DSPEffect, @unchecked Sendable {
             outL *= gain; outR *= gain
             let inL = l[k], inR = r[k]
             if recording {
-                bufL[write] = inL + fb * outL
-                bufR[write] = inR + fb * outR
+                // Feedback writes the cloud back into the ring. The knee keeps the loop below full scale.
+                bufL[write] = fb > 0 ? Self.knee(inL + fb * outL) : inL
+                bufR[write] = fb > 0 ? Self.knee(inR + fb * outR) : inR
                 binPeak = max(binPeak, max(abs(inL), abs(inR)))
                 write += 1
                 if write >= size { write = 0 }

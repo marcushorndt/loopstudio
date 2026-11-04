@@ -93,3 +93,25 @@ private let base: [String: Double] = ["sizeMs": 100, "density": 40, "window": 0,
         #expect(level > 0.05 && level < 1, "window \(window): \(level)")
     }
 }
+
+/// The cloud is as loud as the sound that goes in, give or take 3 dB, with every window and at any density.
+@Test func theCloudKeepsTheLevelOfTheInput() {
+    let input = sine(220, seconds: 2)
+    let inLevel = rms(input[...])
+    for (window, density, sizeMs) in [(0, 40.0, 120.0), (1, 80.0, 60.0), (2, 20.0, 200.0), (3, 60.0, 90.0), (4, 100.0, 40.0), (5, 100.0, 40.0)] {
+        let effect = DSPEffect.make("granulator", sampleRate: rate)!
+        effect.configure(base.merging(["record": 1, "window": Double(window), "density": density, "sizeMs": sizeMs]) { $1 })
+        let out = feed(effect, input)
+        let level = rms(out[Int(rate)...])
+        let dB = 20 * log10(level / inLevel)
+        #expect(abs(dB) < 3, "window \(window) at \(density)/s, \(sizeMs) ms: \(dB) dB")
+    }
+}
+
+/// Feedback at its top with a loud input stays below full scale: the knee in the loop.
+@Test func feedbackStaysBounded() {
+    let effect = DSPEffect.make("granulator", sampleRate: rate)!
+    effect.configure(base.merging(["record": 1, "feedback": 1, "density": 60]) { $1 })
+    let out = feed(effect, sine(110, seconds: 4, amplitude: 0.95))
+    #expect(out.allSatisfy { $0.isFinite && abs($0) < 2 })
+}

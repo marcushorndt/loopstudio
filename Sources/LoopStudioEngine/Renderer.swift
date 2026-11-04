@@ -17,7 +17,7 @@ public final class Renderer {
     /// Session clock minus timeline clock for the block being rendered.
     private var sessionOffset: Int64 = 0
     /// The song position of the last grid step asked for, so several effects share one tempo map lookup.
-    private var clockFrame = Int64.min, clockBeat = 0.0, clockQuarter = 0.5
+    private var clockFrame = Int64.min, clockBeat = 0.0, clockQuarter = 0.5, clockBarStart = 0.0, clockBarBeats = 4.0
     /// The block being rendered: its first timeline frame, and whether the transport plays.
     private var blockStart: Int64 = 0
     private var blockPlaying = false
@@ -812,7 +812,7 @@ public final class Renderer {
             if effect.followsTempo {
                 // Stopped, the clock runs on from the song position (`idleShift`), so a free LFO keeps moving.
                 let (beat, quarter) = songPosition(grid + idleShift)
-                effect.clock(frame: grid + idleShift, beat: beat, quarterSeconds: quarter)
+                effect.clock(frame: grid + idleShift, beat: beat, quarterSeconds: quarter, barStart: clockBarStart, barBeats: clockBarBeats)
             }
             effect.process(l + offset, r + offset, sidechainL: scL.map { $0 + offset }, sidechainR: scR.map { $0 + offset }, frames: count)
         }
@@ -833,13 +833,14 @@ public final class Renderer {
             if changed { synth.configure(slot.live) }
             if synth.followsTempo {
                 let (beat, quarter) = songPosition(grid + idleShift)
-                synth.clock(frame: grid + idleShift, beat: beat, quarterSeconds: quarter)
+                synth.clock(frame: grid + idleShift, beat: beat, quarterSeconds: quarter, barStart: clockBarStart, barBeats: clockBarBeats)
             }
             synth.render(l + offset, r + offset, frames: count)
         }
     }
 
-    /// Beat (in quarter notes) and seconds per quarter note at a timeline frame. No allocation.
+    /// Beat (in quarter notes) and seconds per quarter note at a timeline frame. No allocation. The bar the
+    /// frame is in (`clockBarStart`, `clockBarBeats`) is read in the same step.
     private func songPosition(_ frame: Int64) -> (beat: Double, quarter: Double) {
         if frame != clockFrame {
             let map = plan.tempoMap
@@ -847,6 +848,13 @@ public final class Renderer {
             clockBeat = tick / Double(Tick.perQuarter)
             clockQuarter = 60 / map.bpm(at: Tick(Int64(tick.rounded(.down))))
             clockFrame = frame
+            var sig = TimeSignature(4, 4), from = 0.0
+            for change in plan.timeSignatures where Double(change.tick.rawValue) / Double(Tick.perQuarter) <= clockBeat {
+                sig = change.signature; from = Double(change.tick.rawValue) / Double(Tick.perQuarter)
+            }
+            let bar = Double(sig.ticksPerBar.rawValue) / Double(Tick.perQuarter)
+            clockBarBeats = bar
+            clockBarStart = bar > 0 ? from + ((clockBeat - from) / bar).rounded(.down) * bar : clockBeat
         }
         return (clockBeat, clockQuarter)
     }

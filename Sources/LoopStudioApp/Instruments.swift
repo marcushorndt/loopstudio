@@ -90,11 +90,13 @@ struct GroupedKnobs: View {
     let spec: EffectSpec
 
     var body: some View {
-        let rows = Array(Set(spec.groups.map(\.row))).sorted()
+        // A group can belong to one setting of a knob (the procedure of the cutter): only that one shows.
+        let groups = spec.groups.filter { $0.shown(device.params, spec: spec) }
+        let rows = Array(Set(groups.map(\.row))).sorted()
         VStack(alignment: .leading, spacing: groupGap) {
             ForEach(rows, id: \.self) { row in
                 HStack(alignment: .top, spacing: groupGap) {
-                    ForEach(spec.groups.filter { $0.row == row }, id: \.self) { group in
+                    ForEach(groups.filter { $0.row == row }, id: \.self) { group in
                         KnobSection(title: group.title) {
                             ForEach(group.keys, id: \.self) { ParamKnob(track: track, device: device, spec: spec, key: $0) }
                         }

@@ -50,15 +50,20 @@ public class DSPEffect: @unchecked Sendable {
     }
 
     /// The song position for one grid step: `frame` on the timeline, `beat` in quarter notes, and the tempo.
-    /// Only the audio thread calls it, before `process`. An effect that follows the tempo overrides `tempoChanged`
-    /// or `step`.
-    func clock(frame: Int64, beat: Double, quarterSeconds q: Double) {
+    /// `barStart` is the beat of the downbeat of the bar the position is in, `barBeats` the bar's length in
+    /// quarter notes. Only the audio thread calls it, before `process`. An effect that follows the tempo
+    /// overrides `tempoChanged` or `step`.
+    func clock(frame: Int64, beat: Double, quarterSeconds q: Double, barStart: Double = 0, barBeats: Double = 4) {
         lastClockFrame = frame
+        self.barStart = barStart
+        self.barBeats = barBeats
         if q != quarterSeconds { quarterSeconds = q; tempoChanged() }
         step(frame: frame, beat: beat)
     }
     /// The frame of the last clock step, for tests.
     private(set) var lastClockFrame = Int64.min
+    /// The bar at the last clock step: its downbeat in quarter notes, and its length in quarter notes.
+    private(set) var barStart = 0.0, barBeats = 4.0
 
     func tempoChanged() {}
     func step(frame: Int64, beat: Double) {}
@@ -89,6 +94,7 @@ public class DSPEffect: @unchecked Sendable {
         case "limiter": effect = LimiterDSP(spec: spec, sampleRate: sampleRate)
         case "multiband": effect = MultibandDSP(spec: spec, sampleRate: sampleRate)
         case "tapeEcho": effect = TapeEchoDSP(spec: spec, sampleRate: sampleRate)
+        case "livecut": effect = LiveCutDSP(spec: spec, sampleRate: sampleRate)
         case _ where spec.view == "eq" && spec.bands > 0: effect = EQDSP(spec: spec, sampleRate: sampleRate)
         default: return nil
         }

@@ -76,11 +76,23 @@ public struct EffectGroup: Sendable, Hashable {
     public var title: String
     public var keys: [String]
     public var row: Int
+    /// The group shows only while the parameter `whenKey` stands at `whenValue` (the knobs of one cut
+    /// procedure, of one mode). `nil`: always shown.
+    public var whenKey: String?
+    public var whenValue: Double = 0
 
-    public init(_ title: String, _ keys: [String], row: Int = 0) {
+    public init(_ title: String, _ keys: [String], row: Int = 0, when: (key: String, value: Double)? = nil) {
         self.title = title
         self.keys = keys
         self.row = row
+        whenKey = when?.key
+        whenValue = when?.value ?? 0
+    }
+
+    /// Whether the group shows for a device whose knobs stand at `params`.
+    public func shown(_ params: [String: Double], spec: EffectSpec) -> Bool {
+        guard let whenKey else { return true }
+        return (params[whenKey] ?? spec.param(whenKey)?.def ?? 0).rounded() == whenValue
     }
 }
 
@@ -178,10 +190,62 @@ public enum BuiltInEffects {
         ], groups: [EffectGroup("Delay", ["timeMs", "feedback", "pingPong"]), EffectGroup("Out", ["mix"])]),
         reverb,
         tapeEcho,
+        liveCut,
         compressor,
         limiter,
         multiband,
     ] + (1...8).map(eq)
+
+    /// Live Cut: a breakbeat cutter on the sound that runs through it, after Livecut (Rémy Muller) and the
+    /// BBCut library (Nick Collins). The bar is divided into units; a cut procedure groups units into blocks
+    /// of cuts, and blocks into phrases that end in a fill. The first cut of a block is the live sound, the
+    /// repeats replay it, each with its own level, pan and pitch from the ranges here. Three procedures:
+    /// CutProc11 (Collins's classic: odd-length cuts, repeats, a stutter at the end of a phrase), WarpCut
+    /// (regular rolls and accelerating or slowing ones) and SQPusher (Squarepusher's drum programming: busy
+    /// semiquavers by activity, and a fill template on the last bar of a phrase).
+    static let liveCut: EffectSpec = {
+        func stepped(_ key: String, _ name: String, _ names: [String], def: Int) -> EffectParam {
+            var p = EffectParam(key, name, 0, Double(names.count - 1), Double(def), choices: names)
+            p.rotary = true
+            return p
+        }
+        var spec = EffectSpec(id: "livecut", name: "Live Cut", params: [
+            EffectParam("proc", "Cut Proc", 0, 2, 0, choices: ["CutProc11", "WarpCut", "SQPusher"]),
+            stepped("subdiv", "Subdiv", ["6", "8", "12", "16", "18", "24", "32"], def: 1),
+            stepped("seed", "Seed", (1...16).map(String.init), def: 0),
+            EffectParam("fadeMs", "Fade", 0, 100, 0, unit: "ms"),
+            EffectParam("mix", "Dry/Wet", 0, 1, 1),
+            EffectParam("minAmp", "Min Amp", 0, 1, 1),
+            EffectParam("maxAmp", "Max Amp", 0, 1, 1),
+            EffectParam("minPan", "Min Pan", -1, 1, -0.2),
+            EffectParam("maxPan", "Max Pan", -1, 1, 0.2),
+            EffectParam("minPitch", "Min Pitch", -2_400, 2_400, 0, unit: "ct"),
+            EffectParam("maxPitch", "Max Pitch", -2_400, 2_400, 0, unit: "ct"),
+            stepped("minPhrase", "Min Phrase", (1...8).map { "\($0) bar" }, def: 0),
+            stepped("maxPhrase", "Max Phrase", (1...8).map { "\($0) bar" }, def: 3),
+            EffectParam("duty", "Duty", 0, 1, 1),
+            EffectParam("fillDuty", "Fill Duty", 0, 1, 1),
+            stepped("minRep", "Min Rep", (1...5).map(String.init), def: 0),
+            stepped("maxRep", "Max Rep", (1...5).map(String.init), def: 1),
+            EffectParam("stutter", "Stutter", 0, 1, 0.8),
+            EffectParam("area", "Area", 0, 1, 0.5),
+            EffectParam("straight", "Straight", 0, 1, 0.3),
+            EffectParam("regular", "Regular", 0, 1, 0.5),
+            EffectParam("ritard", "Ritard", 0, 1, 0.5),
+            EffectParam("speed", "Speed", 0.5, 0.999, 0.9),
+            EffectParam("activity", "Activity", 0, 1, 0.5),
+        ])
+        spec.groups = [
+            EffectGroup("Cutter", ["proc", "subdiv", "seed", "fadeMs", "mix"]),
+            EffectGroup("Random", ["minAmp", "maxAmp", "minPan", "maxPan", "minPitch", "maxPitch"]),
+            EffectGroup("Phrase", ["minPhrase", "maxPhrase"], row: 1),
+            EffectGroup("Duty", ["duty", "fillDuty"], row: 1),
+            EffectGroup("CutProc11", ["minRep", "maxRep", "stutter", "area"], row: 1, when: ("proc", 0)),
+            EffectGroup("WarpCut", ["straight", "regular", "ritard", "speed"], row: 1, when: ("proc", 1)),
+            EffectGroup("SQPusher", ["activity"], row: 1, when: ("proc", 2)),
+        ]
+        return spec
+    }()
 
     /// Band types of the multi-band EQs, in the order of the "type" choice.
     public static let eqTypes = ["Low Cut", "Low Shelf", "Bell", "Notch", "High Shelf", "High Cut", "Band Pass"]

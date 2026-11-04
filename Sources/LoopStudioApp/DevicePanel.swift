@@ -408,6 +408,16 @@ struct DeviceCard: View {
                 .hint("\(device.name). Drag the title to move the device. Double-click folds it.")
                 if let spec, spec.sidechain { sidechainMenu }
                 if let spec, spec.isDynamics { GainReductionMeter(device: device, bands: spec.id == "multiband" ? 3 : 1) }
+                // Presets: save the settings as a file, or bring a file in (it loads onto this device).
+                Button { model.presetPrompt = PresetPrompt(track: track.id, device: device.id, name: device.name) } label: {
+                    DisketteIcon().foregroundStyle(Theme.dim).frame(width: 18, height: 20).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).hint("Save the settings of \(device.name) as a preset.")
+                Button { model.importPresets(onto: device.id, on: track.id) } label: {
+                    Image(systemName: "tray.and.arrow.down").font(.system(size: 10)).foregroundStyle(Theme.dim)
+                        .frame(width: 18, height: 20).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).hint("Import a preset file. One for \(device.name) loads onto it; the others go into the library.")
                 Button { model.apply(.removeDevice(track: track.id, device: device.id)) } label: {
                     Image(systemName: "xmark").font(.system(size: 9)).foregroundStyle(Theme.dim)
                         .frame(width: 20, height: 20).contentShape(Rectangle())
@@ -488,6 +498,28 @@ struct DeviceCard: View {
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .hint("Sidechain: the signal the detector listens to. Own input, or another track.")
+    }
+}
+
+/// A diskette, eleven points wide: the save sign. SF Symbols has none.
+private struct DisketteIcon: View {
+    var body: some View {
+        ZStack(alignment: .top) {
+            // The body, with the top right corner cut like a real one.
+            Path { p in
+                p.move(to: CGPoint(x: 0.5, y: 1.5))
+                p.addLine(to: CGPoint(x: 8.5, y: 0.5))
+                p.addLine(to: CGPoint(x: 10.5, y: 2.5))
+                p.addLine(to: CGPoint(x: 10.5, y: 10.5))
+                p.addLine(to: CGPoint(x: 0.5, y: 10.5))
+                p.closeSubpath()
+            }
+            .stroke(lineWidth: 1)
+            // The shutter at the top, the label at the bottom.
+            Rectangle().frame(width: 4, height: 2.5).offset(x: 0.5, y: 1.5)
+            Rectangle().stroke(lineWidth: 1).frame(width: 5, height: 2.5).offset(y: 6.5)
+        }
+        .frame(width: 11, height: 11)
     }
 }
 

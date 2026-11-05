@@ -141,6 +141,33 @@ struct Fader: View {
     }
 }
 
+/// The pan control: a line with a center mark and a handle. A drag moves the handle from where it is, like
+/// the fader; a double-click centers it. A system slider takes the clicks itself, so it cannot do that.
+struct PanSlider: View {
+    let pan: Double
+    let onChange: (Double) -> Void
+    @State private var startPan: Double?
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let x = (pan + 1) / 2 * w
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.line).frame(height: 3).frame(maxHeight: .infinity)
+                Rectangle().fill(Theme.dim).frame(width: 1, height: 7).offset(x: w / 2 - 0.5)
+                Circle().fill(Theme.text).frame(width: 9, height: 9).offset(x: min(max(0, x - 4.5), w - 9))
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 1).onChanged { g in
+                if startPan == nil { startPan = pan }
+                onChange(min(1, max(-1, (startPan ?? 0) + g.translation.width / w * 2)))
+            }.onEnded { _ in startPan = nil })
+            .simultaneousGesture(TapGesture(count: 2).onEnded { onChange(0) })
+        }
+        .frame(height: 12)
+    }
+}
+
 /// A mixer strip: pan, fader with meter, and the mute and solo buttons.
 struct MixerStrip: View {
     /// Room for Audio From, the monitor buttons and Audio To.
@@ -158,11 +185,10 @@ struct MixerStrip: View {
 
     var body: some View {
         VStack(spacing: 5) {
-            Slider(value: Binding(get: { track.pan }, set: { model.apply(.setPan(id: track.id, pan: $0), key: "pan\(track.id)") }), in: -1...1)
+            PanSlider(pan: track.pan) { model.apply(.setPan(id: track.id, pan: $0), key: "pan\(track.id)") }
                 .midiLearnable(.pan(track.id))
-                .controlSize(.mini)
                 .contextMenu { Button("Center") { model.apply(.setPan(id: track.id, pan: 0)) } }
-                .hint("Pan")
+                .hint("Pan. Drag to pan, double-click to center.")
 
             // Every strip has the same rows at the same heights, so faders line up across the mixer.
             let returns = model.project.tracks.filter { $0.kind == .returnTrack }

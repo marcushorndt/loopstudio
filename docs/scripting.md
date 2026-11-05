@@ -160,3 +160,33 @@ text ──parse──▶ AST ──check──▶ typed graph (nodes, ports, st
 
 Stage 1 is three to four days of work on top of the engine as it is. It touches Core (`PatchProgram`, the
 compiler), Engine (`PatchDSP`, the plan), the app (the editor window, the sidebar) and the MCP tools.
+
+## 7. Stage 1 as built (2026-11-05)
+
+- **Core** `Sources/LoopStudioCore/Patch/`: `PatchProgram` (the op list over stereo slots; slots 0 to 6 are
+  the input, beat, bar, tempo, quarter seconds, sample rate and zero), `PatchCompiler` (lexer, parser, a
+  typed compile with the units plain, seconds, hertz, dB and note; `cached(_:)` compiles once per text and
+  returns the program or a `PatchError` with its line), `PatchExamples` (the starter of a new device, three
+  examples, and `reference`, the language on one page). `DeviceSlot.source` holds the text;
+  `DeviceSlot.spec` gives every built-in device its spec, a patch the one its text declares.
+  `Command.setDeviceSource` is the undoable edit.
+- **Engine** `PatchDSP`: a `switch` VM, once per frame, no allocation in `process`. The delay lines are
+  allocated at init. The renderer keeps the running instance while the program is the same object (the
+  same text), and a new text gets a new instance that takes the delay lines of the old one by name, so an
+  edit does not cut an echo. `followsTempo` is always on; the beat advances per frame inside a block, so a
+  synced LFO is smooth.
+- **Language as built**: `patch`, `param` (range with `log` and a unit, or `note`), `in`, `out`, `delay`,
+  `meter`, assignments, `delay.write`. Functions: osc, lfo (a note value locks it to the song), phase,
+  lp/hp/bp, slew, follow, prev, sah, noise, delay.read, tanh, abs, sqrt, sin, cos, exp, log, floor, clip,
+  mix, min, max, pow, gain. Not yet from the sketch: `state` declarations, `group`, `on grid`, `on note`,
+  `voice`, `scope`/`waveform`, `def`, `for`, buffers with a position (stage 2).
+- **App**: the card shows the knobs from the `param` lines, or the compile error with the sound passing
+  through. Edit (or the context menu) opens the editor window: the text, the error line, Examples, Revert,
+  Apply (⌘↩) as one undo step. The window is left alone by the key monitor.
+- **MCP**: `patch_read`, `patch_check`, `patch_write`; the resource `loopstudio://help/patch`.
+- **Tests** `Tests/LoopStudioEngineTests/PatchTests.swift`: arithmetic, knobs from params, every example
+  renders finite sound, a delay reads back at the right frame, a new program keeps the delay line, `prev`,
+  a note value follows the tempo, the low-pass, the compile errors, and a speed budget (fifty-odd ops per
+  frame, one second of sound in under a tenth of a second).
+- **Open from stage 1**: the library folder and the sidebar section (the examples live in the editor's menu
+  for now); `meter` values show on no card yet.

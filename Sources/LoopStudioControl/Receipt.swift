@@ -145,6 +145,8 @@ public enum ReadBack {
             pair("\(a.trackName(t)) › \(a.deviceName(t, d)) › bypass", b.bypass(t, d), a.bypass(t, d))
         case .setDeviceSidechain(let t, let d, _):
             pair("\(a.trackName(t)) › \(a.deviceName(t, d)) › sidechain", b.sidechain(t, d), a.sidechain(t, d))
+        case .setDeviceSource(let t, let d, _, _):
+            pair("\(a.trackName(t)) › \(a.deviceName(t, d)) › patch", b.patchSummary(t, d), a.patchSummary(t, d))
         case .setPluginParams(let t, let d, _):
             pair("\(a.trackName(t)) › \(a.deviceName(t, d)) › plugin parameters", nil, "updated")
         case .addChain(let t, let r, _, _), .removeChain(let t, let r, _), .moveChain(let t, let r, _, _), .setChain(let t, let r, _):
@@ -237,13 +239,13 @@ public enum ReadBack {
         }
         func paramName(_ t: TrackID, _ d: DeviceID, _ key: String) -> String {
             guard let dev = device(t, d) else { return key }
-            if dev.format == "builtin", let spec = BuiltInEffects.spec(dev.identifier) ?? BuiltInInstruments.spec(dev.identifier),
+            if let spec = dev.spec,
                let p = spec.params.first(where: { $0.key == key }) { return p.name }
             return dev.pluginParams?.first { $0.key == key }?.name ?? key
         }
         public func paramValue(_ t: TrackID, _ d: DeviceID, _ key: String) -> String? {
             guard let dev = device(t, d) else { return nil }
-            if dev.format == "builtin", let spec = BuiltInEffects.spec(dev.identifier) ?? BuiltInInstruments.spec(dev.identifier),
+            if let spec = dev.spec,
                let p = spec.params.first(where: { $0.key == key }) {
                 let v = dev.params[key] ?? p.def
                 if !p.choices.isEmpty, !p.rotary, Int(v.rounded()) >= 0, Int(v.rounded()) < p.choices.count { return p.choices[Int(v.rounded())] }
@@ -254,6 +256,14 @@ public enum ReadBack {
         }
         func bypass(_ t: TrackID, _ d: DeviceID) -> String? { device(t, d).map { ReadBack.onOff($0.bypassed) } }
         func sidechain(_ t: TrackID, _ d: DeviceID) -> String? { device(t, d).map { $0.sidechain.map(trackName) ?? "own input" } }
+        /// A patch in one line: its name, its knobs, its length; or its compile error.
+        func patchSummary(_ t: TrackID, _ d: DeviceID) -> String? {
+            guard let dev = device(t, d) else { return nil }
+            if let e = dev.patchError { return "does not compile (\(e))" }
+            let spec = dev.spec ?? BuiltInEffects.patch
+            let lines = (dev.source ?? "").split(separator: "\n").count
+            return "\(spec.name), \(spec.params.count) knobs (\(spec.params.map(\.key).joined(separator: ", "))), \(lines) lines"
+        }
         func clipList(_ id: TrackID) -> String? { track(id).map { "\($0.clips.count) clips" } }
         func slot(_ t: TrackID, _ i: Int) -> String? {
             guard let track = track(t) else { return nil }

@@ -164,6 +164,7 @@ public enum BuiltInEffects {
                                             groups: audioRack.groups)
 
     public static let all: [EffectSpec] = [
+        patch,
         EffectSpec(id: "utility", name: "Utility", params: [
             EffectParam("gain", "Gain", -96, 24, 0, unit: "dB"),
             EffectParam("width", "Width", 0, 2, 1),
@@ -412,6 +413,8 @@ public enum BuiltInEffects {
         if s.isRack { slot.rack = Rack(chains: [RackChain(name: "Chain 1")]) }
         // A new delay follows the tempo, like Live's. Older projects keep their free times: the default stays off.
         if id == "delay" { slot.params["timeMsSync"] = 1 }
+        // A new patch starts with a working program, so the card has knobs and the editor has a shape to edit.
+        if id == "patch" { slot.source = PatchExamples.starter; slot.name = PatchCompiler.spec(for: slot.source).name }
         return slot
     }
 }

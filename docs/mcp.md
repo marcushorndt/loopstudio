@@ -59,6 +59,9 @@ To open a project at start, add `"--project", "/path/to/MyProject.loopstudio"` t
 | `transport` | changes | App only: `play`, `stop`, `pause`, `continue`, `seek` (with `tick`). |
 | `launch` | changes | App only: start a slot (`track` + `slot`), a `scene`, or stop clips (`stopTrack`, `stopAll`). |
 | `ui_state` | reads | App only: the screen in its own words: view, selected track with its devices (knobs, values), slots, the marked device, selected clips, the open panel. |
+| `patch_read` | reads | The text of a Patch device (the programmable built-in device, `docs/scripting.md`), its knobs and op count, or its compile error. |
+| `patch_check` | reads | Compiles a patch text without placing it: the knobs, or the error with its line. The tool description holds the language in short. |
+| `patch_write` | changes | Compiles a text and, when it is good, puts it on a Patch device and names the device after it. The sound keeps playing; delay lines carry over. |
 | `track_add`, `track_rename`, `track_set`, `track_remove` | changes | Named track edits. A track is an id, a name, `master` or its position from 1. |
 | `device_add`, `device_remove`, `device_move`, `device_bypass`, `param_set` | changes | Named device edits. A device is an id, a name or its position; a parameter its key or name. |
 | `clip_create`, `clip_set`, `clip_remove`, `notes_set` | changes | Named clip edits. A clip is an id, a name or `<track>/slot N`. |
@@ -68,7 +71,7 @@ Every changing tool returns a **receipt**: the command, the revision before and 
 
 `command_apply` takes every edit the app can do: tracks and routing (`setOutput`, `setSends`, `setInputTrack`, `setMonitor`, `setSendsOnly`), clips and session slots, follow actions, devices and their parameters, MIDI notes, automation on tracks and in dummy clips, warping (`setAssetTempo`, `setClipWarp`), tempo, loop and launches. `command_examples` shows a valid JSON for each.
 
-Resources: `loopstudio://help/ui` (the words of the screen) always; `loopstudio://project/summary` and `loopstudio://project/full` when a project is open.
+Resources: `loopstudio://help/ui` (the words of the screen) and `loopstudio://help/patch` (the patch language on one page) always; `loopstudio://project/summary` and `loopstudio://project/full` when a project is open.
 
 ## Example
 

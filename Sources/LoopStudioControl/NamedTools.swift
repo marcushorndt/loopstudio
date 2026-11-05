@@ -63,7 +63,7 @@ public enum Resolve {
     /// A parameter of a device by key or by name.
     public static func param(_ ref: String, of device: DeviceSlot) throws -> (key: String, min: Double, max: Double, name: String) {
         let key = ref.trimmingCharacters(in: .whitespaces)
-        if device.format == "builtin", let spec = BuiltInEffects.spec(device.identifier) ?? BuiltInInstruments.spec(device.identifier) {
+        if let spec = device.spec {
             if let p = spec.params.first(where: { $0.key == key }) ?? spec.params.first(where: { $0.name.caseInsensitiveCompare(key) == .orderedSame }) {
                 return (p.key, p.min, p.max, p.name)
             }
@@ -379,6 +379,76 @@ public extension StandardTools {
             guard let start, let end else { throw ToolFailure("give start and end (ticks)") }
             guard end > start else { throw ToolFailure("end must be after start") }
             return try await session.receipt(.setLoop(loop: LoopRegion(start: start, end: end, enabled: enabled)))
+        })
+
+        // MARK: Patches: the programmable device, see docs/scripting.md
+
+        @Sendable func patchReport(_ program: PatchProgram) -> JSONValue {
+            .object(["name": .string(program.name), "ops": .number(Double(program.ops.count)),
+                     "knobs": .array(program.spec.params.map { .object(["key": .string($0.key), "min": .number($0.min), "max": .number($0.max),
+                                                                        "default": .number($0.def), "unit": .string($0.unit)]) }),
+                     "delays": .array(program.buffers.map { .string("\($0.name): \($0.seconds) s") })])
+        }
+        @Sendable func patchDevice(_ args: ToolArguments) async throws -> (Track, DeviceSlot) {
+            let t = try Resolve.track(try args.string("track"), in: try await session.project())
+            let d = try Resolve.device(try args.string("device"), on: t)
+            guard d.format == "builtin", d.identifier == "patch" else { throw ToolFailure("\(d.name) is not a Patch device (device_add with device \"patch\" makes one)") }
+            return (t, d)
+        }
+
+        tools.append(Tool(
+            name: "patch_read", title: "Read a patch",
+            description: "The text of a Patch device (the programmable built-in device), with its knobs, or its compile error. The language: patch_check's description, and the resource loopstudio://help/patch.",
+            inputSchema: Schema.object(["track": trackArg, "device": deviceArg], required: ["track", "device"]),
+            annotations: ToolAnnotations(readOnly: true)
+        ) { args in
+            let (_, d) = try await patchDevice(args)
+            var o: [String: JSONValue] = ["source": .string(d.source ?? ""), "device": .string(d.id.description)]
+            switch PatchCompiler.cached(d.source ?? "") {
+            case .success(let p): o["program"] = patchReport(p)
+            case .failure(let e): o["error"] = .string("\(e)")
+            }
+            return .object(o)
+        })
+
+        tools.append(Tool(
+            name: "patch_check", title: "Check a patch text",
+            description: """
+            Compile a patch text without putting it anywhere. Returns the knobs and the op count, or the error with its line. \
+            The language, one statement per line: patch "Name"; param key min..max = default [log] ["unit"] (a knob; "ms" knobs \
+            are seconds in the program) or param key note = 1/16 (a note value knob that follows the tempo); in x; out y; \
+            delay name = 2 s; meter name; name = expression; delay.write(expression). Expressions run once per sample on stereo \
+            values: + - * / ^, comparisons (0 or 1), numbers with units (10 ms, 2 s, 440 Hz, 2 kHz, -6 dB) and note values \
+            (1/16, 1/8., 1/4T), beat, bar (0..1 inside the bar), tempo, sr, pi. Functions: osc(hz, shape), lfo(rate, shape) 0..1 \
+            (a note value locks it to the song), phase(note) 0..1, lp/hp/bp(x, hz, q 0..1), slew(x, up, down), \
+            follow(x, attack, release), prev(name) (last frame's value: feedback), sah(x, trigger), noise(), \
+            delay.read(time), tanh abs sqrt sin cos exp log floor, clip(x, lo, hi), mix(a, b, t), min max pow, gain(dB). \
+            Shapes: sine saw square tri.
+            """,
+            inputSchema: Schema.object(["source": Schema.string("The patch text")], required: ["source"]),
+            annotations: ToolAnnotations(readOnly: true)
+        ) { args in
+            let source = try args.string("source")
+            switch PatchCompiler.cached(source) {
+            case .success(let p): return .object(["ok": .bool(true), "program": patchReport(p)])
+            case .failure(let e): return .object(["ok": .bool(false), "error": .string("\(e)"), "line": .number(Double(e.line))])
+            }
+        })
+
+        tools.append(Tool(
+            name: "patch_write", title: "Write a patch",
+            description: "Put a text on a Patch device. The text is compiled first; an error is returned and nothing changes. A good text replaces the device's program at once (the sound keeps playing, delay lines carry over) and names the device after the patch. Returns a receipt.",
+            inputSchema: Schema.object(["track": trackArg, "device": deviceArg, "source": Schema.string("The patch text")], required: ["track", "device", "source"]),
+            annotations: ToolAnnotations()
+        ) { args in
+            let (t, d) = try await patchDevice(args)
+            let source = try args.string("source")
+            switch PatchCompiler.cached(source) {
+            case .failure(let e): throw ToolFailure("the patch does not compile: \(e)")
+            case .success(let p):
+                return try await session.receipt(.setDeviceSource(track: t.id, device: d.id, source: source, name: p.name == d.name ? nil : p.name),
+                                                 extra: ["program": patchReport(p)])
+            }
         })
 
         return tools

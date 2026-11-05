@@ -583,10 +583,12 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
     public var folded: Bool?
     /// The chains and macros of a rack ("audiorack", "midirack"). `nil` for every other device. See `Rack`.
     public var rack: Rack?
+    /// The text of a programmable device ("patch"). It compiles at load; see `PatchCompiler`.
+    public var source: String?
 
     public init(id: DeviceID = DeviceID(), format: String, identifier: String, name: String,
                 bypassed: Bool = false, state: Data? = nil, params: [String: Double] = [:], sidechain: TrackID? = nil,
-                rack: Rack? = nil) {
+                rack: Rack? = nil, source: String? = nil) {
         self.id = id
         self.format = format
         self.identifier = identifier
@@ -596,9 +598,10 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
         self.params = params
         self.sidechain = sidechain
         self.rack = rack
+        self.source = source
     }
 
-    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params, pluginParams, sidechain, folded, rack }
+    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params, pluginParams, sidechain, folded, rack, source }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -613,6 +616,7 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
         sidechain = try c.decodeIfPresent(TrackID.self, forKey: .sidechain)
         folded = try c.decodeIfPresent(Bool.self, forKey: .folded)
         rack = try c.decodeIfPresent(Rack.self, forKey: .rack)
+        source = try c.decodeIfPresent(String.self, forKey: .source)
         // A rack by identifier always has its chains, even from a file that left them out.
         if rack == nil, format == "builtin", identifier == "audiorack" || identifier == "midirack" { rack = Rack() }
     }

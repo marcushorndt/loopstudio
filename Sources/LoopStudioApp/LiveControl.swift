@@ -202,7 +202,7 @@ enum AppTools {
                 "format": .string(d.format), "identifier": .string(d.identifier), "bypassed": .bool(d.bypassed),
                 "folded": .bool(m.foldedDevices.contains(d.id)), "marked": .bool(m.selectedDevice == d.id),
             ]
-            if d.format == "builtin", let spec = BuiltInEffects.spec(d.identifier) {
+            if let spec = d.spec {
                 o["knobs"] = .array(spec.params.map { param in
                     var k: [String: JSONValue] = ["key": .string(param.key), "name": .string(param.name),
                                                   "value": .number(d.params[param.key] ?? param.def)]

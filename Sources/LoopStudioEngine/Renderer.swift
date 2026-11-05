@@ -145,7 +145,16 @@ public final class Renderer {
             return new
         }
         /// A built-in device: the one the old renderer runs when it is the same device of the same kind, else a new one.
-        func builtIn(_ device: DeviceID, kind: String, params: [String: Double]) -> (DSPEffect, running: Bool)? {
+        func builtIn(_ device: DeviceID, kind: String, params: [String: Double], program: PatchProgram? = nil) -> (DSPEffect, running: Bool)? {
+            if let program {
+                // A patch: the running instance stays while its text is unchanged. A new text gets a new
+                // instance that takes the delay lines of the old one by name.
+                let kept = old?.instances[device] as? PatchDSP
+                if let kept, kept.program === program, kept.sampleRate == plan.sampleRate { return (kept, true) }
+                let new = PatchDSP(program: program, sampleRate: plan.sampleRate, carryingOver: kept)
+                new.configure(params)
+                return (new, false)
+            }
             if let kept = old?.instances[device], kept.spec.id == kind, kept.sampleRate == plan.sampleRate { return (kept, true) }
             guard let new = DSPEffect.make(kind, sampleRate: plan.sampleRate) else { return nil }
             // The audio thread may still run a kept effect, so only that thread may change it.
@@ -173,7 +182,7 @@ public final class Renderer {
                     chain.append(slot)
                     continue
                 }
-                guard let found = builtIn(e.device, kind: e.kind, params: e.params) else { continue }
+                guard let found = builtIn(e.device, kind: e.kind, params: e.params, program: e.program) else { continue }
                 made[e.device] = found.0
                 let scLine = e.sidechain == nil ? nil : line(e.sidechainDelay, "sc|\(e.device.rawValue.uuidString)")
                 let slot = Slot(effect: found.0, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params, sidechain: e.sidechain,

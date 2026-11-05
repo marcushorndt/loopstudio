@@ -134,6 +134,8 @@ public enum Command: Codable, Sendable {
     /// its chain selector "selector", all 0...127.
     case setDeviceParam(track: TrackID, device: DeviceID, key: String, value: Double?)
     case setDeviceBypass(track: TrackID, device: DeviceID, bypassed: Bool)
+    /// The text of a patch device, and its name when the text names it.
+    case setDeviceSource(track: TrackID, device: DeviceID, source: String?, name: String?)
     /// The track a sidechain effect listens to. `nil`: its own input.
     case setDeviceSidechain(track: TrackID, device: DeviceID, source: TrackID?)
 
@@ -736,6 +738,16 @@ extension Project {
                 var old = false
                 try t.withDevice(id) { old = $0.bypassed; $0.bypassed = bypassed }
                 return .setDeviceBypass(track: trackID, device: id, bypassed: old)
+            }
+
+        case .setDeviceSource(let trackID, let id, let source, let name):
+            return try withTrack(trackID) { t in
+                var oldSource: String?, oldName: String?
+                try t.withDevice(id) {
+                    oldSource = $0.source; $0.source = source
+                    if let name { oldName = $0.name; $0.name = name }
+                }
+                return .setDeviceSource(track: trackID, device: id, source: oldSource, name: oldName)
             }
 
         case .setDeviceSidechain(let trackID, let id, let source):

@@ -83,6 +83,9 @@ struct EffectPlan {
     var rack: RackPlan? = nil
     /// Keys a macro of an enclosing rack drives. Their automation is ignored; the macro sets them.
     var mappedKeys: Set<String> = []
+    /// The compiled program of a patch device. The same text gives the same object, so the renderer keeps
+    /// the running instance while the text is unchanged.
+    var program: PatchProgram? = nil
 }
 
 /// One chain of a rack, compiled: its devices, its instrument (MIDI racks), its mixer and its zones.
@@ -419,7 +422,7 @@ public struct RenderPlan {
         func autoParams(_ device: DeviceID, of track: Track) -> [String: AutoLane] {
             var result: [String: AutoLane] = [:]
             guard let d = track.device(device) else { return result }
-            if let spec = BuiltInEffects.spec(d.identifier), d.format == "builtin" {
+            if let spec = d.spec {
                 // A fixed parameter (a look-ahead) sets the latency this plan compensates: a curve cannot move it.
                 for p in spec.params where !p.fixed { if let l = lane(device.rawValue, p.key) { result[p.key] = l } }
             } else {
@@ -686,7 +689,19 @@ public struct RenderPlan {
         var out = Compiled()
         for d in devices {
             if d.format == "builtin" {
-                guard let spec = BuiltInEffects.spec(d.identifier) else { continue }
+                guard let spec = d.spec else { continue }
+                if d.identifier == "patch" {
+                    // A patch that does not compile passes the sound through, and the warning says why.
+                    switch PatchCompiler.cached(d.source ?? "") {
+                    case .success(let program):
+                        var plan = EffectPlan(device: d.id, kind: "patch", params: d.params, bypassed: d.bypassed, auto: auto(d.id))
+                        plan.program = program
+                        out.effects.append(plan)
+                    case .failure(let error):
+                        warnings.append("\(d.name) on \"\(track.name)\" does not compile: \(error)")
+                    }
+                    continue
+                }
                 if spec.isRack {
                     let rack = compileRack(d, track: track, units: units, rate: rate, auto: auto, lane: lane, warnings: &warnings)
                     if d.identifier == "midirack" {

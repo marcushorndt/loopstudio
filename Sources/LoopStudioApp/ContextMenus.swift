@@ -296,6 +296,9 @@ struct DeviceMenu: View {
         if device.format == "audiounit", let unit = model.host.units[device.id] {
             Button("Open Plugin Window") { PluginWindow.show(unit, title: device.name) }
         }
+        if device.identifier == "patch", device.format == "builtin" {
+            Button("Edit Patch…") { PatchEditorWindow.show(model: model, track: track.id, device: device.id) }
+        }
         if device.format == "builtin", !device.params.isEmpty {
             Button("Reset All Parameters") {
                 model.apply(.batch(commands: device.params.keys.sorted().map { .setDeviceParam(track: track.id, device: device.id, key: $0, value: nil) }))

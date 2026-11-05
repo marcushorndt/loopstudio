@@ -434,16 +434,19 @@ public enum StandardTools {
             list: {
                 let help = MCPServer.Resource(uri: "loopstudio://help/ui", name: "UI glossary",
                                               description: "The words of the screen: views, panels, slots, devices, what the app cannot do.", mimeType: "text/plain")
-                guard await session.isOpen else { return [help] }
+                let patch = MCPServer.Resource(uri: "loopstudio://help/patch", name: "Patch language",
+                                               description: "The language of the programmable Patch device, on one page.", mimeType: "text/plain")
+                guard await session.isOpen else { return [help, patch] }
                 return [
                     .init(uri: "loopstudio://project/summary", name: "Project summary", description: "Name, tempo, tracks, ports, problems."),
                     .init(uri: "loopstudio://project/full", name: "Full project", description: "Everything in the project as JSON."),
-                    help,
+                    help, patch,
                 ]
             },
             read: { uri in
                 switch uri {
                 case "loopstudio://help/ui": return AssistantPrompt.glossary
+                case "loopstudio://help/patch": return PatchExamples.reference
                 case "loopstudio://project/summary": return try await summary(session).text
                 case "loopstudio://project/full": return try JSONValue(encoding: try await session.project()).text
                 default: return nil
@@ -598,6 +601,7 @@ public enum StandardTools {
             ("moveDevice", .moveDevice(track: track.id, device: DeviceID(uuid(10)), to: 0)),
             ("setDeviceParam", .setDeviceParam(track: track.id, device: DeviceID(uuid(10)), key: "mix", value: 0.3)),
             ("setDeviceBypass", .setDeviceBypass(track: track.id, device: DeviceID(uuid(10)), bypassed: true)),
+            ("setDeviceSource (the text of a Patch device; patch_write checks it first)", .setDeviceSource(track: track.id, device: DeviceID(uuid(10)), source: PatchExamples.tremolo, name: "Tremolo")),
             ("setDeviceSidechain (a compressor listens to another track; null: its own input)", .setDeviceSidechain(track: track.id, device: DeviceID(uuid(10)), source: TrackID(uuid(2)))),
             ("insertDevice (an Audio Effect Rack: chains of effects behind 8 macros and a chain selector; \"midirack\" for instruments)",
              .insertDevice(track: track.id, device: { var r = BuiltInEffects.makeSlot("audiorack")!; r.id = DeviceID(uuid(11)); r.rack!.chains[0].id = ChainID(uuid(12)); return r }(), index: nil)),

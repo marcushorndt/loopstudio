@@ -261,7 +261,7 @@ final class KeyMonitor {
             if let window = NSApp.keyWindow {
                 if window.firstResponder is NSText { return event }
                 let id = window.identifier?.rawValue ?? ""
-                if window.sheetParent != nil || window.attachedSheet != nil || id.contains("Settings") || id == "loopstudio.plugin" { return event }
+                if window.sheetParent != nil || window.attachedSheet != nil || id.contains("Settings") || id.hasPrefix("loopstudio.") { return event }
             }
             let typed = event.charactersIgnoringModifiers?.lowercased() ?? ""
             // Turning the keyboard off releases the notes it still holds.

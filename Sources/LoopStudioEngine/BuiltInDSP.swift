@@ -105,6 +105,10 @@ public class DSPEffect: @unchecked Sendable {
         case "tapeEcho": effect = TapeEchoDSP(spec: spec, sampleRate: sampleRate)
         case "livecut": effect = LiveCutDSP(spec: spec, sampleRate: sampleRate)
         case "granulator": effect = GranulatorDSP(spec: spec, sampleRate: sampleRate)
+        // A patch without a program: the starter. The renderer gives a device its own program (`PatchDSP`).
+        case "patch":
+            guard case .success(let program) = PatchCompiler.cached(PatchExamples.starter) else { return nil }
+            effect = PatchDSP(program: program, sampleRate: sampleRate)
         case _ where spec.view == "eq" && spec.bands > 0: effect = EQDSP(spec: spec, sampleRate: sampleRate)
         default: return nil
         }

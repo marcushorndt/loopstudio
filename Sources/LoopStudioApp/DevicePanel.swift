@@ -391,7 +391,7 @@ struct DeviceCard: View {
     }
 
     private var openCard: some View {
-        let spec = device.format == "builtin" ? BuiltInEffects.spec(device.identifier) : nil
+        let spec = device.spec
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Button { model.toggleDeviceFold(device.id) } label: {
@@ -444,6 +444,9 @@ struct DeviceCard: View {
                         .opacity(device.bypassed ? 0.4 : 1)
                 } else if let spec, spec.view == "granulator" {
                     GranulatorView(track: track, device: device, spec: spec)
+                        .opacity(device.bypassed ? 0.4 : 1)
+                } else if let spec, spec.view == "patch" {
+                    PatchCardView(track: track, device: device, spec: spec)
                         .opacity(device.bypassed ? 0.4 : 1)
                 } else if let spec, !spec.groups.isEmpty {
                     GroupedKnobs(track: track, device: device, spec: spec)

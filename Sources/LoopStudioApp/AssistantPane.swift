@@ -24,8 +24,8 @@ struct AssistantPane: View {
 
     private var noKey: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("The assistant needs a Claude API key.").font(.system(size: 12)).foregroundStyle(Theme.text)
-            Text("The key goes into the Keychain of this Mac. Open Settings › Assistant to enter it.").font(.system(size: 11)).foregroundStyle(Theme.dim)
+            Text("The assistant needs an API key for \(assistant.provider.name).").font(.system(size: 12)).foregroundStyle(Theme.text)
+            Text("The key goes into the Keychain of this Mac. Open Settings › Assistant to enter it or to pick another provider.").font(.system(size: 11)).foregroundStyle(Theme.dim)
             SettingsLink { Text("Open Settings…") }.buttonStyle(.bordered).controlSize(.small)
             Spacer()
         }
@@ -53,7 +53,8 @@ struct AssistantPane: View {
 
     private var status: some View {
         HStack(spacing: 8) {
-            Text(assistant.modelName).font(.system(size: 10)).foregroundStyle(Theme.dim).hint("The model. Change it in Settings › Assistant.")
+            Text("\(assistant.provider.name) · \(assistant.modelName)").font(.system(size: 10)).foregroundStyle(Theme.dim).lineLimit(1)
+                .hint("The provider and the model. Change them in Settings › Assistant.")
             Toggle(isOn: Binding(get: { assistant.askBeforeChanges }, set: { assistant.askBeforeChanges = $0 })) {
                 Text("Ask first").font(.system(size: 10))
             }

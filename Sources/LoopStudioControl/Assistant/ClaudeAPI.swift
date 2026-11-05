@@ -13,10 +13,19 @@ public struct TokenUsage: Sendable, Hashable, Codable {
         input += other.input; output += other.output; cacheRead += other.cacheRead; cacheWrite += other.cacheWrite
     }
 
-    /// Price in US dollars for a model, from the public rates (checked 2026-11-05). Unknown model: zero.
+    /// Price in US dollars for a model, from the public rates (Anthropic checked 2026-11-05; OpenAI from
+    /// memory, an estimate). Unknown model: zero.
     public func cost(model: String) -> Double {
         let (inRate, outRate, cacheRate): (Double, Double, Double)
         switch true {
+        case model.hasPrefix("gpt-5-nano"): (inRate, outRate, cacheRate) = (0.05, 0.40, 0.005)
+        case model.hasPrefix("gpt-5-mini"): (inRate, outRate, cacheRate) = (0.25, 2, 0.025)
+        case model.hasPrefix("gpt-5"): (inRate, outRate, cacheRate) = (1.25, 10, 0.125)
+        case model.hasPrefix("gpt-4.1-mini"): (inRate, outRate, cacheRate) = (0.40, 1.60, 0.10)
+        case model.hasPrefix("gpt-4.1"): (inRate, outRate, cacheRate) = (2, 8, 0.50)
+        case model.hasPrefix("gpt-4o"): (inRate, outRate, cacheRate) = (2.50, 10, 1.25)
+        case model.hasPrefix("o4-mini"), model.hasPrefix("o3-mini"): (inRate, outRate, cacheRate) = (1.10, 4.40, 0.275)
+        case model.hasPrefix("o3"): (inRate, outRate, cacheRate) = (2, 8, 0.50)
         case model.hasPrefix("claude-fable"): (inRate, outRate, cacheRate) = (10, 50, 0.25)
         case model.hasPrefix("claude-opus-5-5"): (inRate, outRate, cacheRate) = (4, 20, 0.20)
         case model.hasPrefix("claude-opus"): (inRate, outRate, cacheRate) = (5, 25, 0.50)

@@ -29,12 +29,6 @@ final class AssistantModel {
         }
     }
 
-    static let models: [(id: String, name: String)] = [
-        ("claude-opus-5-5", "Claude Opus 5.5"),
-        ("claude-sonnet-5-5", "Claude Sonnet 5.5"),
-        ("claude-haiku-5-5", "Claude Haiku 5.5"),
-        ("claude-fable-5-1", "Claude Fable 5.1"),
-    ]
     static let efforts = ["low", "medium", "high", "xhigh", "max"]
 
     private(set) var rows: [Row] = []
@@ -48,18 +42,35 @@ final class AssistantModel {
     var askBeforeChanges: Bool = UserDefaults.standard.object(forKey: "assistantAsk") as? Bool ?? false {
         didSet { UserDefaults.standard.set(askBeforeChanges, forKey: "assistantAsk") }
     }
-    var modelID: String = UserDefaults.standard.string(forKey: "assistantModel") ?? "claude-opus-5-5" {
-        didSet { UserDefaults.standard.set(modelID, forKey: "assistantModel"); engine = nil }
+    /// Who serves the model. A change starts a new engine; the rows stay, the model's transcript starts over.
+    var provider: ModelProvider = ModelProvider(rawValue: UserDefaults.standard.string(forKey: "assistantProvider") ?? "") ?? .openai {
+        didSet { UserDefaults.standard.set(provider.rawValue, forKey: "assistantProvider"); engine = nil; keys[provider] = Keychain.read(account: provider.keychainAccount) ?? "" }
+    }
+    /// The model per provider, kept between launches.
+    private var modelIDs: [ModelProvider: String] = Dictionary(uniqueKeysWithValues: ModelProvider.allCases.compactMap { p in
+        UserDefaults.standard.string(forKey: "assistantModel.\(p.rawValue)").map { (p, $0) }
+    })
+    var modelID: String {
+        get { modelIDs[provider] ?? provider.defaultModel }
+        set { modelIDs[provider] = newValue; UserDefaults.standard.set(newValue, forKey: "assistantModel.\(provider.rawValue)"); engine = nil }
     }
     var effort: String = UserDefaults.standard.string(forKey: "assistantEffort") ?? "medium" {
         didSet { UserDefaults.standard.set(effort, forKey: "assistantEffort"); engine = nil }
     }
-    /// The key, from the Keychain. Setting it writes the Keychain; empty removes it.
-    var apiKey: String = Keychain.read() ?? "" {
-        didSet { Keychain.write(apiKey); engine = nil }
+    /// The keys per provider, from the Keychain. Setting one writes the Keychain; empty removes it.
+    private var keys: [ModelProvider: String] = Dictionary(uniqueKeysWithValues: ModelProvider.allCases.map { ($0, Keychain.read(account: $0.keychainAccount) ?? "") })
+    var apiKey: String {
+        get { keys[provider] ?? "" }
+        set { keys[provider] = newValue.trimmingCharacters(in: .whitespacesAndNewlines); Keychain.write(newValue, account: provider.keychainAccount); engine = nil }
+    }
+    func key(for p: ModelProvider) -> String { keys[p] ?? "" }
+    func setKey(_ value: String, for p: ModelProvider) {
+        keys[p] = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        Keychain.write(value, account: p.keychainAccount)
+        if p == provider { engine = nil }
     }
     var hasKey: Bool { !apiKey.isEmpty }
-    var modelName: String { Self.models.first { $0.id == modelID }?.name ?? modelID }
+    var modelName: String { provider.models.first { $0.id == modelID }?.name ?? modelID }
 
     @ObservationIgnored private let app: AppModel
     @ObservationIgnored private var engine: AssistantEngine?
@@ -77,7 +88,7 @@ final class AssistantModel {
         for tool in StandardTools.namedTools(session: session) { registry.add(tool) }
         for tool in AppTools.tools(model: app) { registry.add(tool) }
         let config = AssistantConfig(model: modelID, effort: effort)
-        return AssistantEngine(transport: URLSessionTransport(apiKey: apiKey), registry: registry, config: config)
+        return AssistantEngine(transport: provider.transport(apiKey: apiKey), registry: registry, config: config)
     }
 
     /// One line about the screen, so a short request needs no ui_state call.
@@ -263,17 +274,16 @@ final class AssistantModel {
     }
 }
 
-/// The API key in the login Keychain. Never in a file, never in a log.
+/// The API keys in the login Keychain, one account per provider. Never in a file, never in a log.
 enum Keychain {
     static let service = "LoopStudio Assistant"
-    static let account = "anthropic-api-key"
 
-    private static var query: [String: Any] {
+    private static func query(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
     }
 
-    static func read() -> String? {
-        var q = query
+    static func read(account: String) -> String? {
+        var q = query(account)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
@@ -281,13 +291,13 @@ enum Keychain {
         return String(data: data, encoding: .utf8)
     }
 
-    static func write(_ value: String) {
+    static func write(_ value: String, account: String) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { SecItemDelete(query as CFDictionary); return }
+        guard !trimmed.isEmpty else { SecItemDelete(query(account) as CFDictionary); return }
         let data = Data(trimmed.utf8)
-        let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        let status = SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound {
-            var q = query
+            var q = query(account)
             q[kSecValueData as String] = data
             SecItemAdd(q as CFDictionary, nil)
         }

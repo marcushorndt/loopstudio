@@ -100,8 +100,16 @@ The model is not deterministic. The pipeline around it is:
 | Claude Code or Desktop over MCP (today) | Zero work, full agent harness, file access | A second window, no UI snapshot, no receipt cards, the agent's prose is the report |
 | A local model (MLX or Ollama) | Offline, free | Tool calling is weak at this size; a wrong tool call per minute is worse than no assistant |
 
-Decision: build the in-app pane on the Claude API, and keep the MCP path with the same tool layer. `ui_state`,
+Decision: build the in-app pane on a hosted model API, and keep the MCP path with the same tool layer. `ui_state`,
 the named tools and the receipts serve both; an external agent gets the honesty for free.
+
+**Providers (2026-11-05).** Marcus starts with OpenAI. The engine keeps one transcript shape (the Messages API:
+content blocks, `tool_use`, `tool_result`); a provider that speaks another API gets a transport that translates
+the request and the stream (`ModelProvider`, `OpenAITransport` in `Assistant/OpenAIAPI.swift`: Chat
+Completions with function tools, `stream_options`, `reasoning_effort` on reasoning models; thinking blocks of
+the other provider are dropped on the way out). Receipts, plan mode, the undo group and the claim check do not
+know the provider. Settings › Assistant has the provider switch, one key per provider in the Keychain, a model
+list per provider and a free model id field. A provider switch starts a new model transcript; the rows stay.
 
 Model and wire (from the `claude-api` skill, checked 2026-11-05): `claude-opus-5-5` as the default, selectable
 in the settings. Raw HTTPS from Swift with `URLSession` (no Swift SDK exists), streaming, `tool_choice: auto` (a
@@ -156,8 +164,9 @@ one step, the status line shows the last command.
 - `AssistantPane`: the fifth browser tab. `AssistantSettingsView`: Settings › Assistant.
 - Tests: `AssistantEngineTests.swift` with a scripted transport (a tool call and its receipt, a claim without
   a receipt, plan mode and skip, a removal asks, the SSE parser and the event decoder).
-- Not verified against the live API in this session: no key was entered. The wire format follows the
-  `claude-api` skill of 2026-11-05.
+- Not verified against a live API in this session: no key was entered. The Anthropic wire format follows the
+  `claude-api` skill of 2026-11-05; the OpenAI Chat Completions shape is from memory and tested only against
+  recorded chunks (`OpenAITransportTests.swift`).
 
 ### Stage 3: the replay harness
 

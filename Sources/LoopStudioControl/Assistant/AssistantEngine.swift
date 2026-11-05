@@ -80,8 +80,8 @@ public actor AssistantEngine {
             "output_config": .object(["effort": .string(config.effort)]),
             "messages": .array(messages),
         ]
-        // A refusal routes to a sibling model instead of ending the turn. Haiku has no such route.
-        if !config.model.hasPrefix("claude-haiku") { body["fallbacks"] = .string("default") }
+        // Anthropic: a refusal routes to a sibling model instead of ending the turn. Haiku has no such route.
+        if config.model.hasPrefix("claude"), !config.model.hasPrefix("claude-haiku") { body["fallbacks"] = .string("default") }
         return .object(body)
     }
 

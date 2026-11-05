@@ -6,6 +6,7 @@ struct AssistantSettingsView: View {
     @Environment(AssistantModel.self) private var assistant
     @State private var key = ""
     @State private var customModel = ""
+    @FocusState private var keyFocused: Bool
 
     private var provider: ModelProvider { assistant.provider }
     private var knownModel: Bool { provider.models.contains { $0.id == assistant.modelID } }
@@ -22,7 +23,12 @@ struct AssistantSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("\(provider.name) API key") {
-                SecureField(provider.keyHint, text: $key)
+                // In a grouped form the first string of a field is its label, drawn to the left, and the field
+                // itself has no border until it has focus. A hidden label and a bordered field keep it visible.
+                SecureField("API key", text: $key, prompt: Text(provider.keyHint))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .focused($keyFocused)
                     .onSubmit { assistant.setKey(key, for: provider) }
                 HStack {
                     Button("Save") { assistant.setKey(key, for: provider) }.disabled(key == assistant.key(for: provider))
@@ -45,7 +51,10 @@ struct AssistantSettingsView: View {
                     Text("Other…").tag("custom")
                 }
                 if !knownModel || !customModel.isEmpty {
-                    TextField("Model id", text: $customModel)
+                    TextField("Model id", text: $customModel, prompt: Text("Model id, as the provider names it"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
                         .onSubmit { if !customModel.isEmpty { assistant.modelID = customModel } }
                     Text("Type the model id as the provider names it, then press Return.").font(.caption).foregroundStyle(.secondary)
                 }
@@ -64,7 +73,14 @@ struct AssistantSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { key = assistant.key(for: provider); customModel = knownModel ? "" : assistant.modelID }
-        .onChange(of: assistant.provider) { _, p in key = assistant.key(for: p); customModel = knownModel ? "" : assistant.modelID }
+        .onAppear {
+            key = assistant.key(for: provider); customModel = knownModel ? "" : assistant.modelID
+            // The tab opens to enter a key: the cursor waits in the field.
+            if key.isEmpty { keyFocused = true }
+        }
+        .onChange(of: assistant.provider) { _, p in
+            key = assistant.key(for: p); customModel = knownModel ? "" : assistant.modelID
+            if key.isEmpty { keyFocused = true }
+        }
     }
 }

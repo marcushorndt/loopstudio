@@ -44,7 +44,7 @@ struct ProjectSettingsView: View {
             Section("Follow actions") {
                 LabeledContent("Random seed") {
                     HStack {
-                        TextField("", text: $seedText).frame(width: 110)
+                        TextField("", text: $seedText).textFieldStyle(.roundedBorder).frame(width: 110)
                             .onSubmit { if let v = UInt32(seedText) { model.apply(.setRandomSeed(seed: v)) } else { seedText = "\(model.project.randomSeed)" } }
                         Button("New") { model.apply(.setRandomSeed(seed: UInt32.random(in: 1...UInt32.max))) }
                     }

@@ -96,7 +96,7 @@ extension Project {
         func walk(_ devices: [DeviceSlot], prefix: String) {
             for device in devices {
                 let name = prefix + device.name
-                if device.format == "builtin", let spec = BuiltInEffects.spec(device.identifier) {
+                if let spec = device.spec {
                     for p in spec.params where !(spec.isRack && p.key == "selector" && device.rack?.chains.isEmpty == true) {
                         add(device.id.rawValue, p.key, "\(name) › \(p.name)", p.min, p.max, p.def, p.unit, log: p.logarithmic, choices: p.choices)
                     }

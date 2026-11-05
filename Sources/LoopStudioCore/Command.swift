@@ -709,7 +709,7 @@ extension Project {
                 try t.withDevice(id) { device in
                     var value = value
                     // A key the device does not have would be stored and do nothing. Values outside the range are clamped.
-                    if device.format == "builtin", let spec = BuiltInEffects.spec(device.identifier) {
+                    if let spec = device.spec {
                         guard let param = spec.params.first(where: { $0.key == key }) else {
                             throw CommandError.invalidValue("\(spec.name) has no parameter \"\(key)\"; it has \(spec.params.map(\.key).joined(separator: ", "))")
                         }

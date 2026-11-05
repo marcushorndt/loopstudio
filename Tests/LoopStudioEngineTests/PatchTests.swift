@@ -181,3 +181,19 @@ private func run(_ source: String, _ params: [String: Double] = [:], _ input: [F
     let seconds = Date().timeIntervalSince(start)
     #expect(seconds < 0.1, "\(program.ops.count) ops per frame took \(seconds) s for one second of sound")
 }
+
+@Test func aPatchKnobIsSetThroughTheCommandLikeAnyKnob() throws {
+    var project = Project(name: "P", sampleRate: 48_000)
+    let track = Track(name: "A", kind: .audio)
+    _ = try Command.insertTrack(track: track, index: 0).apply(to: &project)
+    var slot = BuiltInEffects.makeSlot("patch")!
+    slot.source = PatchExamples.tremolo
+    _ = try Command.insertDevice(track: track.id, device: slot, index: nil).apply(to: &project)
+    // The knob the text declares takes a value (clamped to its range); one the text does not declare is refused.
+    _ = try Command.setDeviceParam(track: track.id, device: slot.id, key: "depth", value: 2).apply(to: &project)
+    #expect(project.track(track.id)?.device(slot.id)?.params["depth"] == 1)
+    #expect(throws: CommandError.self) { _ = try Command.setDeviceParam(track: track.id, device: slot.id, key: "cutoff", value: 1).apply(to: &project) }
+    // The automation lanes of the track list the patch's knobs.
+    let targets = project.automationTargets(of: project.track(track.id)!)
+    #expect(targets.contains { $0.address.parameter == "rate" && $0.address.node == slot.id.rawValue })
+}

@@ -126,29 +126,42 @@ one step, the status line shows the last command.
 
 ## 5. Stages
 
-### Stage 1: the honest tool layer (Control and App, no network)
+### Stage 1: the honest tool layer (built 2026-11-05)
 
-- `Receipt` type in Control: command, revision before and after, undo id, read-back as JSON.
-- `ProjectStore.apply` returns the new revision; a `readBack(for: Command)` in Core returns the touched values
-  from the project after the apply.
-- Named tools (`track_*`, `device_*`, `param_set`, `clip_*`, `notes_add`, `send_set`, `tempo_set`) with strict
-  schemas, built on `Command`. `command_apply` returns a receipt too.
-- `ui_state` in the App tools. `loopstudio://help/ui` glossary resource.
-- Tests in Control: every named tool produces a receipt whose read-back matches the project; a rejected call
-  leaves the revision unchanged; a batch is one undo step.
-- Visible result: Claude Code over MCP gets receipts at once.
+- `Receipt` in Control (`Receipt.swift`): command kind, revision before and after, and the changes read back from
+  the project after the apply (`ReadBack.changes(for:before:after:)`, one path per touched value in the words of
+  the screen: "Drums › Delay › Feedback: 0.40 to 0.55"). `EditSession.applied(_:)` runs before, apply and after;
+  the app does the three in one main-actor step, so a click in between cannot land in the receipt.
+- Named tools (`NamedTools.swift`): `track_add`, `track_rename`, `track_set`, `track_remove`, `device_add`,
+  `device_remove`, `device_move`, `device_bypass`, `param_set`, `clip_create`, `clip_set`, `clip_remove`,
+  `notes_set`, `send_set`, `tempo_set`, `loop_set`. `Resolve` finds a track by id, name, "master" or position, a
+  device by id, name or position, a clip by id, name or "track/slot N", a parameter by key or name. Several
+  matches are an error that lists them. The MCP server has them all.
+- `ui_state` in the app tools, the glossary as `loopstudio://help/ui`. `Command.isDestructive` marks removals.
+- Tests: `ReceiptTests.swift` (receipts, read-back, ambiguity, slots and notes, instruments, the MCP listing).
 
-### Stage 2: the pane and the model call
+### Stage 2: the pane and the model call (built 2026-11-05)
 
-- `AssistantModel` on the App: transcript, the turn loop (send, stream, run tool calls, send results, repeat),
-  the one-batch-per-turn wrapping, the claim check, the plan mode.
-- The HTTPS client with streaming and tool use, key in the Keychain, settings page entry.
-- The sidebar tab with the transcript, the receipt cards, Undo per turn, the status line.
-- Tests: the turn loop with a fake model that returns recorded outputs; the batch wrapping; the claim check.
+- `AssistantEngine` in Control (`Assistant/AssistantEngine.swift`): the turn loop over a `ModelTransport`.
+  The transcript is append-only; thinking blocks go back unchanged. Tool calls run through the same
+  `ToolRegistry` as MCP. A changing tool passes a `ToolGate` in plan mode, a removal always. The claim check
+  adds "No change was made in this turn." when the text claims an edit and no receipt exists.
+- `ClaudeAPI.swift`: the Messages API over `URLSession` with SSE streaming, `anthropic-version` 2026-10-21,
+  `fallbacks: "default"` (a refusal routes to a sibling model), effort in `output_config`, no `thinking` field.
+  `TokenUsage.cost(model:)` estimates the price.
+- `AssistantModel` in the app: the rows (user, commentary, progress, tool cards, notices), one undo group per
+  turn (`AppModel.beginUndoGroup` and `endUndoGroup`: the inverses of the turn become one undo step), the gate
+  as a pending card with Apply and Skip, the key in the login Keychain (`Keychain`), the settings in
+  `UserDefaults` (model, effort, ask first).
+- `AssistantPane`: the fifth browser tab. `AssistantSettingsView`: Settings › Assistant.
+- Tests: `AssistantEngineTests.swift` with a scripted transport (a tool call and its receipt, a claim without
+  a receipt, plan mode and skip, a removal asks, the SSE parser and the event decoder).
+- Not verified against the live API in this session: no key was entered. The wire format follows the
+  `claude-api` skill of 2026-11-05.
 
-### Stage 3: reference resolution and the replay harness
+### Stage 3: the replay harness
 
-- The system prompt with the resolution rules and the glossary.
+- The system prompt with the resolution rules and the glossary is in `AssistantPrompt.swift` (done).
 - Recorded conversations as fixtures (`Tests/Fixtures/assistant/*.json`): "rename the drums to Kit", "add a
   delay after the EQ on the bass", "make the second slot of track 2 loop two bars", "the delay is too loud, pull
   the feedback down a bit". Each replays without a network call and asserts the project and the receipts.

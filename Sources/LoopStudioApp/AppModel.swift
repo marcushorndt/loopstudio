@@ -65,7 +65,7 @@ enum ViewMode: String { case session, arrangement }
 enum DetailTab { case clip, devices }
 /// What the main area of the clip inspector shows.
 enum ClipPage { case content, gain, automation }
-enum SidebarTab: String, CaseIterable { case audio, effects, instruments, projects }
+enum SidebarTab: String, CaseIterable { case audio, effects, instruments, projects, assistant }
 
 
 /// The state of the open window: the project, the audio engine, the selection, and undo.
@@ -1370,9 +1370,17 @@ final class AppModel {
     }
 
     /// The edit, or the reason it is not possible. The MCP bridge reports the reason to the agent.
-    func tryApply(_ command: Command, key: String? = nil) throws {
+    /// `grouped`: the inverse goes into the open undo group (an assistant turn) instead of its own step.
+    func tryApply(_ command: Command, key: String? = nil, grouped: Bool = false) throws {
         let inverse = try command.apply(to: &project)
         journalAppend(command)
+        if grouped, undoGroup != nil {
+            undoGroup?.append(inverse)
+            lastKey = nil
+            redoStack.removeAll()
+            changed()
+            return
+        }
         let kind = Mirror(reflecting: command).children.first?.label ?? "\(command)"
         if let key, let last = lastKey, last.0 == key, last.2 == kind, Date().timeIntervalSince(last.1) < 0.8, !undoStack.isEmpty {
             lastKey = (key, Date(), kind) // same gesture: keep the first inverse
@@ -1382,6 +1390,23 @@ final class AppModel {
         }
         redoStack.removeAll()
         changed()
+    }
+
+    /// The inverses of the commands of the running assistant turn. One turn is one undo step.
+    @ObservationIgnored private var undoGroup: [Command]?
+
+    func beginUndoGroup() { endUndoGroup(); undoGroup = [] }
+
+    /// Closes the group: its inverses become one undo step. Returns whether the group held any change.
+    @discardableResult
+    func endUndoGroup() -> Bool {
+        guard let group = undoGroup else { return false }
+        undoGroup = nil
+        guard !group.isEmpty else { return false }
+        undoStack.append(group.count == 1 ? group[0] : .batch(commands: group.reversed()))
+        lastKey = nil
+        canUndo = true
+        return true
     }
 
     /// Counts the edits, so an agent can tell whether the project changed since it looked.

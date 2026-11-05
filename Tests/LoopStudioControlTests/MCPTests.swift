@@ -269,10 +269,12 @@ private func trackIDs(_ r: Client.Result) -> [String] {
 
 @Test func resourcesAppearWhenAProjectIsOpen() async throws {
     var client = Client()
-    #expect(try await client.rpc("resources/list")["result"]?["resources"]?.arrayValue?.isEmpty == true)
+    // Without a project only the UI glossary is there; the project resources come with the project.
+    let before = try await client.rpc("resources/list")["result"]?["resources"]?.arrayValue
+    #expect(before?.map { $0["uri"]?.stringValue } == ["loopstudio://help/ui"])
     _ = try await client.call("project_new", .object(["path": .string(tempProject())]))
     let list = try await client.rpc("resources/list")["result"]?["resources"]?.arrayValue
-    #expect(list?.count == 2)
+    #expect(list?.count == 3)
     let read = try await client.rpc("resources/read", .object(["uri": .string("loopstudio://project/summary")]))
     let text = try #require(read["result"]?["contents"]?.arrayValue?.first?["text"]?.stringValue)
     #expect(try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))["tracks"]?.intValue == 0)

@@ -18,15 +18,18 @@ struct SidebarView: View {
                 MIDIMappingList()
             } else {
                 tabs
-                TextField("Search", text: $search)
-                    .textFieldStyle(.roundedBorder)
-                    .padding(.horizontal, 10).padding(.bottom, 8)
+                if model.sidebarTab != .assistant {
+                    TextField("Search", text: $search)
+                        .textFieldStyle(.roundedBorder)
+                        .padding(.horizontal, 10).padding(.bottom, 8)
+                }
                 Divider()
                 switch model.sidebarTab {
                 case .audio: AudioBrowser(search: search)
                 case .effects: UnitList(title: "Audio Effects", match: "effect", units: units, loaded: unitsLoaded, search: search, builtIn: BuiltInEffects.all)
                 case .instruments: UnitList(title: "Instruments", match: "instrument", units: units, loaded: unitsLoaded, search: search, builtIn: BuiltInInstruments.all)
                 case .projects: ProjectList()
+                case .assistant: AssistantPane()
                 }
             }
         }
@@ -43,7 +46,7 @@ struct SidebarView: View {
                 Button { model.sidebarTab = tab } label: {
                     VStack(spacing: 2) {
                         Image(systemName: icon(tab)).font(.system(size: 15))
-                        Text(title(tab)).font(.system(size: 10))
+                        Text(title(tab)).font(.system(size: 10)).lineLimit(1).minimumScaleFactor(0.75)
                     }
                     .frame(maxWidth: .infinity).padding(.vertical, 6)
                     .foregroundStyle(model.sidebarTab == tab ? Theme.accent : Theme.dim)
@@ -62,6 +65,7 @@ struct SidebarView: View {
         case .effects: "slider.horizontal.3"
         case .instruments: "pianokeys"
         case .projects: "folder"
+        case .assistant: "sparkles"
         }
     }
 
@@ -71,6 +75,7 @@ struct SidebarView: View {
         case .effects: "Effects"
         case .instruments: "Instruments"
         case .projects: "Projects"
+        case .assistant: "Assistant"
         }
     }
 }

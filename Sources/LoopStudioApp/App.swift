@@ -4,9 +4,13 @@ import SwiftUI
 
 @main
 struct LoopStudioApp: App {
-    @State private var model = AppModel()
+    @State private var model: AppModel
+    @State private var assistant: AssistantModel
 
     init() {
+        let model = AppModel()
+        _model = State(initialValue: model)
+        _assistant = State(initialValue: AssistantModel(app: model))
         // Started from the shell or a bare bundle, the app needs this to get a menu bar and focus.
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate()
@@ -16,6 +20,7 @@ struct LoopStudioApp: App {
         WindowGroup("LoopStudio") {
             RootView()
                 .environment(model)
+                .environment(assistant)
                 .id(model.themeName)
                 .tint(Theme.accent)
                 .preferredColorScheme(model.isLightTheme ? .light : .dark)
@@ -93,8 +98,9 @@ struct LoopStudioApp: App {
             TabView {
                 AudioSettingsView().tabItem { Label("Audio", systemImage: "hifispeaker") }
                 ProjectSettingsView().frame(width: 520, height: 420).tabItem { Label("Project", systemImage: "doc") }
+                AssistantSettingsView().frame(width: 520, height: 420).tabItem { Label("Assistant", systemImage: "sparkles") }
             }
-            .environment(model).preferredColorScheme(model.isLightTheme ? .light : .dark)
+            .environment(model).environment(assistant).preferredColorScheme(model.isLightTheme ? .light : .dark)
         }
     }
 }

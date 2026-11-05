@@ -432,14 +432,18 @@ public enum StandardTools {
     public static func resources(session: any EditSession) -> MCPServer.Resources {
         MCPServer.Resources(
             list: {
-                guard await session.isOpen else { return [] }
+                let help = MCPServer.Resource(uri: "loopstudio://help/ui", name: "UI glossary",
+                                              description: "The words of the screen: views, panels, slots, devices, what the app cannot do.", mimeType: "text/plain")
+                guard await session.isOpen else { return [help] }
                 return [
                     .init(uri: "loopstudio://project/summary", name: "Project summary", description: "Name, tempo, tracks, ports, problems."),
                     .init(uri: "loopstudio://project/full", name: "Full project", description: "Everything in the project as JSON."),
+                    help,
                 ]
             },
             read: { uri in
                 switch uri {
+                case "loopstudio://help/ui": return AssistantPrompt.glossary
                 case "loopstudio://project/summary": return try await summary(session).text
                 case "loopstudio://project/full": return try JSONValue(encoding: try await session.project()).text
                 default: return nil

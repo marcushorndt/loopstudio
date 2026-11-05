@@ -27,11 +27,16 @@ final class LiveControl {
     func stop() { transport?.stop() }
 }
 
-/// The open project of the app, seen as an `EditSession`.
+/// The open project of the app, seen as an `EditSession`. `grouped`: the edits go into the app's open undo
+/// group (the in-app assistant: one turn, one undo step).
 final class AppSession: EditSession, @unchecked Sendable {
     private let model: AppModel
+    private let grouped: Bool
 
-    init(model: AppModel) { self.model = model }
+    init(model: AppModel, grouped: Bool = false) {
+        self.model = model
+        self.grouped = grouped
+    }
 
     var isOpen: Bool { get async { true } }
     var path: String? { get async { await MainActor.run { model.packageURL.path } } }
@@ -56,8 +61,18 @@ final class AppSession: EditSession, @unchecked Sendable {
     func revision() async -> Int { await MainActor.run { model.revision } }
 
     func apply(_ command: Command, coalescingKey: String?) async throws {
-        do { try await MainActor.run { try model.tryApply(command, key: coalescingKey) } }
+        do { try await MainActor.run { try model.tryApply(command, key: coalescingKey, grouped: grouped) } }
         catch { throw ToolFailure("command rejected: \(error)") }
+    }
+
+    /// Before, apply and after in one main-actor step, so a click in between cannot land in the receipt.
+    func applied(_ command: Command, coalescingKey: String?) async throws -> AppliedChange {
+        try await MainActor.run {
+            let before = model.project, revisionBefore = model.revision
+            do { try model.tryApply(command, key: coalescingKey, grouped: grouped) }
+            catch { throw ToolFailure("command rejected: \(error)") }
+            return AppliedChange(before: before, after: model.project, revisionBefore: revisionBefore, revisionAfter: model.revision)
+        }
     }
 
     func undo() async throws -> Bool { await MainActor.run { let could = model.canUndo; model.undo(); return could } }
@@ -77,6 +92,16 @@ enum AppTools {
                  description: "The transport (playing, position, tempo), the open project, the selection, Link peers and the last status line of the app.",
                  inputSchema: Schema.object(), annotations: .read) { _ in
                 await box.on { status($0) }
+            },
+            Tool(name: "ui_state", title: "What is on screen",
+                 description: """
+                 The screen in its own words: the open view (session or arrangement), the selected track with its position, its device \
+                 chain (name, id, position, bypass, the knobs with their keys and values), its session slots (row from 1, clip name, playing), \
+                 the marked device, the selected clips, the open panel, the browser tab. Call it before acting on "this", "the marked \
+                 device", "slot 2" and the like.
+                 """,
+                 inputSchema: Schema.object(), annotations: .read) { _ in
+                await box.on { uiState($0) }
             },
             Tool(name: "transport", title: "Transport",
                  description: "play: from the cursor. stop: stop; a second stop goes back to the start. pause / continue: stop in place and go on. seek: move the cursor to a tick (also while playing).",
@@ -163,6 +188,81 @@ enum AppTools {
             }
         }
         if !playing.isEmpty { o["sessionPlaying"] = .array(playing) }
+        return .object(o)
+    }
+
+    /// The screen as a structured snapshot, in the words of the UI.
+    @MainActor
+    static func uiState(_ m: AppModel) -> JSONValue {
+        let p = m.project
+        let reader = ReadBack.Reader(p)
+        func device(_ d: DeviceSlot, position: Int, on track: Track) -> JSONValue {
+            var o: [String: JSONValue] = [
+                "id": .string(d.id.description), "name": .string(d.name), "position": .number(Double(position)),
+                "format": .string(d.format), "identifier": .string(d.identifier), "bypassed": .bool(d.bypassed),
+                "folded": .bool(m.foldedDevices.contains(d.id)), "marked": .bool(m.selectedDevice == d.id),
+            ]
+            if d.format == "builtin", let spec = BuiltInEffects.spec(d.identifier) {
+                o["knobs"] = .array(spec.params.map { param in
+                    var k: [String: JSONValue] = ["key": .string(param.key), "name": .string(param.name),
+                                                  "value": .number(d.params[param.key] ?? param.def)]
+                    if let text = reader.paramValue(track.id, d.id, param.key) { k["shown"] = .string(text) }
+                    return .object(k)
+                })
+            } else if let params = d.pluginParams {
+                o["knobs"] = .array(params.prefix(64).map { .object(["key": .string($0.key), "name": .string($0.name), "value": .number(d.params[$0.key] ?? $0.def)]) })
+            }
+            if let rack = d.rack {
+                o["chains"] = .array(rack.chains.map { chain in
+                    .object(["id": .string(chain.id.description), "name": .string(chain.name),
+                             "devices": .array(chain.devices.enumerated().map { device($0.element, position: $0.offset + 1, on: track) })])
+                })
+            }
+            return .object(o)
+        }
+        func trackSummary(_ t: Track, position: Int?) -> JSONValue {
+            var o: [String: JSONValue] = [
+                "id": .string(t.id.description), "name": .string(t.name), "kind": .string(t.kind.rawValue),
+                "volumeDb": .number(t.volumeDb), "pan": .number(t.pan), "mute": .bool(t.mute), "solo": .bool(t.solo),
+                "armed": .bool(m.armedTracks.contains(t.id)),
+            ]
+            if let position { o["position"] = .number(Double(position)) }
+            return .object(o)
+        }
+        var o: [String: JSONValue] = [
+            "view": .string(m.viewMode.rawValue),
+            "browserTab": .string(m.sidebarTab.rawValue),
+            "panel": .string(m.detailOpen ? (m.detailTab == .devices ? "devices" : "clip") : "closed"),
+            "playing": .bool(m.transportPlaying),
+            "position": .string(m.positionText()),
+            "bpm": .number(m.bpm),
+            "tracks": .array(p.tracks.enumerated().map { trackSummary($0.element, position: $0.offset + 1) }),
+        ]
+        if let id = m.selectedTrack, let t = p.track(id) {
+            let position = p.tracks.firstIndex { $0.id == id }.map { $0 + 1 }
+            var sel = trackSummary(t, position: position).objectValue ?? [:]
+            sel["devices"] = .array(t.devices.enumerated().map { device($0.element, position: $0.offset + 1, on: t) })
+            let now = m.sessionTick
+            sel["slots"] = .array(t.slots.enumerated().map { row, slot in
+                guard let slot else { return .object(["row": .number(Double(row + 1)), "empty": .bool(true)]) }
+                var s: [String: JSONValue] = ["row": .number(Double(row + 1)), "clip": .string(m.clipName(slot.clip)), "clipId": .string(slot.clip.id.description)]
+                if case .playing = m.slotState(track: t, row: row, at: now) { s["playing"] = .bool(true) }
+                return .object(s)
+            })
+            sel["sends"] = .array(t.sends.map { .object(["to": .string(reader.trackName($0.target)), "db": .number($0.levelDb)]) })
+            o["selectedTrack"] = .object(sel)
+        }
+        if let d = m.selectedDevice, let tid = m.selectedTrack, let t = p.track(tid), let dev = t.device(d) {
+            o["markedDevice"] = .object(["id": .string(d.description), "name": .string(dev.name), "track": .string(t.name)])
+        }
+        if !m.selectedClips.isEmpty {
+            o["selectedClips"] = .array(m.selectedClips.compactMap { id in
+                guard let info = reader.clipInfo(id) else { return nil }
+                return .object(["id": .string(id.description), "name": .string(info.name), "where": .string(info.path), "detail": .string(info.detail)])
+            })
+        }
+        if let row = m.selectedSceneRow { o["selectedScene"] = .number(Double(row + 1)) }
+        if let l = p.loop { o["loop"] = .string("\(ReadBack.ticks(l.start)) to \(ReadBack.ticks(l.end))\(l.enabled ? "" : " (off)")") }
         return .object(o)
     }
 

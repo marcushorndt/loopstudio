@@ -281,9 +281,12 @@ private struct DeviceCardDrop: DropDelegate {
         let after = info.location.x > width / 2
         guard let provider = info.itemProviders(for: [.text]).first else { return false }
         let perform = perform
+        // Option at the drop: a copy of the card, like Option-drag in Live. Read now; the item loads later.
+        let copy = NSEvent.modifierFlags.contains(.option)
         _ = provider.loadObject(ofClass: NSString.self) { object, _ in
             guard let text = object as? NSString else { return }
-            let item = String(text)
+            var item = String(text)
+            if copy, item.hasPrefix("device:") { item = "devicecopy:" + item.dropFirst(7) }
             Task { @MainActor in perform(item, after) }
         }
         return true

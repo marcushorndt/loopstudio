@@ -30,9 +30,9 @@ extension AppModel {
         case .redo: canRedo
         case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil) || !selectedNotes.isEmpty
             || selectedScene != nil || selectedDevice != nil
-        case .cut, .copy: !selectedClips.isEmpty || selectedClip != nil
-        case .duplicate: !selectedClips.isEmpty || selectedClip != nil || !selectedNotes.isEmpty || selectedScene != nil || (trackFocused && selectedTrack != nil)
-        case .paste: !clipboard.isEmpty || !noteClipboard.isEmpty
+        case .cut, .copy: !selectedClips.isEmpty || selectedClip != nil || deviceFocused
+        case .duplicate: !selectedClips.isEmpty || selectedClip != nil || !selectedNotes.isEmpty || selectedScene != nil || (trackFocused && selectedTrack != nil) || deviceFocused
+        case .paste: !clipboard.isEmpty || !noteClipboard.isEmpty || deviceClipboard != nil
         case .backToArrangement, .captureSession: arrangementOverridden
         case .renameTrack: selectedTrack != nil || selectedClip != nil
         case .groupTracks, .duplicateTrack: selectedTrack != nil
@@ -53,13 +53,15 @@ extension AppModel {
         case .exportAudio: exportAudio()
         case .undo: undo()
         case .redo: redo()
-        case .cut: cutSelection()
-        case .copy: copySelection()
+        case .cut: if deviceFocused { cutDevice() } else { cutSelection() }
+        case .copy: if deviceFocused { copyDevice() } else { copySelection() }
         case .paste: pasteClipboard()
         case .duplicate:
-            // Marked notes: a copy right after them, like Live. The note clipboard keeps the copy. A focused
-            // track with nothing else marked duplicates the track, as ⌘D does in Live.
+            // Marked notes: a copy right after them, like Live. The note clipboard keeps the copy. A marked
+            // device card gets its copy right next to it. A focused track with nothing else marked
+            // duplicates the track, as ⌘D does in Live.
             if !selectedNotes.isEmpty { copySelection(); pasteClipboard() }
+            else if let id = selectedDevice, let (track, _) = deviceLocation(id) { duplicateDevice(track.id, id) }
             else if trackFocused, selectedClips.isEmpty, selectedClip == nil, selectedScene == nil, let t = selectedTrack { duplicateTrack(t) }
             else { duplicateSelection() }
         case .deleteSelection: deleteSelected()
@@ -412,9 +414,11 @@ extension AppModel {
             guard let first = notes.map(\.tick.rawValue).min(), let end = notes.map({ $0.tick.rawValue + $0.length.rawValue }).max() else { return }
             noteClipboard = notes.map { var n = $0; n.tick = Tick(n.tick.rawValue - first); return n }
             notePasteTick = Tick(end)
+            deviceClipboard = nil
             return
         }
         noteClipboard = []
+        deviceClipboard = nil
         var found: [(Int, Clip)] = []
         let ordered = orderedTracks
         for (i, t) in ordered.enumerated() {
@@ -434,6 +438,7 @@ extension AppModel {
     /// Pastes at the cursor, starting on the selected track.
     func pasteClipboard() {
         if !noteClipboard.isEmpty { pasteNotes(); return }
+        if clipboard.isEmpty, deviceClipboard != nil { pasteDevice(); return }
         guard !clipboard.isEmpty else { return }
         if viewMode == .session { pasteIntoSlots(); return }
         let ordered = orderedTracks
@@ -732,18 +737,20 @@ extension AppModel {
         apply(.moveDevice(track: track, device: device, to: to))
     }
 
-    /// A copy right after the device, in the same list. A rack copies with everything inside under new IDs.
+    /// A copy right after the device, in the same list, with the parameters and the plugin state as they are
+    /// now. A rack copies with everything inside under new IDs.
     func duplicateDevice(_ track: TrackID, _ device: DeviceID) {
         guard let t = project.track(track), let original = t.device(device) else { return }
         let list = siblings(of: device, on: t)
         guard let i = list.firstIndex(where: { $0.id == device }) else { return }
         var map: [UUID: UUID] = [:]
-        let copy = original.withFreshIDs(map: &map)
+        let copy = snapshot(original).withFreshIDs(map: &map)
         if let chain = t.chainHolding(device) {
             apply(.insertDeviceInChain(track: track, chain: chain.id, device: copy, index: i + 1))
         } else {
             apply(.insertDevice(track: track, device: copy, index: i + 1))
         }
+        selectedDevice = copy.id
     }
 
     // MARK: Scenes

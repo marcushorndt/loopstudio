@@ -267,6 +267,9 @@ struct DeviceMenu: View {
         let holder = track.chainHolding(device.id)
         Button(device.bypassed ? "Turn On" : "Bypass") { model.apply(.setDeviceBypass(track: track.id, device: device.id, bypassed: !device.bypassed)) }
         Button("Duplicate") { model.duplicateDevice(track.id, device.id) }
+        Button("Copy") { model.selectDevice(device.id); model.copyDevice() }
+        Button("Cut") { model.selectDevice(device.id); model.cutDevice() }
+        Button("Paste After") { model.selectDevice(device.id); model.pasteDevice() }.disabled(model.deviceClipboard == nil)
         Button("Move Left") { model.moveDevice(track.id, device.id, by: -1) }.disabled(siblings.first?.id == device.id)
         Button("Move Right") { model.moveDevice(track.id, device.id, by: 1) }.disabled(siblings.last?.id == device.id)
         Divider()

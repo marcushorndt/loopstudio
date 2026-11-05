@@ -17,8 +17,13 @@ enum DropItem: Transferable {
 
 extension Array where Element == DropItem {
     var files: [URL] { compactMap { if case .file(let url) = $0 { url } else { nil } } }
-    /// Only the strings the sidebar drags. Any other text is ignored.
-    var devices: [String] { compactMap { if case .device(let s) = $0, s.hasPrefix("fx:") || s.hasPrefix("au:") || s.hasPrefix("preset:") { s } else { nil } } }
+    /// The strings the sidebar drags, and a device card dragged by its title ("device:<id>", or
+    /// "devicecopy:<id>" for a copy). Any other text is ignored.
+    var devices: [String] {
+        compactMap {
+            if case .device(let s) = $0, ["fx:", "au:", "preset:", "device:", "devicecopy:"].contains(where: { s.hasPrefix($0) }) { s } else { nil }
+        }
+    }
     /// Session slots dragged by their name: "slot:<track>:<row>".
     var slots: [(track: TrackID, row: Int)] {
         compactMap {

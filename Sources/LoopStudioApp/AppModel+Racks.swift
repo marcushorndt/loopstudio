@@ -211,8 +211,8 @@ extension AppModel {
                 if parts.count == 2 { addAudioUnit(identifier: parts[0], name: parts[1], toChain: chain, on: track, at: index); used = true }
             } else if item.hasPrefix("preset:") {
                 insertPreset(at: URL(fileURLWithPath: String(item.dropFirst(7))), on: track, chain: chain, at: index); used = true
-            } else if let id = Self.draggedDevice(item) {
-                moveDevice(id, on: track, toChain: chain, at: index); used = true
+            } else if let (id, copy) = Self.draggedDevice(item) {
+                dropDevice(id, copy: copy, on: track, chain: chain, at: index); used = true
             }
         }
         if used { detailTab = .devices; detailOpen = true }

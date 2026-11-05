@@ -174,6 +174,9 @@ final class AppModel {
     var trackFocused = false
     var rangeSelection: RangeSelection?
     var clipboard: [ClipboardItem] = []
+    /// A device copied from its card (⌘C with the card marked). Paste puts a copy on the selected track.
+    /// The last copy wins: a copied device clears the clip clipboard and the other way round.
+    var deviceClipboard: DeviceSlot?
     /// Notes copied in the piano roll, from tick 0. While it is set, Paste puts notes into the open clip.
     var noteClipboard: [MIDINote] = []
     /// Where the next note paste starts in the clip: right after the copied notes, then after each paste.
@@ -1626,7 +1629,8 @@ final class AppModel {
 
     /// Handles items dragged from the sidebar: "fx:<id>" for a built-in effect, "au:<identifier>|<name>" for a
     /// plugin, "preset:<path>" for a preset. A device card dragged by its title ("device:<id>") moves to the
-    /// end of the track's chain. `index`: where in the chain, `nil` for the end.
+    /// end of the track's chain, from any track; with Option down it is a copy. `index`: where in the
+    /// chain, `nil` for the end.
     @discardableResult
     func dropDevices(_ items: [String], on track: TrackID?, at index: Int? = nil) -> Bool {
         var used = false
@@ -1637,17 +1641,11 @@ final class AppModel {
                 if parts.count == 2 { addAudioUnit(identifier: parts[0], name: parts[1], to: track, at: index); used = true }
             } else if item.hasPrefix("preset:") {
                 insertPreset(at: URL(fileURLWithPath: String(item.dropFirst(7))), on: track, chain: nil, at: index); used = true
-            } else if let id = Self.draggedDevice(item), let track {
-                moveDevice(id, on: track, toChain: nil, at: index); used = true
+            } else if let (id, copy) = Self.draggedDevice(item), let track {
+                dropDevice(id, copy: copy, on: track, chain: nil, at: index); used = true
             }
         }
         return used
-    }
-
-    /// The device ID behind a "device:<uuid>" drag string.
-    static func draggedDevice(_ item: String) -> DeviceID? {
-        guard item.hasPrefix("device:"), let uuid = UUID(uuidString: String(item.dropFirst(7))) else { return nil }
-        return DeviceID(uuid)
     }
 
     // MARK: Devices that come and go

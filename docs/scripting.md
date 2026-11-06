@@ -87,7 +87,7 @@ The rules that keep it simple and realtime-safe:
 
 - **Per sample by default.** Every expression runs once per frame. Stereo values carry two channels; a
   mono value spreads to both. Functions on signals are the DSP primitives: `osc`, `lfo`, `svf`, `biquad`,
-  `delay.read/write`, `follow`, `slew`, `adsr`, `sah`, `noise`, `random` (seeded), `clip`, `tanh`, `mix`,
+  `delay.read/write`, `follow`, `slew`, `adsr`, `sah`, `count` (rises of a trigger, wrapped at a step count, an optional reset), `noise`, `random` (seeded), `clip`, `tanh`, `mix`,
   `pan`, `window(kind, phase)`, `buffer.read/write` with a position in frames or seconds.
 - **State is declared.** `delay`, `buffer`, `table` and `state` allocate at compile time. The size is a
   constant with a unit (`2 s`, `4 bars at 60 BPM`). A loop through time is explicit: `prev(x)` is the value
@@ -181,7 +181,7 @@ compiler), Engine (`PatchDSP`, the plan), the app (the editor window, the sideba
   synced LFO is smooth.
 - **Language as built**: `patch`, `param` (range with `log` and a unit, or `note`), `in`, `out`, `delay`,
   `meter`, assignments, `delay.write`. Functions: osc, lfo (a note value locks it to the song), phase,
-  lp/hp/bp, slew, follow, prev, sah, noise, delay.read, tanh, abs, sqrt, sin, cos, exp, log, floor, clip,
+  lp/hp/bp, slew, follow, prev, sah, count, noise, delay.read, tanh, abs, sqrt, sin, cos, exp, log, floor, clip,
   mix, min, max, pow, gain. Not yet from the sketch: `state` declarations, `group`, `on grid`, `on note`,
   `voice`, `scope`/`waveform`, `def`, `for`, buffers with a position (stage 2).
 - **App**: the card shows the knobs from the `param` lines, or the compile error with the sound passing

@@ -237,6 +237,21 @@ public final class PatchDSP: DSPEffect, @unchecked Sendable {
                         state[s + 2 + ch] = trig
                         slots[o + ch] = state[s + ch]
                     }
+                case .count:
+                    // state: the count per channel, then the last trigger per channel
+                    let s = Int(op.state)
+                    for ch in 0..<2 {
+                        let trig = slots[a + ch]
+                        let steps = max(1, floorf(slots[b + ch] + 0.5))
+                        if slots[c + ch] > 0.5 {
+                            state[s + ch] = 0
+                        } else if trig > 0.5, state[s + 2 + ch] <= 0.5 {
+                            state[s + ch] += 1
+                        }
+                        if state[s + ch] >= steps { state[s + ch] = 0 }
+                        state[s + 2 + ch] = trig
+                        slots[o + ch] = state[s + ch]
+                    }
                 case .delayRead:
                     let line = lines[Int(op.buffer)]
                     let len = line.length

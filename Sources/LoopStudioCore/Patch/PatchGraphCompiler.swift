@@ -270,6 +270,28 @@ public enum PatchGraphCompiler {
             case "mix":
                 let v = try inputs(m)
                 set(m, c.emit(.mix, v[0].slot, v[1].slot, v[2].slot))
+            case "router":
+                // Each output is the input times (pick == its index); the pick rounds to the nearest.
+                let v = try inputs(m)
+                let pick = c.emit(.floor, c.emit(.add, v[1].slot, c.constant(0.5)))
+                for (i, name) in ["a", "b", "c", "d"].enumerated() {
+                    set(m, port: name, c.emit(.mul, v[0].slot, c.emit(.eq, pick, c.constant(Double(i)))))
+                }
+            case "selector":
+                let v = try inputs(m)
+                let pick = c.emit(.floor, c.emit(.add, v[4].slot, c.constant(0.5)))
+                var sum = -1
+                for i in 0..<4 {
+                    let term = c.emit(.mul, v[i].slot, c.emit(.eq, pick, c.constant(Double(i))))
+                    sum = sum < 0 ? term : c.emit(.add, sum, term)
+                }
+                set(m, sum)
+            case "gate":
+                let v = try inputs(m)
+                set(m, c.emit(.mul, v[0].slot, c.emit(.gt, v[1].slot, c.constant(0.5))))
+            case "counter":
+                let v = try inputs(m)
+                set(m, c.emit(.count, v[0].slot, v[1].slot, v[2].slot, state: c.state(4)))
             case "gain":
                 let v = try inputs(m)
                 set(m, c.emit(.mul, v[0].slot, c.emit(.dbToGain, v[1].slot)))

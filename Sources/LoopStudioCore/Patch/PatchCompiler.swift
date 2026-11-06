@@ -696,6 +696,11 @@ public enum PatchCompiler {
             case "sah":
                 let v = try args(fn, a, 2...2)
                 return Value(slot: emit(.sah, v[0].slot, v[1].slot, state: state(4)), unit: v[0].unit)
+            case "count":
+                // count(trigger, steps) or count(trigger, steps, reset): 0, 1, … steps-1, 0, …
+                let v = try args(fn, a, 2...3)
+                let reset = v.count > 2 ? v[2].slot : constant(0)
+                return Value(slot: emit(.count, v[0].slot, v[1].slot, reset, state: state(4)), unit: .plain)
             case "noise":
                 _ = try args(fn, a, 0...0)
                 return Value(slot: emit(.noise, -1, state: state(1)), unit: .plain)

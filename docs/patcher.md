@@ -175,10 +175,15 @@ focused work on top of stage 1. Stages 3 and 4 are three to four days each.
   `version` 2 in `DeviceSlot.source`; a text loads as Audio In, one Script, Audio Out), `PatchEdit` (the
   steps the editor and the MCP tool share: add, remove, move, connect, disconnect, set a value, set a
   setting, set a Script's text, label, expose, rename), `PatchModules` (`ModuleSpec` and `ModulePort` for
-  the kinds of stage 2: I/O, Panel, Generate, Filter, Shape, Delay, Math, Script), `PatchGraphCompiler`
+  the kinds of stage 2: I/O, Panel, Generate, Filter, Shape, Delay, Route, Math, Script), `PatchGraphCompiler`
   (check, order with feedback cables found by a depth-first search in canvas order, inline every module into
   one op list; a Script module runs the text compiler in embedded mode with its names bound). The text
   compiler got `assemble` (the ops without the `output` op), `embedded`, `prefix` and `bindings`.
+- **Route** (added after stage 2): Router (one input to one of four outputs, `to` picks, rounded), Selector
+  (one of four inputs to the output, `from` picks), Gate (passes while `open` is above 0.5), Counter (counts
+  rises of a trigger, wraps at `steps`, `reset` holds it at 0; the new `count` op, also `count()` in the
+  text). The pick inputs take any signal: a Knob, a Toggle, a Counter on a square LFO or a Phase, a Script
+  output. Built from `floor`, `eq`, `mul` and `add`; a hard switch, so a Crossfade is the soft one.
 - **Ports** of stage 2: `audio` and `control`. Every DSP input is `audio`; a Knob, a Toggle and a Number
   give `control`; `control` goes into `audio`. The rate is one per frame for both, so a knob into a cutoff
   is exact and a slew module smooths it when wanted. `event`, `clock` and `data` are declared, not wired.

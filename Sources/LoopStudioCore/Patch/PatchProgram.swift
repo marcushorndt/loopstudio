@@ -127,6 +127,8 @@ public enum PatchOpCode: UInt8, Sendable {
     case noise
     /// out = a sampled when b rises above 0.5; state 4
     case sah
+    /// out = the count of rises of a above 0.5, wrapped at b (at least 1), zero while c is above 0.5; state 4
+    case count
     /// out = buffer read a seconds back (linear interpolation)
     case delayRead
     /// buffer write of a at the record head

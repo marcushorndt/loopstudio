@@ -185,3 +185,40 @@ private func doc(_ edits: [PatchEdit], name: String = "Test") throws -> PatchDoc
     let (byCable, _) = try run(d.source, [:], input)
     #expect(byCable[10] == 1)
 }
+
+@Test func aCounterStepsARouterAndASelectorPicksAnInput() throws {
+    // A square LFO (1/4) triggers a Counter of 4 steps that picks the Router's output.
+    // Output c (step 2) goes to Audio Out: silence, silence, the input, silence, in each quarter note.
+    let d = try doc([
+        .add(kind: "in", id: "in", x: 0, y: 0), .add(kind: "out", id: "out", x: 500, y: 0),
+        .add(kind: "lfosync", id: "clock", x: 100, y: 100), .setSetting(id: "clock", key: "shape", value: "square"),
+        .setValue(id: "clock", key: "rate", value: Double(NoteDivision.index("1/4"))),
+        .add(kind: "counter", id: "step", x: 200, y: 100),
+        .add(kind: "router", id: "route", x: 300, y: 0),
+        .connect(from: "clock", fromPort: "out", to: "step", toPort: "trigger"),
+        .connect(from: "step", fromPort: "out", to: "route", toPort: "to"),
+        .connect(from: "in", fromPort: "out", to: "route", toPort: "in"),
+        .connect(from: "route", fromPort: "c", to: "out", toPort: "in"),
+    ])
+    let quarter = 24_000 // frames at 0.5 s per quarter note
+    let input = [Float](repeating: 1, count: quarter * 6)
+    let (out, _) = try run(d.source, [:], input)
+    // The square is high from the start of each quarter note: the count goes 1, 2, 3, 0, 1, 2 over the
+    // six quarters. Output c is open while the count is 2: the second and the sixth quarter.
+    let open = (0..<6).map { q in out[q * quarter + quarter / 4] }
+    #expect(open == [0, 1, 0, 0, 0, 1], "every fourth quarter note from the second passes")
+
+    // A Selector with a constant pick of 1 takes input b.
+    let s = try doc([
+        .add(kind: "in", id: "in", x: 0, y: 0), .add(kind: "out", id: "out", x: 500, y: 0),
+        .add(kind: "const", id: "two", x: 0, y: 100), .setValue(id: "two", key: "value", value: 2),
+        .add(kind: "selector", id: "pick", x: 300, y: 0), .setValue(id: "pick", key: "from", value: 1),
+        .connect(from: "in", fromPort: "out", to: "pick", toPort: "a"),
+        .connect(from: "two", fromPort: "out", to: "pick", toPort: "b"),
+        .connect(from: "pick", fromPort: "out", to: "out", toPort: "in"),
+    ])
+    let (picked, _) = try run(s.source, [:], [Float](repeating: 1, count: 256))
+    #expect(picked[10] == 2, "b is the constant 2")
+    let (text, _) = try run("patch \"C\"\nin x\nout y\ny = count(lfo(1/4, square), 3)", [:], input)
+    #expect(text[quarter / 2] == 1 && text[quarter + quarter / 2] == 2 && text[3 * quarter + quarter / 2] == 1, "the text has count() too")
+}

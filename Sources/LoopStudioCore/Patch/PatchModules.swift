@@ -118,6 +118,20 @@ public enum PatchModules {
         ModuleSpec("gt", "Greater", category: "Math", help: "1 when a is greater than b, else 0: a gate from a comparison.", inputs: [ModulePort("a"), ModulePort("b")], outputs: [audioOut]),
         ModuleSpec("lt", "Less", category: "Math", help: "1 when a is less than b, else 0.", inputs: [ModulePort("a"), ModulePort("b")], outputs: [audioOut]),
         ModuleSpec("mix", "Crossfade", category: "Math", help: "From a (t = 0) to b (t = 1).", inputs: [ModulePort("a"), ModulePort("b"), ModulePort("t", def: 0.5)], outputs: [audioOut]),
+        ModuleSpec("router", "Router", category: "Route",
+                   help: "The input goes to one of four outputs. 'to' picks it: 0 = a, 1 = b, 2 = c, 3 = d (rounded). A toggle on 'to' switches between a and b.",
+                   inputs: [audioIn, ModulePort("to", .audio, def: 0, min: 0, max: 3)],
+                   outputs: [ModulePort("a"), ModulePort("b"), ModulePort("c"), ModulePort("d")]),
+        ModuleSpec("selector", "Selector", category: "Route",
+                   help: "One of four inputs goes to the output. 'from' picks it: 0 = a, 1 = b, 2 = c, 3 = d (rounded). A Crossfade blends instead.",
+                   inputs: [ModulePort("a"), ModulePort("b"), ModulePort("c"), ModulePort("d"), ModulePort("from", .audio, def: 0, min: 0, max: 3)],
+                   outputs: [audioOut]),
+        ModuleSpec("gate", "Gate", category: "Route", help: "The input passes while 'open' is above 0.5, else silence. A toggle or a comparison opens it.",
+                   inputs: [audioIn, ModulePort("open", .audio, def: 1)], outputs: [audioOut]),
+        ModuleSpec("counter", "Counter", category: "Route",
+                   help: "Counts each rise of the trigger above 0.5: 0, 1, … steps-1, then 0 again. 'reset' above 0.5 holds it at 0. A Phase or a square LFO as the trigger steps a Router or a Selector in time.",
+                   inputs: [ModulePort("trigger", .audio), ModulePort("steps", .audio, def: 4, min: 1, max: 16), ModulePort("reset", .audio)],
+                   outputs: [audioOut]),
         ModuleSpec("gain", "Gain", category: "Math", help: "The input scaled by a level in dB.", inputs: [audioIn, ModulePort("db", .audio, def: 0, min: -60, max: 24, unit: "dB")], outputs: [audioOut]),
         ModuleSpec("scale", "Scale", category: "Math", help: "Maps the input from one range to another: 0..1 from a knob to 200..2000 for a cutoff.",
                    inputs: [audioIn, ModulePort("from", .audio, def: 0, min: -1, max: 1), ModulePort("to", .audio, def: 1, min: -1, max: 1),
@@ -134,7 +148,7 @@ public enum PatchModules {
                    inputs: [audioIn], outputs: [audioOut]),
     ]
 
-    public static let categories = ["I/O", "Panel", "Generate", "Filter", "Shape", "Delay", "Math", "Script"]
+    public static let categories = ["I/O", "Panel", "Generate", "Filter", "Shape", "Delay", "Route", "Math", "Script"]
 
     public static func spec(_ kind: String) -> ModuleSpec? { all.first { $0.id == kind } }
 

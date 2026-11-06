@@ -151,6 +151,10 @@ text ──parse──▶ AST ──check──▶ typed graph (nodes, ports, st
 
 ## 6. Stages
 
+Stage 1 is built (§7). From stage 2 on, `docs/patcher.md` (2026-11-06) replaces this table: the patch is a
+graph document of modules with typed ports, the text language is one module kind, and the panel is the
+device's face. The table stays as the first plan.
+
 | Stage | Scope | Exit criteria |
 |---|---|---|
 | 1. Text patches as effects | Grammar, parser, checker, program, VM, `PatchDSP`, `param` to knobs, the editor window with errors, hot reload, the library folder, three example patches (a stutter filter, a tempo-synced tremolo, a comb) | The examples render and match their golden files. A reload keeps a delay line. The speed test passes. A knob of a patch automates and maps to a macro. |

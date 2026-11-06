@@ -105,6 +105,8 @@ struct PatchEditorView: View {
     @State private var loadedSource: String?
     @State private var selected: String?
     @State private var renameRequest = 0
+    /// A refused edit or a warning, in the status bar until the next edit.
+    @State private var notice: String?
 
     private var slot: DeviceSlot? { model.project.track(track)?.device(device) }
     private var compiled: Result<PatchProgram, PatchError> { PatchCompiler.cached(doc.source) }
@@ -155,6 +157,11 @@ struct PatchEditorView: View {
 
     private var status: some View {
         HStack(spacing: 8) {
+            if let notice {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.automationDot)
+                Text(notice).font(.system(size: 11)).foregroundStyle(Theme.text).lineLimit(2)
+                    .onTapGesture { self.notice = nil }
+            } else {
             switch compiled {
             case .success(let program):
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.play)
@@ -163,6 +170,7 @@ struct PatchEditorView: View {
             case .failure(let error):
                 Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.automationDot)
                 Text(error.description).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.text).lineLimit(2)
+            }
             }
             Spacer()
             Text("\(doc.modules.count) modules, \(doc.cables.count) cables").font(.system(size: 10)).foregroundStyle(Theme.dim)
@@ -183,7 +191,8 @@ struct PatchEditorView: View {
     /// One edit into the project. A move coalesces while it goes on; the rest are one undo step each.
     private func commit(_ edit: PatchEdit) {
         var next = doc
-        do { try next.apply(edit) } catch { model.status = "\(error)"; return }
+        do { try next.apply(edit) } catch { notice = "\(error)"; model.status = "\(error)"; return }
+        notice = warning(for: edit)
         doc = next
         let source = next.source
         loadedSource = source
@@ -192,6 +201,16 @@ struct PatchEditorView: View {
         if case .move(let id, _, _) = edit { key = "patchmove.\(device).\(id)" }
         model.apply(.setDeviceSource(track: track, device: device, source: source, name: name), key: key)
         if case .failure(let e) = PatchCompiler.cached(source) { model.status = "Patch: \(e.description)" }
+    }
+
+    /// A cable between two port types that connect but differ (a control into an audio input) gets a note.
+    private func warning(for edit: PatchEdit) -> String? {
+        guard case .connect(let from, let fromPort, let to, let toPort) = edit,
+              let a = doc.module(from), let b = doc.module(to),
+              let o = PatchModules.ports(of: a).outputs.first(where: { $0.name == fromPort }),
+              let i = PatchModules.ports(of: b).inputs.first(where: { $0.name == toPort }),
+              o.type != i.type else { return nil }
+        return "\(from).\(fromPort) → \(to).\(toPort): a \(o.type.rawValue) signal into an \(i.type.rawValue) input. It is a steady value there, not a sound."
     }
 
     /// A new module: where the pointer was (the canvas menu), or on a grid from the toolbar.
@@ -293,11 +312,13 @@ struct PatchCanvas: View {
                 cableHits
                 ForEach(doc.modules) { m in
                     PatchModuleView(module: m, doc: doc, selected: selected == m.id, offset: dragOffsets[m.id] ?? .zero,
+                                    cableType: cableDrag?.type,
                                     select: { selected = m.id }, commit: commit,
                                     rename: { selected = m.id; rename() },
                                     moved: { translation in dragOffsets[m.id] = translation },
                                     dropped: { translation in
                                         dragOffsets[m.id] = nil
+                                        guard translation != .zero else { return }
                                         commit(.move(id: m.id, x: max(0, m.x + translation.width).rounded(), y: max(0, m.y + translation.height).rounded()))
                                     },
                                     cableStarted: { port, type, point in cableDrag = CableDrag(from: m.id, port: port, type: type, point: point) },
@@ -409,6 +430,8 @@ private struct PatchModuleView: View {
     let doc: PatchDocument
     let selected: Bool
     let offset: CGSize
+    /// The type of the cable being dragged, while one is: input dots that cannot take it dim.
+    let cableType: PortType?
     let select: () -> Void
     let commit: (PatchEdit) -> Void
     let rename: () -> Void
@@ -421,6 +444,7 @@ private struct PatchModuleView: View {
     /// The output port whose cable is being dragged out, while the drag lasts.
     @State private var cabling: String?
     @State private var hovering = false
+    @State private var dragging = false
 
     private var ports: (inputs: [ModulePort], outputs: [ModulePort]) { PatchModules.ports(of: module) }
     private var isScript: Bool { module.kind == "script" }
@@ -446,9 +470,17 @@ private struct PatchModuleView: View {
             .padding(.horizontal, 6).frame(height: PatchLayout.header)
             .background(headerColor)
             .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named("canvas"))
-                .onChanged { moved($0.translation) }
-                .onEnded { dropped($0.translation) })
+            // One gesture for a click and a drag on the title: a click selects, a drag selects and moves.
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
+                .onChanged { v in
+                    if !dragging { dragging = true; select() }
+                    moved(v.translation)
+                }
+                .onEnded { v in
+                    dragging = false
+                    let far = hypot(v.translation.width, v.translation.height) >= 2
+                    dropped(far ? v.translation : .zero)
+                })
             ForEach(0..<rows, id: \.self) { i in
                 HStack(spacing: 0) {
                     if i < ports.inputs.count { inputRow(ports.inputs[i], index: i) } else { Spacer() }
@@ -493,10 +525,13 @@ private struct PatchModuleView: View {
 
     private func inputRow(_ port: ModulePort, index: Int) -> some View {
         let cables = doc.cables(into: module.id, port: port.name)
+        let takes = cableType.map { PortType.connects($0, to: port.type) } ?? true
         return HStack(spacing: 3) {
             Circle().fill(cables.isEmpty ? Theme.panel : PatchLayout.color(port.type))
                 .overlay(Circle().stroke(PatchLayout.color(port.type), lineWidth: 1))
                 .frame(width: PatchLayout.dot, height: PatchLayout.dot)
+                .scaleEffect(cableType != nil && takes ? 1.4 : 1)
+                .opacity(takes ? 1 : 0.25)
                 .offset(x: -PatchLayout.dot / 2)
                 .contextMenu {
                     ForEach(cables, id: \.self) { c in

@@ -129,3 +129,17 @@ public enum PatchExamples {
       y = x * (1 - depth * (1 - lfo(rate, sine)))
     """
 }
+
+public extension PatchExamples {
+    /// The text of a new Script module in a graph: one knob, the input passed through it.
+    static let scriptStarter = """
+    patch "Script"
+
+    param amount 0..1 = 0.5
+
+    in x
+    out y
+
+    y = x * amount
+    """
+}

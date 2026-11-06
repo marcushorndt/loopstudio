@@ -169,7 +169,43 @@ PatchDocument ──check──▶ typed graph ──order──▶ inline ─�
 Stage 2 is the big one: the document, the compiler, the canvas and the panel. About a week and a half of
 focused work on top of stage 1. Stages 3 and 4 are three to four days each.
 
-## 9. What is decided, what is open
+## 9. Stage 2 as built (2026-11-06)
+
+- **Core** `Sources/LoopStudioCore/Patch/`: `PatchDocument` (modules, cables, panel placement; JSON with
+  `version` 2 in `DeviceSlot.source`; a text loads as Audio In, one Script, Audio Out), `PatchEdit` (the
+  steps the editor and the MCP tool share: add, remove, move, connect, disconnect, set a value, set a
+  setting, set a Script's text, label, expose, rename), `PatchModules` (`ModuleSpec` and `ModulePort` for
+  the kinds of stage 2: I/O, Panel, Generate, Filter, Shape, Delay, Math, Script), `PatchGraphCompiler`
+  (check, order with feedback cables found by a depth-first search in canvas order, inline every module into
+  one op list; a Script module runs the text compiler in embedded mode with its names bound). The text
+  compiler got `assemble` (the ops without the `output` op), `embedded`, `prefix` and `bindings`.
+- **Ports** of stage 2: `audio` and `control`. Every DSP input is `audio`; a Knob, a Toggle and a Number
+  give `control`; `control` goes into `audio`. The rate is one per frame for both, so a knob into a cutoff
+  is exact and a slew module smooths it when wanted. `event`, `clock` and `data` are declared, not wired.
+- **Knobs**: a Knob module is a parameter with its id as the key. A module on the panel shows its inputs
+  without a cable as parameters `id.port`; a Script's params keep their own names as keys, so automation
+  and MIDI learn on a stage 1 text survive the move to a graph. Groups on the card: one per module on the
+  panel, in column order. Meters: Meter modules and a Script's `meter` lines, up to four, with names.
+- **Feedback**: implicit, one frame, as a `prev` latch on the cable that closes the loop. The canvas marks
+  it `z⁻¹`. The search runs in canvas order (left to right, top to bottom), so moving a module can move the
+  mark; the sound is the same either way.
+- **App** `PatchEditor.swift`: the card draws the panel (groups and meters); the editor window has the
+  canvas (drag a title to move, drag an output dot to an input dot to cable, right-click a dot to
+  disconnect, Delete removes), the inspector (label, on the panel, the knob's range and unit, the settings,
+  the inputs without a cable, the Script text with Apply ⌘↩, the cables, Remove), Add Module by category,
+  Script Examples. Every step is one undo step through `Command.setDeviceSource`; a move coalesces.
+  `defaults write app.loopstudio.dev openPatchEditor -bool true` opens the first Patch's editor at launch.
+- **MCP**: `patch_modules` (the kinds with ports and settings), `patch_edit` (steps in order, one receipt),
+  `patch_read` returns the graph. `patch_check` and `patch_write` take a document as well as a text.
+- **Tests** `PatchGraphTests.swift`: a text as a one-Script document sounds the same and keeps its keys; a
+  tremolo from modules equals the text; a Knob is a parameter; an exposed module shows its free inputs; a
+  feedback cable decays an impulse by halves; a moved module keeps its delay line; the refusals (types,
+  single modules, missing output, a Script's error with its line and module); a Script's param from a
+  cable or a knob.
+- **Open from stage 2**: live values on the ports, a panel grid with rows, sub-patches, the library folder,
+  copy and paste of modules, a text view of the whole graph.
+
+## 10. What is decided, what is open
 
 Decided by this document: the graph is the document; the text is a module; one program and one VM; ports
 with explicit types and rates; the panel items are `EffectParam`s; the Control Script is JavaScript on a

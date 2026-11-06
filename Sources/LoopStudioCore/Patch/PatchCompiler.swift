@@ -4,8 +4,13 @@ import Foundation
 public struct PatchError: Error, Hashable, Sendable, CustomStringConvertible {
     public var line: Int
     public var message: String
-    public init(line: Int, _ message: String) { self.line = line; self.message = message }
-    public var description: String { "line \(line): \(message)" }
+    /// The module of a graph document the problem is in. `nil` for a text, or the document as a whole.
+    public var module: String?
+    public init(line: Int, _ message: String, module: String? = nil) { self.line = line; self.message = message; self.module = module }
+    public var description: String {
+        let where_ = line > 0 ? "line \(line): " : ""
+        return (module.map { "\($0): " } ?? "") + where_ + message
+    }
 }
 
 /// The unit a value carries at compile time. The compiler converts between seconds, hertz and note values
@@ -375,11 +380,41 @@ public enum PatchCompiler {
     ]
     static let shapes: [String: Float] = ["sine": 0, "saw": 1, "square": 2, "tri": 3, "triangle": 3]
 
+    /// A text, or a graph document (`PatchDocument`, when the source starts with `{`).
     public static func compile(_ source: String) throws -> PatchProgram {
+        if PatchDocument.isDocument(source) {
+            guard let doc = PatchDocument.parse(source) else { throw PatchError(line: 0, "the patch document does not parse") }
+            return try PatchGraphCompiler.compile(doc, source: source)
+        }
         var parser = try PatchParser(source)
         let lines = try parser.parse()
         var c = Context(source: source)
         return try c.build(lines)
+    }
+
+    /// The outside of a text: its name, input, output, params and meters. What a Script module's ports are.
+    struct Shape {
+        var name = "Patch"
+        var input = "x"
+        var output: String?
+        var params: [PatchParamDecl] = []
+        var meters: [String] = []
+    }
+
+    static func shape(of source: String) throws -> Shape {
+        var parser = try PatchParser(source)
+        var s = Shape()
+        for (l, _) in try parser.parse() {
+            switch l {
+            case .patchName(let n): s.name = n
+            case .input(let n): s.input = n
+            case .output(let n): s.output = n
+            case .param(let d): s.params.append(d)
+            case .meter(let n): s.meters.append(n)
+            default: break
+            }
+        }
+        return s
     }
 
     /// Compiles once per source text. The renderer and the views ask for the same text many times.
@@ -421,6 +456,12 @@ public enum PatchCompiler {
         var inputName = "x"
         var outputName: String?
         var line = 0
+        // A Script module inside a graph: its names are bound from outside (the cables, the knobs), its
+        // delay lines get a prefix, and its output is a slot the graph reads, not an `output` op.
+        var embedded = false
+        var prefix = ""
+        var bindings: [String: Value] = [:]
+        var meterSlots: [(name: String, slot: Int)] = []
 
         init(source: String) { self.source = source }
 
@@ -429,6 +470,22 @@ public enum PatchCompiler {
         func fail(_ m: String) -> PatchError { PatchError(line: line, m) }
 
         mutating func build(_ lines: [(PatchLine, Int)]) throws -> PatchProgram {
+            let out = try assemble(lines)
+            ops.append(PatchOp(.output, a: out))
+            for (n, index) in meterNames {
+                guard let v = names[n] else { throw fail("meter \(n): '\(n)' is never set") }
+                guard index < DSPMeterCount else { throw fail("a patch shows at most \(DSPMeterCount) meters") }
+                meters.append((v.slot, index))
+            }
+            var spec = EffectSpec(id: "patch", name: name, params: params, view: "patch")
+            spec.groups = params.isEmpty ? [] : [EffectGroup(name, params.map(\.key))]
+            spec.meterNames = meterNames.map(\.0)
+            return PatchProgram(name: name, spec: spec, ops: ops, slotCount: slots, stateCount: states, buffers: buffers,
+                                params: paramSlots, latches: latches, meters: meters, source: source)
+        }
+
+        /// Compiles the lines into `ops` and returns the slot of the output.
+        mutating func assemble(_ lines: [(PatchLine, Int)]) throws -> Int {
             // Declarations first, in any order, so a knob or a delay can be named before or after its use.
             for (l, at) in lines {
                 line = at
@@ -441,13 +498,13 @@ public enum PatchCompiler {
                     guard bufferIndex[n] == nil, names[n] == nil else { throw fail("'\(n)' is declared twice") }
                     guard seconds > 0, seconds <= 60 else { throw fail("a delay is between 1 ms and 60 s") }
                     bufferIndex[n] = buffers.count
-                    buffers.append(PatchBuffer(name: n, seconds: seconds))
+                    buffers.append(PatchBuffer(name: prefix + n, seconds: seconds))
                 case .meter(let n): meterNames.append((n, meterNames.count))
                 case .write, .assign: break
                 }
             }
             guard names[inputName] == nil else { throw fail("the input '\(inputName)' clashes with a knob") }
-            names[inputName] = Value(slot: PatchProgram.inSlot, unit: .plain)
+            names[inputName] = embedded ? (bindings[inputName] ?? Value(slot: PatchProgram.zeroSlot, unit: .plain)) : Value(slot: PatchProgram.inSlot, unit: .plain)
             for (l, at) in lines {
                 line = at
                 switch l {
@@ -467,32 +524,34 @@ public enum PatchCompiler {
             }
             guard let outputName else { throw fail("the patch needs an output: out y, then y = …") }
             guard let out = names[outputName] else { throw fail("the output '\(outputName)' is never set") }
-            ops.append(PatchOp(.output, a: out.slot))
             for p in pendingPrev {
                 guard let v = names[p.name] else { throw PatchError(line: p.line, "prev(\(p.name)): '\(p.name)' is never set") }
                 latches.append(PatchLatch(slot: v.slot, state: p.state))
             }
-            for (n, index) in meterNames {
+            for (n, _) in meterNames {
                 guard let v = names[n] else { throw fail("meter \(n): '\(n)' is never set") }
-                guard index < DSPMeterCount else { throw fail("a patch shows at most \(DSPMeterCount) meters") }
-                meters.append((v.slot, index))
+                meterSlots.append((n, v.slot))
             }
-            var spec = EffectSpec(id: "patch", name: name, params: params, view: "patch")
-            spec.groups = params.isEmpty ? [] : [EffectGroup(name, params.map(\.key))]
-            return PatchProgram(name: name, spec: spec, ops: ops, slotCount: slots, stateCount: states, buffers: buffers,
-                                params: paramSlots, latches: latches, meters: meters, source: source)
+            return out.slot
         }
 
         mutating func declare(_ d: PatchParamDecl) throws {
             guard names[d.key] == nil else { throw fail("'\(d.key)' is declared twice") }
             guard PatchCompiler.builtinNames[d.key] == nil else { throw fail("'\(d.key)' belongs to the song") }
-            let label = d.key.prefix(1).uppercased() + d.key.dropFirst()
-            var p = EffectParam(d.key, label, d.min, d.max, d.def, unit: d.unit, choices: d.choices, log: d.log)
-            if d.isNote { p.rotary = true }
-            params.append(p)
-            let s = slot()
-            paramSlots.append(PatchParamSlot(key: d.key, slot: s, isNote: d.isNote))
             let unit: PatchUnit = d.isNote ? .note : (d.unit == "ms" || d.unit == "s" ? .seconds : (d.unit == "Hz" ? .hz : (d.unit == "dB" ? .db : .plain)))
+            let s: Int
+            if embedded {
+                // The graph decides what the param is: a cable, a knob of the device, or a fixed value.
+                guard let bound = bindings[d.key] else { throw fail("param '\(d.key)' is not bound") }
+                s = bound.slot
+            } else {
+                let label = d.key.prefix(1).uppercased() + d.key.dropFirst()
+                var p = EffectParam(d.key, label, d.min, d.max, d.def, unit: d.unit, choices: d.choices, log: d.log)
+                if d.isNote { p.rotary = true }
+                params.append(p)
+                s = slot()
+                paramSlots.append(PatchParamSlot(key: d.key, slot: s, isNote: d.isNote))
+            }
             names[d.key] = Value(slot: s, unit: unit)
             if d.unit == "ms" {
                 // The knob shows milliseconds; the program works in seconds.

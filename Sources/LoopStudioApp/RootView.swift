@@ -57,7 +57,22 @@ struct RootView: View {
         .navigationTitle("")
         .sheet(isPresented: Bindable(model).shortcutsOpen) { ShortcutsSheet().environment(model) }
         .sheet(isPresented: Bindable(model).exportSheetOpen) { ExportSheet().environment(model) }
-        .onAppear { keys.install(model: model) }
+        .onAppear {
+            keys.install(model: model)
+            // `defaults write app.loopstudio.dev openPatchEditor 1`: the editor of the first Patch device opens at
+            // launch, once. For looking at the editor without a click.
+            if UserDefaults.standard.bool(forKey: "openPatchEditor") {
+                UserDefaults.standard.removeObject(forKey: "openPatchEditor")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    for t in model.project.allTracks {
+                        if let d = t.devices.first(where: { $0.format == "builtin" && $0.identifier == "patch" }) {
+                            PatchEditorWindow.show(model: model, track: t.id, device: d.id)
+                            return
+                        }
+                    }
+                }
+            }
+        }
         .sheet(isPresented: Binding(get: { model.renameRequest != nil || model.clipRenameRequest != nil },
                                     set: { if !$0 { model.renameRequest = nil; model.clipRenameRequest = nil } })) {
             RenameSheet().environment(model)

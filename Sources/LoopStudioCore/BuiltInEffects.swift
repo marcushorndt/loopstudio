@@ -111,6 +111,8 @@ public struct EffectSpec: Sendable, Hashable {
     public var view = ""
     /// Bands of a multi-band EQ. Zero for every other device.
     public var bands = 0
+    /// A patch's meters, by index into `DSPEffect.meters`: the names shown beside them.
+    public var meterNames: [String] = []
     /// A dynamics device reports its gain reduction in `DSPEffect.meters`; the card shows it.
     public var isDynamics: Bool { id == "compressor" || id == "limiter" || id == "multiband" }
     /// A rack: chains of devices behind macro knobs and a chain selector. See `Rack`.

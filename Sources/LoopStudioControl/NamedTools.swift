@@ -404,6 +404,20 @@ public extension StandardTools {
         ) { args in
             let (_, d) = try await patchDevice(args)
             var o: [String: JSONValue] = ["source": .string(d.source ?? ""), "device": .string(d.id.description)]
+            if PatchDocument.isDocument(d.source ?? ""), let doc = PatchDocument.parse(d.source ?? "") {
+                o["graph"] = .object(["name": .string(doc.name),
+                                      "modules": .array(doc.modules.map { m in
+                                          let ports = PatchModules.ports(of: m)
+                                          var mo: [String: JSONValue] = ["id": .string(m.id), "kind": .string(m.kind), "label": .string(PatchModules.label(m)), "onPanel": .bool(m.isOnPanel),
+                                                                         "inputs": .array(ports.inputs.map { .string($0.name) }), "outputs": .array(ports.outputs.map { .string($0.name) })]
+                                          if !m.values.isEmpty { mo["values"] = .object(m.values.mapValues { .number($0) }) }
+                                          if !m.settings.isEmpty { mo["settings"] = .object(m.settings.mapValues { .string($0) }) }
+                                          if let s = m.source { mo["source"] = .string(s) }
+                                          return .object(mo) }),
+                                      "cables": .array(doc.cables.map { .string("\($0.from).\($0.fromPort) -> \($0.to).\($0.toPort)") })])
+            } else {
+                o["note"] = .string("a text; patch_edit turns it into a graph with one Script module")
+            }
             switch PatchCompiler.cached(d.source ?? "") {
             case .success(let p): o["program"] = patchReport(p)
             case .failure(let e): o["error"] = .string("\(e)")
@@ -449,6 +463,109 @@ public extension StandardTools {
                 return try await session.receipt(.setDeviceSource(track: t.id, device: d.id, source: source, name: p.name == d.name ? nil : p.name),
                                                  extra: ["program": patchReport(p)])
             }
+        })
+
+        // MARK: The modular patch, see docs/patcher.md
+
+        @Sendable func portJSON(_ p: ModulePort) -> JSONValue {
+            var o: [String: JSONValue] = ["name": .string(p.name), "type": .string(p.type.rawValue)]
+            if p.type == .audio || p.type == .control {
+                o["default"] = .number(p.def); o["min"] = .number(p.min); o["max"] = .number(p.max)
+                if !p.unit.isEmpty { o["unit"] = .string(p.unit) }
+            }
+            return .object(o)
+        }
+        @Sendable func moduleJSON(_ m: PatchModule) -> JSONValue {
+            let ports = PatchModules.ports(of: m)
+            var o: [String: JSONValue] = ["id": .string(m.id), "kind": .string(m.kind), "label": .string(PatchModules.label(m)),
+                                          "x": .number(m.x), "y": .number(m.y), "onPanel": .bool(m.isOnPanel),
+                                          "inputs": .array(ports.inputs.map(portJSON)), "outputs": .array(ports.outputs.map(portJSON))]
+            if !m.values.isEmpty { o["values"] = .object(m.values.mapValues { .number($0) }) }
+            if !m.settings.isEmpty { o["settings"] = .object(m.settings.mapValues { .string($0) }) }
+            if let s = m.source { o["source"] = .string(s) }
+            return .object(o)
+        }
+        @Sendable func documentJSON(_ doc: PatchDocument) -> JSONValue {
+            .object(["name": .string(doc.name), "modules": .array(doc.modules.map(moduleJSON)),
+                     "cables": .array(doc.cables.map { .string("\($0.from).\($0.fromPort) -> \($0.to).\($0.toPort)") })])
+        }
+
+        tools.append(Tool(
+            name: "patch_modules", title: "The module kinds of a patch",
+            description: "Every module kind a patch graph can hold, with its ports (name, type, default, range, unit) and settings. Use the ids with patch_edit.",
+            inputSchema: Schema.object([:]),
+            annotations: ToolAnnotations(readOnly: true)
+        ) { _ in
+            .object(["modules": .array(PatchModules.all.map { spec in
+                var o: [String: JSONValue] = ["kind": .string(spec.id), "name": .string(spec.name), "category": .string(spec.category), "help": .string(spec.help),
+                                              "inputs": .array(spec.inputs.map(portJSON)), "outputs": .array(spec.outputs.map(portJSON))]
+                if !spec.settings.isEmpty { o["settings"] = .object(Dictionary(uniqueKeysWithValues: spec.settings.map { ($0.key, JSONValue.array($0.choices.map { .string($0) })) })) }
+                if !spec.numbers.isEmpty { o["numbers"] = .object(spec.numbers.mapValues { .number($0) }) }
+                if spec.single { o["single"] = .bool(true) }
+                return .object(o)
+            }), "rules": .string("Cables join an output to an input of the same type; control also goes into audio. Several cables into one input sum. A cable that closes a loop gets one frame of delay. A module on the panel shows its inputs without a cable as knobs of the device (key module.port); a Knob module is a knob of its own (key = its id). A Script module's in, out and param lines are its ports. A patch needs an Audio Out module.")])
+        })
+
+        tools.append(Tool(
+            name: "patch_edit", title: "Edit a patch graph step by step",
+            description: """
+            Apply steps to the graph of a Patch device, in order; the result is compiled and put on the device as one undo step. \
+            A text on the device becomes a graph with one Script module first. Steps (JSON objects): \
+            {"op":"add","kind":"osc","id":"osc1","x":100,"y":100} (id optional), {"op":"remove","id":"osc1"}, \
+            {"op":"move","id":"osc1","x":..,"y":..}, {"op":"connect","from":"osc1.out","to":"lp1.in"}, {"op":"disconnect","from":..,"to":..}, \
+            {"op":"set","id":"lp1","key":"cutoff","value":800} (an input without a cable, or a number such as a knob's min/max/def/log, a delay's length, a const's value), \
+            {"op":"setting","id":"osc1","key":"shape","value":"saw"}, {"op":"source","id":"s1","text":"patch …"} (a Script's text), \
+            {"op":"label","id":"k1","label":"Cutoff"}, {"op":"expose","id":"lp1","on":true} (on the panel), {"op":"rename","name":"My Patch"}. \
+            A step that cannot be done stops the edit; nothing changes. patch_modules lists the kinds and ports.
+            """,
+            inputSchema: Schema.object(["track": trackArg, "device": deviceArg, "steps": .object(["type": .string("array"), "description": .string("The steps, in order"), "items": Schema.anyObject("One step")])],
+                                       required: ["track", "device", "steps"]),
+            annotations: ToolAnnotations()
+        ) { args in
+            let (t, d) = try await patchDevice(args)
+            guard var doc = PatchDocument.parse(d.source ?? "") else { throw ToolFailure("the device's patch does not parse") }
+            guard case .array(let steps) = args.raw["steps"] ?? .null else { throw ToolFailure("steps is an array of step objects") }
+            func str(_ o: [String: JSONValue], _ k: String) -> String? { if case .string(let s) = o[k] ?? .null { return s }; return nil }
+            func num(_ o: [String: JSONValue], _ k: String) -> Double? { if case .number(let n) = o[k] ?? .null { return n }; return nil }
+            func endpoint(_ s: String?, _ what: String) throws -> (String, String) {
+                guard let s, let dot = s.firstIndex(of: ".") else { throw ToolFailure("\(what) is module.port") }
+                return (String(s[..<dot]), String(s[s.index(after: dot)...]))
+            }
+            for (n, step) in steps.enumerated() {
+                guard case .object(let o) = step, let op = str(o, "op") else { throw ToolFailure("step \(n + 1) needs an op") }
+                let edit: PatchEdit
+                switch op {
+                case "add":
+                    guard let kind = str(o, "kind") else { throw ToolFailure("step \(n + 1): add needs a kind") }
+                    edit = .add(kind: kind, id: str(o, "id"), x: num(o, "x") ?? Double(60 + doc.modules.count * 40), y: num(o, "y") ?? 100)
+                case "remove": edit = .remove(id: str(o, "id") ?? "")
+                case "move": edit = .move(id: str(o, "id") ?? "", x: num(o, "x") ?? 0, y: num(o, "y") ?? 0)
+                case "connect", "disconnect":
+                    let (a, ap) = try endpoint(str(o, "from"), "from"), (b, bp) = try endpoint(str(o, "to"), "to")
+                    edit = op == "connect" ? .connect(from: a, fromPort: ap, to: b, toPort: bp) : .disconnect(from: a, fromPort: ap, to: b, toPort: bp)
+                case "set":
+                    guard let v = num(o, "value") else { throw ToolFailure("step \(n + 1): set needs a number value") }
+                    edit = .setValue(id: str(o, "id") ?? "", key: str(o, "key") ?? "", value: v)
+                case "setting": edit = .setSetting(id: str(o, "id") ?? "", key: str(o, "key") ?? "", value: str(o, "value") ?? "")
+                case "source": edit = .setSource(id: str(o, "id") ?? "", source: str(o, "text") ?? "")
+                case "label": edit = .setLabel(id: str(o, "id") ?? "", label: str(o, "label"))
+                case "expose":
+                    var on = true
+                    if case .bool(let b) = o["on"] ?? .null { on = b }
+                    edit = .expose(id: str(o, "id") ?? "", on: on)
+                case "rename": edit = .rename(str(o, "name") ?? "Patch")
+                default: throw ToolFailure("step \(n + 1): unknown op '\(op)'")
+                }
+                do { try doc.apply(edit) } catch { throw ToolFailure("step \(n + 1) (\(op)): \(error)") }
+            }
+            let source = doc.source
+            var extra: [String: JSONValue] = ["document": documentJSON(doc)]
+            var name: String?
+            switch PatchCompiler.cached(source) {
+            case .success(let p): extra["program"] = patchReport(p); name = p.name == d.name ? nil : p.name
+            case .failure(let e): extra["error"] = .string("\(e)")
+            }
+            return try await session.receipt(.setDeviceSource(track: t.id, device: d.id, source: source, name: name), extra: extra)
         })
 
         return tools

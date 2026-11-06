@@ -101,25 +101,34 @@ struct PatchEditorView: View {
     @Environment(AppModel.self) private var model
     let track: TrackID
     let device: DeviceID
-    @State private var doc = PatchDocument()
+    /// The device's whole patch.
+    @State private var root = PatchDocument()
+    /// The Subs opened, outermost first: the canvas shows the patch at this path.
+    @State private var path: [String] = []
     @State private var loadedSource: String?
+    /// The module the inspector shows: the anchor of the marking.
     @State private var selected: String?
+    /// Every marked module on the canvas: Delete removes them, ⌘G groups them.
+    @State private var marked: Set<String> = []
     @State private var renameRequest = 0
     /// A refused edit or a warning, in the status bar until the next edit.
     @State private var notice: String?
 
     private var slot: DeviceSlot? { model.project.track(track)?.device(device) }
-    private var compiled: Result<PatchProgram, PatchError> { PatchCompiler.cached(doc.source) }
+    private var compiled: Result<PatchProgram, PatchError> { PatchCompiler.cached(root.source) }
+    /// The patch on the canvas: the root, or the Sub at the path.
+    private var doc: PatchDocument { root.document(at: path) ?? root }
 
     var body: some View {
         VStack(spacing: 0) {
             toolbar
             Divider()
             HStack(spacing: 0) {
-                PatchCanvas(doc: $doc, selected: $selected, commit: commit, add: { kind, point in add(kind, at: point) },
-                            rename: { renameRequest += 1 })
+                PatchCanvas(doc: doc, selected: $selected, marked: $marked, commit: commit, commitAll: commit(_:),
+                            add: { kind, point in add(kind, at: point) }, rename: { renameRequest += 1 },
+                            open: open, group: groupMarked, save: saveToLibrary)
                 Divider()
-                PatchInspector(doc: doc, selected: selected, renameRequest: renameRequest, commit: commit)
+                PatchInspector(doc: doc, selected: selected, renameRequest: renameRequest, commit: commit, open: open, save: saveToLibrary)
                     .frame(width: 300)
             }
             Divider()
@@ -127,9 +136,14 @@ struct PatchEditorView: View {
         }
         .frame(minWidth: 720, minHeight: 420)
         .background {
-            // ⌘R: rename the selected module (the label field in the inspector takes the focus).
+            // ⌘R renames the selected module (the label field takes the focus); ⌘G groups the marked ones
+            // into a Sub; ⌘⇧G opens a Sub up again.
             Button("Rename") { if selected != nil { renameRequest += 1 } }
                 .keyboardShortcut("r", modifiers: .command).hidden()
+            Button("Group") { groupMarked() }
+                .keyboardShortcut("g", modifiers: .command).hidden()
+            Button("Ungroup") { ungroupSelected() }
+                .keyboardShortcut("g", modifiers: [.command, .shift]).hidden()
         }
         .onAppear { load() }
         .onChange(of: slot?.source) { _, _ in load() }
@@ -137,6 +151,12 @@ struct PatchEditorView: View {
 
     private var toolbar: some View {
         HStack(spacing: 10) {
+            if !path.isEmpty {
+                // Inside a Sub: the way back, and where we are.
+                Button { back() } label: { Image(systemName: "chevron.left") }
+                    .buttonStyle(.plain).hint("Back to \(path.count > 1 ? "the Sub around" : root.name)")
+                Text(crumbs).font(.system(size: 11)).foregroundStyle(Theme.dim).lineLimit(1)
+            }
             NameField(name: doc.name) { commit(.rename($0)) }
             Spacer()
             Menu("Add Module") {
@@ -144,7 +164,15 @@ struct PatchEditorView: View {
                     Menu(category) {
                         ForEach(PatchModules.all.filter { $0.category == category }) { spec in
                             Button(spec.name) { add(spec.id) }
-                                .disabled(spec.single && doc.modules.contains { $0.kind == spec.id })
+                                .disabled(!canAdd(spec))
+                        }
+                    }
+                }
+                let library = PatchLibrary.entries()
+                if !library.isEmpty {
+                    Menu("Library") {
+                        ForEach(library, id: \.url) { entry in
+                            Button(entry.name) { insertFromLibrary(entry.url) }
                         }
                     }
                 }
@@ -153,6 +181,25 @@ struct PatchEditorView: View {
             .hint("Put a module on the canvas, or right-click the canvas. Drag from an output dot to an input dot to cable it.")
         }
         .padding(10)
+    }
+
+    /// The Subs opened, as a trail: "Tremolo › Filter › Env".
+    private var crumbs: String {
+        var trail = [root.name]
+        var d = root
+        for id in path {
+            guard let m = d.module(id), let inner = m.sub else { break }
+            trail.append(PatchModules.label(m))
+            d = inner
+        }
+        return trail.dropLast().joined(separator: " › ") + " ›"
+    }
+
+    /// A single module once per patch; Inlets and Outlets only inside a Sub, Audio In and Out only on the device.
+    private func canAdd(_ spec: ModuleSpec) -> Bool {
+        if spec.single, doc.modules.contains(where: { $0.kind == spec.id }) { return false }
+        if doc.isSubPatch { return spec.id != "in" && spec.id != "out" }
+        return spec.id != "inlet" && spec.id != "outlet"
     }
 
     private var status: some View {
@@ -184,23 +231,33 @@ struct PatchEditorView: View {
         let source = slot?.source ?? ""
         guard source != loadedSource else { return }
         loadedSource = source
-        if let parsed = PatchDocument.parse(source) { doc = parsed }
+        if let parsed = PatchDocument.parse(source) { root = parsed }
+        if root.document(at: path) == nil { path = [] }
         if let selected, doc.module(selected) == nil { self.selected = nil }
+        marked = marked.filter { doc.module($0) != nil }
     }
 
     /// One edit into the project. A move coalesces while it goes on; the rest are one undo step each.
-    private func commit(_ edit: PatchEdit) {
-        var next = doc
-        do { try next.apply(edit) } catch { notice = "\(error)"; model.status = "\(error)"; return }
-        notice = warning(for: edit)
-        doc = next
+    private func commit(_ edit: PatchEdit) { commit([edit]) }
+
+    /// Several edits as one undo step. They apply to the patch on the canvas: inside the open Subs.
+    private func commit(_ edits: [PatchEdit]) {
+        guard !edits.isEmpty else { return }
+        var next = root
+        for edit in edits {
+            do { try next.apply(PatchDocument.edit(edit, at: path)) } catch { notice = "\(error)"; model.status = "\(error)"; return }
+        }
+        notice = edits.count == 1 ? warning(for: edits[0]) : nil
+        root = next
         let source = next.source
         loadedSource = source
         let name = (try? PatchCompiler.compile(source).name).flatMap { $0 == slot?.name ? nil : $0 }
         var key: String?
-        if case .move(let id, _, _) = edit { key = "patchmove.\(device).\(id)" }
+        if edits.count == 1, case .move(let id, _, _) = edits[0] { key = "patchmove.\(device).\(path.joined(separator: "/"))/\(id)" }
         model.apply(.setDeviceSource(track: track, device: device, source: source, name: name), key: key)
         if case .failure(let e) = PatchCompiler.cached(source) { model.status = "Patch: \(e.description)" }
+        marked = marked.filter { doc.module($0) != nil }
+        if let selected, doc.module(selected) == nil { self.selected = nil }
     }
 
     /// A cable between two port types that connect but differ (a control into an audio input) gets a note.
@@ -218,9 +275,75 @@ struct PatchEditorView: View {
         let n = doc.modules.count
         let x = point.map { max(0, $0.x).rounded() } ?? 60 + Double(n % 6) * 160
         let y = point.map { max(0, $0.y).rounded() } ?? 60 + Double(n / 6) * 90
-        let id = doc.freeID(for: kind)
+        let id = doc.freeID(for: kind == "subpatch" ? "sub" : kind)
         commit(.add(kind: kind, id: id, x: x, y: y))
         selected = id
+        marked = [id]
+    }
+
+    // MARK: Subs
+
+    /// Opens a Sub: the canvas shows its patch.
+    private func open(_ id: String) {
+        guard doc.module(id)?.sub != nil else { return }
+        path.append(id)
+        selected = nil
+        marked = []
+    }
+
+    private func back() {
+        guard let last = path.popLast() else { return }
+        selected = last
+        marked = [last]
+    }
+
+    /// ⌘G: the marked modules become one Sub, which is then the marked one.
+    private func groupMarked() {
+        let ids = marked.isEmpty ? [selected].compactMap { $0 } : Array(marked)
+        guard !ids.isEmpty else { notice = "Mark the modules to group first."; return }
+        let id = doc.freeID(for: "sub")
+        commit(.group(ids: ids.sorted(), id: id))
+        if doc.module(id) != nil { selected = id; marked = [id] }
+    }
+
+    /// ⌘⇧G: the selected Sub opens up; inside a Sub with nothing selected, the Sub around.
+    private func ungroupSelected() {
+        if let id = selected, doc.module(id)?.kind == "subpatch" {
+            commit(.ungroup(id: id))
+            selected = nil
+            marked = []
+        } else if let last = path.last {
+            path.removeLast()
+            commit(.ungroup(id: last))
+            selected = nil
+            marked = []
+        } else {
+            notice = "Select a Sub to ungroup."
+        }
+    }
+
+    /// Saves a Sub's patch under the module's label into the library, for every patch from now on.
+    private func saveToLibrary(_ m: PatchModule) {
+        guard let inner = m.sub else { return }
+        let name = m.label ?? inner.name
+        do {
+            let url = try PatchLibrary.save(inner, as: name)
+            notice = nil
+            model.status = "\(name) is in the library: \(url.path). Add Module › Library puts it on any canvas."
+        } catch {
+            notice = "\(error)"
+        }
+    }
+
+    /// Add Module › Library: a Sub with the saved patch, one undo step.
+    private func insertFromLibrary(_ url: URL) {
+        guard let inner = PatchLibrary.load(url) else { notice = "\(url.lastPathComponent) is not a Sub patch."; return }
+        let n = doc.modules.count
+        let id = doc.freeID(for: "sub")
+        commit([.add(kind: "subpatch", id: id, x: 60 + Double(n % 6) * 160, y: 60 + Double(n / 6) * 90),
+                .setSub(id: id, document: inner), .setLabel(id: id, label: inner.name)])
+        selected = id
+        marked = [id]
     }
 }
 
@@ -281,17 +404,25 @@ private struct CableDrag {
 }
 
 struct PatchCanvas: View {
-    @Binding var doc: PatchDocument
+    let doc: PatchDocument
     @Binding var selected: String?
+    @Binding var marked: Set<String>
     let commit: (PatchEdit) -> Void
+    let commitAll: ([PatchEdit]) -> Void
     /// A new module of a kind at a point on the canvas (the background menu).
     let add: (String, CGPoint) -> Void
     /// Rename the selected module: the inspector's label field takes the focus.
     let rename: () -> Void
+    /// Open a Sub (a double-click), group the marked modules into one, save a Sub to the library.
+    let open: (String) -> Void
+    let group: () -> Void
+    let save: (PatchModule) -> Void
     @State private var dragOffsets: [String: CGSize] = [:]
     @State private var cableDrag: CableDrag?
     /// Where the pointer was last seen, in canvas coordinates: the place for a module added by the menu.
     @State private var pointer: CGPoint = CGPoint(x: 60, y: 60)
+    /// The rubber band dragged on the background.
+    @State private var band: CGRect?
 
     private var feedback: Set<PatchCable> { PatchGraphCompiler.feedback(in: doc) }
 
@@ -306,24 +437,50 @@ struct PatchCanvas: View {
             ZStack(alignment: .topLeading) {
                 Theme.panel
                     .contentShape(Rectangle())
-                    .onTapGesture { selected = nil }
+                    .onTapGesture { selected = nil; marked = [] }
+                    .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named("canvas"))
+                        .onChanged { v in
+                            let r = CGRect(x: min(v.startLocation.x, v.location.x), y: min(v.startLocation.y, v.location.y),
+                                           width: abs(v.translation.width), height: abs(v.translation.height))
+                            band = r
+                            let hit = Set(doc.modules.filter { frame($0).intersects(r) }.map(\.id))
+                            marked = NSEvent.modifierFlags.contains(.shift) ? marked.union(hit) : hit
+                        }
+                        .onEnded { _ in
+                            band = nil
+                            if let selected, !marked.contains(selected) { self.selected = nil }
+                            if selected == nil { selected = doc.modules.first { marked.contains($0.id) }?.id }
+                        })
                     .contextMenu { addMenu }
                 cables
                 cableHits
                 ForEach(doc.modules) { m in
-                    PatchModuleView(module: m, doc: doc, selected: selected == m.id, offset: dragOffsets[m.id] ?? .zero,
+                    PatchModuleView(module: m, doc: doc, selected: marked.contains(m.id), offset: dragOffsets[m.id] ?? .zero,
                                     cableType: cableDrag?.type,
-                                    select: { selected = m.id }, commit: commit,
-                                    rename: { selected = m.id; rename() },
-                                    moved: { translation in dragOffsets[m.id] = translation },
+                                    select: { select(m.id) }, commit: commit,
+                                    rename: { select(m.id); rename() },
+                                    open: { open(m.id) },
+                                    group: { if !marked.contains(m.id) { select(m.id) }; group() },
+                                    save: { save(m) },
+                                    moved: { translation in for id in movingIDs(with: m.id) { dragOffsets[id] = translation } },
                                     dropped: { translation in
-                                        dragOffsets[m.id] = nil
+                                        let ids = movingIDs(with: m.id)
+                                        for id in ids { dragOffsets[id] = nil }
                                         guard translation != .zero else { return }
-                                        commit(.move(id: m.id, x: max(0, m.x + translation.width).rounded(), y: max(0, m.y + translation.height).rounded()))
+                                        commitAll(ids.compactMap { id in
+                                            doc.module(id).map { .move(id: id, x: max(0, $0.x + translation.width).rounded(), y: max(0, $0.y + translation.height).rounded()) }
+                                        })
                                     },
                                     cableStarted: { port, type, point in cableDrag = CableDrag(from: m.id, port: port, type: type, point: point) },
                                     cableMoved: { point in cableDrag?.point = point },
                                     cableEnded: { point in endCable(at: point) })
+                }
+                if let band {
+                    Rectangle().fill(Theme.accent.opacity(0.12))
+                        .overlay(Rectangle().stroke(Theme.accent.opacity(0.6), lineWidth: 1))
+                        .frame(width: band.width, height: band.height)
+                        .offset(x: band.minX, y: band.minY)
+                        .allowsHitTesting(false)
                 }
             }
             .frame(width: canvasSize.width, height: canvasSize.height)
@@ -334,7 +491,37 @@ struct PatchCanvas: View {
         }
         .background(Theme.panel)
         .focusable()
-        .onDeleteCommand { if let selected { commit(.remove(id: selected)); self.selected = nil } }
+        .focusEffectDisabled()
+        .onDeleteCommand {
+            let ids = marked.isEmpty ? [selected].compactMap { $0 } : Array(marked)
+            commitAll(ids.sorted().map { .remove(id: $0) })
+            selected = nil
+            marked = []
+        }
+    }
+
+    private func frame(_ m: PatchModule) -> CGRect {
+        CGRect(x: m.x, y: m.y, width: PatchLayout.width, height: PatchLayout.height(m))
+    }
+
+    /// A click marks one module; ⌘-click adds it to the marking or takes it out; ⇧-click adds it.
+    private func select(_ id: String) {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            if marked.contains(id), marked.count > 1 { marked.remove(id); if selected == id { selected = marked.first } }
+            else { marked.insert(id); selected = id }
+        } else if flags.contains(.shift) {
+            marked.insert(id)
+            selected = id
+        } else {
+            marked = [id]
+            selected = id
+        }
+    }
+
+    /// A drag on a marked module moves every marked module.
+    private func movingIDs(with id: String) -> [String] {
+        marked.contains(id) ? Array(marked) : [id]
     }
 
     private var cables: some View {
@@ -435,6 +622,9 @@ private struct PatchModuleView: View {
     let select: () -> Void
     let commit: (PatchEdit) -> Void
     let rename: () -> Void
+    let open: () -> Void
+    let group: () -> Void
+    let save: () -> Void
     let moved: (CGSize) -> Void
     let dropped: (CGSize) -> Void
     let cableStarted: (String, PortType, CGPoint) -> Void
@@ -495,12 +685,22 @@ private struct PatchModuleView: View {
         .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(selected ? Theme.text : Theme.line, lineWidth: selected ? 1.5 : 1))
         .offset(x: module.x + offset.width, y: module.y + offset.height)
+        .onTapGesture(count: 2) { if module.kind == "subpatch" { open() } }
         .onTapGesture { select() }
         .onHover { hovering = $0 }
         .contextMenu {
+            if module.kind == "subpatch" {
+                Button("Open") { open() }
+                Button("Ungroup") { commit(.ungroup(id: module.id)) }.keyboardShortcut("g", modifiers: [.command, .shift])
+                Button("Save to Library") { save() }
+                Divider()
+            }
             Button("Rename…") { rename() }.keyboardShortcut("r", modifiers: .command)
+            if !["in", "out", "inlet", "outlet"].contains(module.kind) {
+                Button("Group into a Sub") { group() }.keyboardShortcut("g", modifiers: .command)
+            }
             Button(module.isOnPanel ? "Take off the Panel" : "Put on the Panel") { commit(.expose(id: module.id, on: !module.isOnPanel)) }
-                .disabled(module.kind == "in" || module.kind == "out" || module.kind == "clock")
+                .disabled(["in", "out", "clock", "inlet", "outlet"].contains(module.kind))
             let cables = doc.cables.filter { $0.from == module.id || $0.to == module.id }
             if !cables.isEmpty {
                 Menu("Disconnect") {
@@ -516,9 +716,9 @@ private struct PatchModuleView: View {
 
     private var headerColor: Color {
         switch module.kind {
-        case "in", "out", "clock": Theme.accent.opacity(0.35)
+        case "in", "out", "clock", "inlet", "outlet": Theme.accent.opacity(0.35)
         case "knob", "toggle", "meter": Theme.macroMap.opacity(0.3)
-        case "script": Theme.midiMap.opacity(0.3)
+        case "script", "subpatch": Theme.midiMap.opacity(0.3)
         default: Theme.panel
         }
     }
@@ -585,15 +785,19 @@ struct PatchInspector: View {
     /// Counts up on ⌘R: the label field of the selected module takes the focus.
     let renameRequest: Int
     let commit: (PatchEdit) -> Void
+    let open: (String) -> Void
+    let save: (PatchModule) -> Void
 
     var body: some View {
         ScrollView {
             if let id = selected, let m = doc.module(id), let spec = PatchModules.spec(m.kind) {
-                ModuleInspector(module: m, spec: spec, doc: doc, renameRequest: renameRequest, commit: commit)
+                ModuleInspector(module: m, spec: spec, doc: doc, renameRequest: renameRequest, commit: commit, open: open, save: save)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Select a module").font(.system(size: 12, weight: .semibold))
-                    Text("Click a module to see its values. Drag a title to move it, drag an output dot to an input dot to cable it. Right-click a cable to remove it, right-click the canvas to add a module. ⌘R renames, Delete removes the selected module.")
+                    Text("Click a module to see its values. Drag a title to move it, drag an output dot to an input dot to cable it. Right-click a cable to remove it, right-click the canvas to add a module. ⌘R renames, Delete removes the marked modules.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.dim)
+                    Text("Drag on the background to mark several modules (⌘-click adds one). ⌘G makes them one Sub with Inlets and Outlets for the cables across its edge; double-click opens it, ⌘⇧G opens it up again. Save to Library keeps a Sub for every patch.")
                         .font(.system(size: 11)).foregroundStyle(Theme.dim)
                     Text("Modules on the panel show their free inputs as knobs on the device: automation, macros and MIDI learn work on them.")
                         .font(.system(size: 11)).foregroundStyle(Theme.dim)
@@ -613,6 +817,8 @@ private struct ModuleInspector: View {
     let doc: PatchDocument
     let renameRequest: Int
     let commit: (PatchEdit) -> Void
+    let open: (String) -> Void
+    let save: (PatchModule) -> Void
     @State private var label = ""
     @State private var scriptText = ""
     @State private var loadedID = ""
@@ -639,7 +845,19 @@ private struct ModuleInspector: View {
                     .font(.system(size: 11))
                     .hint("The free inputs of this module show as knobs on the device card.")
             }
-            if module.kind == "knob" { knobFields }
+            if module.kind == "subpatch" {
+                HStack(spacing: 6) {
+                    Button("Open") { open(module.id) }.hint("Show the patch inside; double-click on the canvas does the same.")
+                    Button("Ungroup") { commit(.ungroup(id: module.id)) }.hint("The modules inside come back to this canvas (⌘⇧G).")
+                    Button("Save to Library") { save(module) }.hint("Keeps this Sub under its label, for Add Module › Library in every patch.")
+                }
+                .controlSize(.small)
+                if let inner = module.sub {
+                    Text("\(inner.modules.count) modules inside, \(PatchModules.ports(of: module).inputs.count) in, \(PatchModules.ports(of: module).outputs.count) out")
+                        .font(.system(size: 10)).foregroundStyle(Theme.dim)
+                }
+            }
+            if module.kind == "knob" || module.kind == "inlet" { knobFields }
             if module.kind == "toggle" {
                 Toggle("On by default", isOn: Binding(get: { (module.values["def"] ?? 0) > 0.5 }, set: { commit(.setValue(id: module.id, key: "def", value: $0 ? 1 : 0)) }))
                     .font(.system(size: 11))

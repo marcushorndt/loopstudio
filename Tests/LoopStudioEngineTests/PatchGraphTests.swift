@@ -222,3 +222,104 @@ private func doc(_ edits: [PatchEdit], name: String = "Test") throws -> PatchDoc
     let (text, _) = try run("patch \"C\"\nin x\nout y\ny = count(lfo(1/4, square), 3)", [:], input)
     #expect(text[quarter / 2] == 1 && text[quarter + quarter / 2] == 2 && text[3 * quarter + quarter / 2] == 1, "the text has count() too")
 }
+
+// MARK: Subs
+
+/// in → lp (cutoff from a knob) → mul (gain from a const) → out, the base of the Sub tests.
+private func filterPatch() throws -> PatchDocument {
+    try doc([
+        .add(kind: "in", id: "in", x: 0, y: 0), .add(kind: "out", id: "out", x: 600, y: 0),
+        .add(kind: "knob", id: "cutoff", x: 100, y: 100), .setValue(id: "cutoff", key: "min", value: 20),
+        .setValue(id: "cutoff", key: "max", value: 20_000), .setValue(id: "cutoff", key: "def", value: 1000),
+        .add(kind: "lp", id: "filter", x: 200, y: 0),
+        .add(kind: "const", id: "half", x: 200, y: 100), .setValue(id: "half", key: "value", value: 0.5),
+        .add(kind: "mul", id: "vca", x: 400, y: 0),
+        .connect(from: "in", fromPort: "out", to: "filter", toPort: "in"),
+        .connect(from: "cutoff", fromPort: "out", to: "filter", toPort: "cutoff"),
+        .connect(from: "filter", fromPort: "out", to: "vca", toPort: "a"),
+        .connect(from: "half", fromPort: "out", to: "vca", toPort: "b"),
+        .connect(from: "vca", fromPort: "out", to: "out", toPort: "in"),
+    ])
+}
+
+@Test func groupedModulesSoundTheSameAndUngroupAgain() throws {
+    let flat = try filterPatch()
+    var grouped = flat
+    try grouped.apply(.group(ids: ["filter", "vca"], id: "fx"))
+    let sub = try #require(grouped.module("fx"))
+    let ports = PatchModules.ports(of: sub)
+    #expect(ports.inputs.map(\.name) == ["in", "cutoff", "b"], "one Inlet per inner port a cable reached, top to bottom")
+    #expect(ports.outputs.map(\.name) == ["out"])
+    #expect(ports.inputs[1].min == 20 && ports.inputs[1].max == 20_000, "the Inlet takes the inner port's range")
+    #expect(grouped.cables.contains(PatchCable(from: "cutoff", fromPort: "out", to: "fx", toPort: "cutoff")))
+    #expect(grouped.cables.contains(PatchCable(from: "fx", fromPort: "out", to: "out", toPort: "in")))
+    #expect(grouped.modules.map(\.kind).sorted() == ["const", "in", "knob", "out", "subpatch"])
+    let input: [Float] = (0..<4800).map { Float($0 % 17) / 17 - 0.5 }
+    let (a, _) = try run(flat.source, ["cutoff": 400], input)
+    let (b, dsp) = try run(grouped.source, ["cutoff": 400], input)
+    for i in stride(from: 0, to: 4800, by: 13) { #expect(abs(a[i] - b[i]) < 1e-6) }
+    #expect(dsp.program.spec.params.map(\.key) == ["cutoff"], "the knob outside keeps its key")
+
+    var back = grouped
+    try back.apply(.ungroup(id: "fx"))
+    #expect(Set(back.cables) == Set(flat.cables), "ungroup gives the cables back")
+    #expect(Set(back.modules.map(\.id)) == Set(flat.modules.map(\.id)))
+    let (c, _) = try run(back.source, ["cutoff": 400], input)
+    for i in stride(from: 0, to: 4800, by: 13) { #expect(abs(a[i] - c[i]) < 1e-6) }
+}
+
+@Test func aSubOnThePanelShowsItsFreeInletsAndKeepsInnerKnobsBehindItsID() throws {
+    var d = try filterPatch()
+    try d.apply(.group(ids: ["filter", "vca"], id: "fx"))
+    // The knob and the constant go: the Inlets they fed are free now.
+    try d.apply(.remove(id: "cutoff"))
+    try d.apply(.remove(id: "half"))
+    #expect(try PatchCompiler.compile(d.source).spec.params.isEmpty, "a Sub off the panel has no knobs")
+    try d.apply(.expose(id: "fx", on: true))
+    let exposed = try PatchCompiler.compile(d.source).spec
+    #expect(exposed.params.map(\.key) == ["fx.cutoff", "fx.b"], "the Inlets without a cable are knobs of the device")
+    #expect(exposed.params[0].max == 20_000, "with the range the Inlet took from the filter")
+    // A knob inside the Sub: its key carries the Sub's id.
+    try d.apply(.inside(id: "fx", edit: .add(kind: "knob", id: "q", x: 100, y: 200)))
+    try d.apply(.inside(id: "fx", edit: .connect(from: "q", fromPort: "out", to: "filter", toPort: "q")))
+    let withInner = try PatchCompiler.compile(d.source).spec
+    #expect(withInner.params.map(\.key).sorted() == ["fx.b", "fx.cutoff", "fx.q"])
+    #expect(withInner.groups.map(\.title).contains("Sub › q"))
+}
+
+@Test func anInletRenamedInsideKeepsItsCableOutsideAndARemovedOneDropsIt() throws {
+    var d = try filterPatch()
+    try d.apply(.group(ids: ["filter"], id: "fx"))
+    let inner = try #require(d.module("fx")?.sub)
+    let cutoffInlet = try #require(inner.modules.first { $0.kind == "inlet" && $0.label == "cutoff" })
+    try d.apply(.inside(id: "fx", edit: .setLabel(id: cutoffInlet.id, label: "freq")))
+    #expect(d.cables.contains(PatchCable(from: "cutoff", fromPort: "out", to: "fx", toPort: "freq")), "the cable follows the new name")
+    try d.apply(.inside(id: "fx", edit: .remove(id: cutoffInlet.id)))
+    #expect(!d.cables.contains { $0.to == "fx" && $0.toPort == "freq" }, "the cable goes with the Inlet")
+    #expect(throws: PatchEditError.self, "no Audio In inside a Sub") {
+        try d.apply(.inside(id: "fx", edit: .add(kind: "in", id: "in2", x: 0, y: 0)))
+    }
+    #expect(throws: PatchEditError.self, "no Inlet on the device") {
+        try d.apply(.add(kind: "inlet", id: "i", x: 0, y: 0))
+    }
+}
+
+@Test func theLibraryKeepsASubAndGivesItBack() throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("lspatch-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: folder) }
+    var d = try filterPatch()
+    try d.apply(.group(ids: ["filter", "vca"], id: "fx"))
+    let inner = try #require(d.module("fx")?.sub)
+    let url = try PatchLibrary.save(inner, as: "Filter Gain", in: folder)
+    #expect(PatchLibrary.entries(in: folder).map(\.name) == ["Filter Gain"])
+    let loaded = try #require(PatchLibrary.load(url))
+    #expect(loaded.isSubPatch && loaded.name == "Filter Gain")
+    var fresh = try doc([.add(kind: "in", id: "in", x: 0, y: 0), .add(kind: "out", id: "out", x: 600, y: 0), .add(kind: "subpatch", id: "s", x: 200, y: 0)])
+    try fresh.apply(.setSub(id: "s", document: loaded))
+    #expect(PatchModules.ports(of: fresh.module("s")!).inputs.map(\.name) == ["in", "cutoff", "b"])
+    try fresh.apply(.connect(from: "in", fromPort: "out", to: "s", toPort: "in"))
+    try fresh.apply(.connect(from: "s", fromPort: "out", to: "out", toPort: "in"))
+    let program = try PatchCompiler.compile(fresh.source)
+    #expect(program.ops.count > 2)
+}
+

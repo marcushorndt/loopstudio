@@ -11,12 +11,17 @@ public struct PatchDocument: Codable, Hashable, Sendable {
     public var name: String
     public var modules: [PatchModule]
     public var cables: [PatchCable]
+    /// The patch inside a Sub module: Inlets and Outlets are its ports, in place of Audio In and Audio Out.
+    public var isSub: Bool?
 
-    public init(name: String = "Patch", modules: [PatchModule] = [], cables: [PatchCable] = []) {
+    public init(name: String = "Patch", modules: [PatchModule] = [], cables: [PatchCable] = [], isSub: Bool? = nil) {
         self.name = name
         self.modules = modules
         self.cables = cables
+        self.isSub = isSub
     }
+
+    public var isSubPatch: Bool { isSub == true }
 
     /// A stage 1 text as a document: Audio In, one Script, Audio Out, wired through. The Script is on the panel,
     /// so the knobs of the text stay the knobs of the device.
@@ -93,9 +98,11 @@ public struct PatchModule: Codable, Hashable, Sendable, Identifiable {
     public var source: String?
     /// On the device's panel (the card), with its place there. `nil`: only in the editor.
     public var panel: PatchPanelItem?
+    /// A Sub module's patch: its Inlets and Outlets are the module's ports.
+    public var sub: PatchDocument?
 
     public init(id: String, kind: String, label: String? = nil, x: Double, y: Double, values: [String: Double] = [:],
-                settings: [String: String] = [:], source: String? = nil, panel: PatchPanelItem? = nil) {
+                settings: [String: String] = [:], source: String? = nil, panel: PatchPanelItem? = nil, sub: PatchDocument? = nil) {
         self.id = id
         self.kind = kind
         self.label = label
@@ -105,6 +112,7 @@ public struct PatchModule: Codable, Hashable, Sendable, Identifiable {
         self.settings = settings
         self.source = source
         self.panel = panel
+        self.sub = sub
     }
 
     public init(from decoder: Decoder) throws {
@@ -118,6 +126,7 @@ public struct PatchModule: Codable, Hashable, Sendable, Identifiable {
         settings = try c.decodeIfPresent([String: String].self, forKey: .settings) ?? [:]
         source = try c.decodeIfPresent(String.self, forKey: .source)
         panel = try c.decodeIfPresent(PatchPanelItem.self, forKey: .panel)
+        sub = try c.decodeIfPresent(PatchDocument.self, forKey: .sub)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -131,9 +140,10 @@ public struct PatchModule: Codable, Hashable, Sendable, Identifiable {
         if !settings.isEmpty { try c.encode(settings, forKey: .settings) }
         try c.encodeIfPresent(source, forKey: .source)
         try c.encodeIfPresent(panel, forKey: .panel)
+        try c.encodeIfPresent(sub, forKey: .sub)
     }
 
-    enum CodingKeys: String, CodingKey { case id, kind, label, x, y, values, settings, source, panel }
+    enum CodingKeys: String, CodingKey { case id, kind, label, x, y, values, settings, source, panel, sub }
 
     public var isOnPanel: Bool { panel != nil }
 }
@@ -162,7 +172,7 @@ public struct PatchCable: Codable, Hashable, Sendable {
 
 /// One step of editing a document. The editor and the MCP `patch_edit` tool apply the same steps, so what an
 /// agent can do, the pointer can do, and the other way round.
-public enum PatchEdit: Hashable, Sendable {
+public indirect enum PatchEdit: Hashable, Sendable {
     case rename(String)
     case add(kind: String, id: String?, x: Double, y: Double)
     case remove(id: String)
@@ -174,6 +184,15 @@ public enum PatchEdit: Hashable, Sendable {
     case setSource(id: String, source: String)
     case setLabel(id: String, label: String?)
     case expose(id: String, on: Bool)
+    /// The modules become one Sub module at their place. Cables that cross its edge become its Inlets and
+    /// Outlets, named after the inner ports they reach.
+    case group(ids: [String], id: String?)
+    /// The modules of a Sub come back to the canvas; its Inlets and Outlets splice into cables.
+    case ungroup(id: String)
+    /// A step inside a Sub module's patch. A renamed Inlet or Outlet keeps its cables outside.
+    case inside(id: String, edit: PatchEdit)
+    /// The whole patch inside a Sub module (from the library).
+    case setSub(id: String, document: PatchDocument)
 }
 
 public struct PatchEditError: Error, CustomStringConvertible, Sendable {
@@ -189,11 +208,14 @@ public extension PatchDocument {
             name = n.trimmingCharacters(in: .whitespaces).isEmpty ? "Patch" : n
         case .add(let kind, let id, let x, let y):
             guard let spec = PatchModules.spec(kind) else { throw PatchEditError("no module kind '\(kind)'; patch_modules lists them") }
-            let newID = id ?? freeID(for: kind)
+            let newID = id ?? freeID(for: kind == "subpatch" ? "sub" : kind)
             guard !newID.isEmpty, newID.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { throw PatchEditError("an id has letters, digits and _ only") }
             guard module(newID) == nil else { throw PatchEditError("there is a module '\(newID)' already") }
             if spec.single, modules.contains(where: { $0.kind == kind }) { throw PatchEditError("a patch has one \(spec.name) module") }
+            if isSubPatch, kind == "in" || kind == "out" { throw PatchEditError("inside a Sub, an Inlet stands for Audio In and an Outlet for Audio Out") }
+            if !isSubPatch, kind == "inlet" || kind == "outlet" { throw PatchEditError("an Inlet or an Outlet belongs inside a Sub; the device has Audio In and Audio Out") }
             var m = PatchModule(id: newID, kind: kind, x: x, y: y)
+            if kind == "subpatch" { m.sub = PatchDocument(name: "Sub", isSub: true) }
             if kind == "script" { m.source = PatchExamples.scriptStarter; m.panel = PatchPanelItem(column: nextColumn) }
             if kind == "knob" { m.panel = PatchPanelItem(column: nextColumn) }
             if kind == "meter" { m.panel = PatchPanelItem(column: nextColumn) }
@@ -249,7 +271,171 @@ public extension PatchDocument {
         case .expose(let id, let on):
             guard let i = modules.firstIndex(where: { $0.id == id }) else { throw PatchEditError("no module '\(id)'") }
             if on { if modules[i].panel == nil { modules[i].panel = PatchPanelItem(column: nextColumn) } } else { modules[i].panel = nil }
+        case .group(let ids, let id):
+            try group(ids, as: id)
+        case .ungroup(let id):
+            try ungroup(id)
+        case .inside(let id, let edit):
+            guard let i = modules.firstIndex(where: { $0.id == id }), var inner = modules[i].sub else { throw PatchEditError("'\(id)' is not a Sub module") }
+            let before = PatchModules.subPortNames(inner)
+            try inner.apply(edit)
+            modules[i].sub = inner
+            reconcileCables(of: id, before: before, after: PatchModules.subPortNames(inner))
+        case .setSub(let id, let document):
+            guard let i = modules.firstIndex(where: { $0.id == id }), modules[i].kind == "subpatch" else { throw PatchEditError("'\(id)' is not a Sub module") }
+            let before = PatchModules.subPortNames(modules[i].sub ?? PatchDocument())
+            var inner = document
+            inner.isSub = true
+            modules[i].sub = inner
+            reconcileCables(of: id, before: before, after: PatchModules.subPortNames(inner))
         }
+    }
+
+    /// Marked modules into one Sub. Every cable from outside into a member becomes an Inlet (one per inner
+    /// port reached), every cable from a member to the outside an Outlet (one per inner port). Cables
+    /// among the members move inside. The Sub sits where the top left member was.
+    private mutating func group(_ ids: [String], as id: String?) throws {
+        let set = Set(ids)
+        let members = modules.filter { set.contains($0.id) }
+        guard !members.isEmpty else { throw PatchEditError("mark the modules to group") }
+        guard members.count == set.count else { throw PatchEditError("a module to group is not in the patch") }
+        if let fixed = members.first(where: { ["in", "out", "inlet", "outlet"].contains($0.kind) }) {
+            throw PatchEditError("\(PatchModules.label(fixed)) is a port of this patch; it does not go into a Sub")
+        }
+        let newID = id ?? freeID(for: "sub")
+        guard !newID.isEmpty, newID.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { throw PatchEditError("an id has letters, digits and _ only") }
+        guard module(newID) == nil else { throw PatchEditError("there is a module '\(newID)' already") }
+        let minX = members.map(\.x).min()!, minY = members.map(\.y).min()!
+        var inner = PatchDocument(name: "Sub", isSub: true)
+        inner.modules = members.map { m in var c = m; c.x = m.x - minX + 200; c.y = m.y - minY + 40; return c }
+        inner.cables = cables.filter { set.contains($0.from) && set.contains($0.to) }
+        var outer = cables.filter { !set.contains($0.from) && !set.contains($0.to) }
+        var taken = Set<String>()
+        func portName(_ wanted: String, _ module: String) -> String {
+            let base = taken.contains(wanted) ? "\(module)_\(wanted)" : wanted
+            var name = base, n = 2
+            while taken.contains(name) { name = "\(base)\(n)"; n += 1 }
+            taken.insert(name)
+            return name
+        }
+        var inlets: [String: String] = [:]
+        for cable in cables where !set.contains(cable.from) && set.contains(cable.to) {
+            let key = "\(cable.to).\(cable.toPort)"
+            if inlets[key] == nil {
+                let name = portName(cable.toPort, cable.to)
+                let inletID = inner.freeID(for: "inlet")
+                var inlet = PatchModule(id: inletID, kind: "inlet", label: name, x: 20, y: 40 + Double(inlets.count) * 44)
+                // The inner port's range and value become the Inlet's: the knob when the Sub is on the panel.
+                if let target = module(cable.to), let port = PatchModules.ports(of: target).inputs.first(where: { $0.name == cable.toPort }) {
+                    inlet.values = ["min": port.min, "max": port.max, "def": target.values[port.name] ?? port.def]
+                    if port.log { inlet.values["log"] = 1 }
+                    if !port.unit.isEmpty { inlet.settings["unit"] = port.unit }
+                }
+                inner.modules.append(inlet)
+                inner.cables.append(PatchCable(from: inletID, fromPort: "out", to: cable.to, toPort: cable.toPort))
+                inlets[key] = name
+            }
+            let c = PatchCable(from: cable.from, fromPort: cable.fromPort, to: newID, toPort: inlets[key]!)
+            if !outer.contains(c) { outer.append(c) }
+        }
+        taken = []
+        var outlets: [String: String] = [:]
+        let outletX = (inner.modules.map(\.x).max() ?? 200) + 200
+        for cable in cables where set.contains(cable.from) && !set.contains(cable.to) {
+            let key = "\(cable.from).\(cable.fromPort)"
+            if outlets[key] == nil {
+                let name = portName(cable.fromPort, cable.from)
+                let outletID = inner.freeID(for: "outlet")
+                inner.modules.append(PatchModule(id: outletID, kind: "outlet", label: name, x: outletX, y: 40 + Double(outlets.count) * 44))
+                inner.cables.append(PatchCable(from: cable.from, fromPort: cable.fromPort, to: outletID, toPort: "in"))
+                outlets[key] = name
+            }
+            let c = PatchCable(from: newID, fromPort: outlets[key]!, to: cable.to, toPort: cable.toPort)
+            if !outer.contains(c) { outer.append(c) }
+        }
+        modules.removeAll { set.contains($0.id) }
+        modules.append(PatchModule(id: newID, kind: "subpatch", x: minX, y: minY, sub: inner))
+        cables = outer
+    }
+
+    /// The inverse of `group`: the inner modules come out at the Sub's place (renamed where an id is taken),
+    /// the Inlets and Outlets splice the cables outside to the cables inside.
+    private mutating func ungroup(_ id: String) throws {
+        guard let i = modules.firstIndex(where: { $0.id == id }), let inner = modules[i].sub else { throw PatchEditError("'\(id)' is not a Sub module") }
+        let sub = modules[i]
+        let names = PatchModules.subPortNames(inner)
+        var outerIDs = Set(modules.map(\.id))
+        outerIDs.remove(id)
+        let plain = inner.modules.filter { $0.kind != "inlet" && $0.kind != "outlet" }
+        var rename: [String: String] = [:]
+        for m in plain {
+            var newID = m.id, n = 2
+            while outerIDs.contains(newID) { newID = "\(m.id)\(n)"; n += 1 }
+            outerIDs.insert(newID)
+            rename[m.id] = newID
+        }
+        let minX = plain.map(\.x).min() ?? 0, minY = plain.map(\.y).min() ?? 0
+        let added = plain.map { m in var c = m; c.id = rename[m.id]!; c.x = sub.x + m.x - minX; c.y = sub.y + m.y - minY; return c }
+        var spliced: [PatchCable] = inner.cables.compactMap { c in
+            guard let f = rename[c.from], let t = rename[c.to] else { return nil }
+            return PatchCable(from: f, fromPort: c.fromPort, to: t, toPort: c.toPort)
+        }
+        func outerTargets(ofOutlet outlet: String) -> [PatchCable] {
+            guard let name = names.outlets[outlet] else { return [] }
+            return cables.filter { $0.from == id && $0.fromPort == name }
+        }
+        for inlet in inner.modules where inlet.kind == "inlet" {
+            guard let name = names.inlets[inlet.id] else { continue }
+            let sources = cables.filter { $0.to == id && $0.toPort == name }
+            for t in inner.cables where t.from == inlet.id {
+                for s in sources {
+                    if let tt = rename[t.to] {
+                        spliced.append(PatchCable(from: s.from, fromPort: s.fromPort, to: tt, toPort: t.toPort))
+                    } else {
+                        // Straight through an Outlet: the sources outside meet the targets outside.
+                        for o in outerTargets(ofOutlet: t.to) { spliced.append(PatchCable(from: s.from, fromPort: s.fromPort, to: o.to, toPort: o.toPort)) }
+                    }
+                }
+            }
+        }
+        for outlet in inner.modules where outlet.kind == "outlet" {
+            let targets = outerTargets(ofOutlet: outlet.id)
+            for s in inner.cables where s.to == outlet.id {
+                guard let ss = rename[s.from] else { continue }
+                for t in targets { spliced.append(PatchCable(from: ss, fromPort: s.fromPort, to: t.to, toPort: t.toPort)) }
+            }
+        }
+        modules.remove(at: i)
+        modules += added
+        cables.removeAll { $0.from == id || $0.to == id }
+        for c in spliced where !cables.contains(c) && c.from != c.to { cables.append(c) }
+    }
+
+    /// After a change inside a Sub: a renamed port keeps its cables outside, a port that is gone takes them.
+    private mutating func reconcileCables(of id: String, before: PatchModules.SubPortNames, after: PatchModules.SubPortNames) {
+        cables = cables.compactMap { cable in
+            var c = cable
+            if c.to == id {
+                guard let inlet = before.inlets.first(where: { $0.value == c.toPort })?.key, let name = after.inlets[inlet] else { return nil }
+                c.toPort = name
+            }
+            if c.from == id {
+                guard let outlet = before.outlets.first(where: { $0.value == c.fromPort })?.key, let name = after.outlets[outlet] else { return nil }
+                c.fromPort = name
+            }
+            return c
+        }
+    }
+
+    /// The patch at a path of Sub ids, from this document down. Empty: this document.
+    func document(at path: [String]) -> PatchDocument? {
+        guard let first = path.first else { return self }
+        return module(first)?.sub?.document(at: Array(path.dropFirst()))
+    }
+
+    /// An edit wrapped for a path of Sub ids: the innermost first.
+    static func edit(_ edit: PatchEdit, at path: [String]) -> PatchEdit {
+        path.reversed().reduce(edit) { .inside(id: $1, edit: $0) }
     }
 
     /// The next free panel column: after the last used one.

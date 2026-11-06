@@ -184,6 +184,19 @@ focused work on top of stage 1. Stages 3 and 4 are three to four days each.
   rises of a trigger, wraps at `steps`, `reset` holds it at 0; the new `count` op, also `count()` in the
   text). The pick inputs take any signal: a Knob, a Toggle, a Counter on a square LFO or a Phase, a Script
   output. Built from `floor`, `eq`, `mul` and `add`; a hard switch, so a Crossfade is the soft one.
+- **Subs** (added after stage 2): a `subpatch` module holds a `PatchDocument` with `isSub` (`PatchModule.sub`).
+  Inside, an `inlet` stands for Audio In and an `outlet` for Audio Out; their labels are the port names
+  (`PatchModules.subPortNames`, unique, dots become underscores). `PatchEdit.group(ids:id:)` turns marked
+  modules into one Sub: every cable from outside into a member becomes an Inlet (one per inner port, with
+  the port's range and value for the knob), every cable out an Outlet; `ungroup` splices them back (ids
+  renamed where taken). `inside(id:edit:)` runs a step in a Sub's patch and keeps the cables outside across
+  a renamed port; `setSub` puts a whole patch in (the library). The graph compiler inlines a Sub
+  (`emitSub`): Inlets are bound to the values at the Sub's inputs, Outlets read as its outputs, knobs
+  inside carry the Sub's id in their key (`sub1.filter.cutoff`), buffer names carry the path. A Sub on the
+  panel shows its free Inlets as knobs. The editor: drag on the background marks modules, ⌘G groups, double-
+  click opens (a path with a breadcrumb; edits inside go through `inside`), ⌘⇧G ungroups; Save to Library
+  writes the Sub to `~/Library/Application Support/LoopStudio/Patches/<name>.lspatch` (`PatchLibrary`) and
+  Add Module › Library puts it on any canvas. MCP: `patch_edit` ops `group`, `ungroup`, and `"in"` on any step.
 - **Ports** of stage 2: `audio` and `control`. Every DSP input is `audio`; a Knob, a Toggle and a Number
   give `control`; `control` goes into `audio`. The rate is one per frame for both, so a knob into a cutoff
   is exact and a slew module smooths it when wanted. `event`, `clock` and `data` are declared, not wired.

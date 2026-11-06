@@ -146,15 +146,60 @@ public enum PatchModules {
         // Script
         ModuleSpec("script", "Script", category: "Script", help: "A text in the patch language. Its in, out and param lines are its ports; param lines are knobs on the panel.",
                    inputs: [audioIn], outputs: [audioOut]),
+        ModuleSpec("subpatch", "Sub", category: "Structure",
+                   help: "A patch inside one module: its Inlets and Outlets are the ports. ⌘G on marked modules makes one, double-click opens it, the library keeps it.",
+                   inputs: [], outputs: []),
+        ModuleSpec("inlet", "Inlet", category: "Structure",
+                   help: "An input of the Sub around it; the label is the port's name. Min, max and default make its knob when the Sub is on the panel.",
+                   inputs: [], outputs: [audioOut], numbers: ["min": 0, "max": 1, "def": 0]),
+        ModuleSpec("outlet", "Outlet", category: "Structure",
+                   help: "An output of the Sub around it; the label is the port's name.",
+                   inputs: [audioIn], outputs: []),
     ]
 
-    public static let categories = ["I/O", "Panel", "Generate", "Filter", "Shape", "Delay", "Route", "Math", "Script"]
+    public static let categories = ["I/O", "Panel", "Generate", "Filter", "Shape", "Delay", "Route", "Math", "Script", "Structure"]
 
     public static func spec(_ kind: String) -> ModuleSpec? { all.first { $0.id == kind } }
+
+    /// The port names of a Sub's patch, by Inlet and by Outlet id: the label, or the id when the label is
+    /// taken or missing. A dot in a label becomes an underscore, so "module.port" stays one address.
+    public struct SubPortNames: Sendable, Hashable {
+        public var inlets: [String: String] = [:]
+        public var outlets: [String: String] = [:]
+    }
+
+    public static func subPortNames(_ doc: PatchDocument) -> SubPortNames {
+        var names = SubPortNames()
+        for kind in ["inlet", "outlet"] {
+            var taken = Set<String>()
+            let ports = doc.modules.filter { $0.kind == kind }.sorted { ($0.y, $0.x, $0.id) < ($1.y, $1.x, $1.id) }
+            for p in ports {
+                var name = (p.label ?? p.id).replacingOccurrences(of: ".", with: "_").trimmingCharacters(in: .whitespaces)
+                if name.isEmpty || taken.contains(name) { name = p.id }
+                var n = 2
+                while taken.contains(name) { name = "\(p.id)_\(n)"; n += 1 }
+                taken.insert(name)
+                if kind == "inlet" { names.inlets[p.id] = name } else { names.outlets[p.id] = name }
+            }
+        }
+        return names
+    }
 
     /// The ports of a module as placed: a Script's come from its text, the others from the kind.
     public static func ports(of module: PatchModule) -> (inputs: [ModulePort], outputs: [ModulePort]) {
         guard let spec = spec(module.kind) else { return ([], []) }
+        if module.kind == "subpatch" {
+            // The Inlets and Outlets of the patch inside, top to bottom.
+            guard let inner = module.sub else { return ([], []) }
+            let names = subPortNames(inner)
+            let order = { (a: PatchModule, b: PatchModule) in (a.y, a.x, a.id) < (b.y, b.x, b.id) }
+            let inputs = inner.modules.filter { $0.kind == "inlet" }.sorted(by: order).map { p in
+                ModulePort(names.inlets[p.id] ?? p.id, .audio, def: p.values["def"] ?? 0, min: p.values["min"] ?? 0, max: p.values["max"] ?? 1,
+                           unit: p.settings["unit"] ?? "", log: (p.values["log"] ?? 0) > 0.5)
+            }
+            let outputs = inner.modules.filter { $0.kind == "outlet" }.sorted(by: order).map { ModulePort(names.outlets[$0.id] ?? $0.id, .audio) }
+            return (inputs, outputs)
+        }
         guard module.kind == "script" else { return (spec.inputs, spec.outputs) }
         guard let shape = try? PatchCompiler.shape(of: module.source ?? "") else { return (spec.inputs, spec.outputs) }
         var inputs = [ModulePort(shape.input, .audio)]
@@ -201,7 +246,8 @@ public enum PatchModules {
 
     /// The name shown for a module.
     public static func label(_ module: PatchModule) -> String {
-        if module.kind == "knob" || module.kind == "toggle" { return module.label ?? module.id }
+        if ["knob", "toggle", "inlet", "outlet"].contains(module.kind) { return module.label ?? module.id }
+        if module.kind == "subpatch" { return module.label ?? module.sub?.name ?? "Sub" }
         return module.label ?? spec(module.kind)?.name ?? module.kind
     }
 }

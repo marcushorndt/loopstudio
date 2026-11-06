@@ -61,6 +61,9 @@ public enum PatchGraphCompiler {
                 guard ids.insert(m.id).inserted else { throw fail(m.id, "two modules have the id '\(m.id)'") }
                 guard let spec = PatchModules.spec(m.kind) else { throw fail(m.id, "unknown module kind '\(m.kind)'") }
                 if spec.single, doc.modules.filter({ $0.kind == m.kind }).count > 1 { throw fail(m.id, "a patch has one \(spec.name) module") }
+                if !doc.isSubPatch, m.kind == "inlet" || m.kind == "outlet" { throw fail(m.id, "an Inlet or an Outlet belongs inside a Sub") }
+                if doc.isSubPatch, m.kind == "in" || m.kind == "out" { throw fail(m.id, "inside a Sub, use an Inlet or an Outlet") }
+                if m.kind == "subpatch", m.sub == nil { throw fail(m.id, "the Sub has no patch inside") }
                 if m.kind == "script" {
                     do { _ = try PatchCompiler.shape(of: m.source ?? "") } catch let e as PatchError { throw PatchError(line: e.line, e.message, module: m.id) }
                 }
@@ -259,7 +262,7 @@ public enum PatchGraphCompiler {
                 let seconds = m.kind == "delay" ? v[1].slot : c.emit(.mul, v[1].slot, PatchProgram.quarterSecondsSlot)
                 let length = Swift.max(0.01, Swift.min(60, m.values["length"] ?? (m.kind == "delay" ? 2 : 8)))
                 let b = c.buffers.count
-                c.buffers.append(PatchBuffer(name: m.id, seconds: length))
+                c.buffers.append(PatchBuffer(name: c.prefix + m.id, seconds: length))
                 let read = c.emit(.delayRead, seconds, buffer: b)
                 c.ops.append(PatchOp(.delayWrite, a: c.emit(.add, v[0].slot, c.emit(.mul, read, v[2].slot)), buffer: b))
                 set(m, read)
@@ -303,10 +306,54 @@ public enum PatchGraphCompiler {
                 set(m, c.emit(.add, v[3].slot, c.emit(.mul, t, c.emit(.sub, v[4].slot, v[3].slot))))
             case "script":
                 try emitScript(m)
+            case "inlet", "outlet":
+                break // an Inlet is bound by the Sub around it; an Outlet is read by it
+            case "subpatch":
+                try emitSub(m)
             default:
                 throw fail(m.id, "unknown module kind '\(m.kind)'")
             }
             group(m, keys: params[before...].map(\.key))
+        }
+
+        /// A Sub compiles into the same op list: its Inlets take the values at the Sub's inputs, its Outlets
+        /// give the Sub's outputs. Knobs inside keep their keys behind the Sub's id ("sub1.filter.cutoff").
+        mutating func emitSub(_ m: PatchModule) throws {
+            guard let sub = m.sub else { throw fail(m.id, "the Sub has no patch inside") }
+            let outerPrefix = c.prefix
+            var inner = Graph(doc: sub, source: source)
+            inner.c = c
+            inner.c.prefix = outerPrefix + m.id + "/"
+            let names = PatchModules.subPortNames(sub)
+            for inlet in sub.modules where inlet.kind == "inlet" {
+                guard let name = names.inlets[inlet.id], let port = ports[m.id]?.inputs.first(where: { $0.name == name }) else { continue }
+                inner.outputs["\(inlet.id).out"] = try input(m, port).slot
+            }
+            do {
+                try inner.check()
+                for id in try inner.ordered() { try inner.emit(sub.module(id)!) }
+                for outlet in sub.modules where outlet.kind == "outlet" {
+                    guard let name = names.outlets[outlet.id] else { continue }
+                    set(m, port: name, try inner.input(outlet, PatchModules.audioIn).slot)
+                }
+                for p in inner.pendingLatches {
+                    guard let slot = inner.outputs[p.key] else { throw fail(nil, "feedback from '\(p.key)' has no source") }
+                    inner.c.latches.append(PatchLatch(slot: slot, state: p.state))
+                }
+            } catch let e as PatchError {
+                throw PatchError(line: e.line, e.message, module: [m.id, e.module].compactMap { $0 }.joined(separator: "/"))
+            }
+            c = inner.c
+            c.prefix = outerPrefix
+            let label = PatchModules.label(m)
+            for p in inner.params { var p = p; p.key = "\(m.id).\(p.key)"; params.append(p) }
+            for s in inner.paramSlots { paramSlots.append(PatchParamSlot(key: "\(m.id).\(s.key)", slot: s.slot, isNote: s.isNote)) }
+            for g in inner.groups { var g = g; g.title = "\(label) › \(g.title)"; g.keys = g.keys.map { "\(m.id).\($0)" }; groups.append(g) }
+            for (i, meter) in inner.meters.enumerated() {
+                guard meters.count < DSPMeterCount else { throw fail(m.id, "a patch shows at most \(DSPMeterCount) meters") }
+                meters.append((meter.slot, meters.count))
+                meterNames.append("\(label) › \(inner.meterNames[i])")
+            }
         }
 
         /// A Script compiles into the same op list: its input and params bound to the cables and knobs here.
@@ -327,7 +374,7 @@ public enum PatchGraphCompiler {
             }
             var inner = PatchCompiler.Context(source: text)
             inner.embedded = true
-            inner.prefix = m.id + "/"
+            inner.prefix = c.prefix + m.id + "/"
             inner.bindings = bindings
             inner.ops = c.ops; inner.slots = c.slots; inner.states = c.states; inner.buffers = c.buffers; inner.latches = c.latches
             let out: Int

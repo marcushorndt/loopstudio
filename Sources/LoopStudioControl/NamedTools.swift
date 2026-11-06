@@ -515,7 +515,10 @@ public extension StandardTools {
             {"op":"move","id":"osc1","x":..,"y":..}, {"op":"connect","from":"osc1.out","to":"lp1.in"}, {"op":"disconnect","from":..,"to":..}, \
             {"op":"set","id":"lp1","key":"cutoff","value":800} (an input without a cable, or a number such as a knob's min/max/def/log, a delay's length, a const's value), \
             {"op":"setting","id":"osc1","key":"shape","value":"saw"}, {"op":"source","id":"s1","text":"patch …"} (a Script's text), \
-            {"op":"label","id":"k1","label":"Cutoff"}, {"op":"expose","id":"lp1","on":true} (on the panel), {"op":"rename","name":"My Patch"}. \
+            {"op":"label","id":"k1","label":"Cutoff"}, {"op":"expose","id":"lp1","on":true} (on the panel), {"op":"rename","name":"My Patch"}, \
+            {"op":"group","ids":["lp1","osc1"],"id":"sub1"} (the modules become one Sub; cables across its edge become its Inlets and Outlets), \
+            {"op":"ungroup","id":"sub1"}. Any step takes "in":"sub1" (or "sub1/sub2") to run inside a Sub's patch, where an Inlet (label = port name) \
+            stands for Audio In and an Outlet for Audio Out. \
             A step that cannot be done stops the edit; nothing changes. patch_modules lists the kinds and ports.
             """,
             inputSchema: Schema.object(["track": trackArg, "device": deviceArg, "steps": .object(["type": .string("array"), "description": .string("The steps, in order"), "items": Schema.anyObject("One step")])],
@@ -554,9 +557,15 @@ public extension StandardTools {
                     if case .bool(let b) = o["on"] ?? .null { on = b }
                     edit = .expose(id: str(o, "id") ?? "", on: on)
                 case "rename": edit = .rename(str(o, "name") ?? "Patch")
+                case "group":
+                    guard case .array(let list) = o["ids"] ?? .null else { throw ToolFailure("step \(n + 1): group needs ids, an array of module ids") }
+                    let ids = list.compactMap { if case .string(let s) = $0 { s } else { nil } }
+                    edit = .group(ids: ids, id: str(o, "id"))
+                case "ungroup": edit = .ungroup(id: str(o, "id") ?? "")
                 default: throw ToolFailure("step \(n + 1): unknown op '\(op)'")
                 }
-                do { try doc.apply(edit) } catch { throw ToolFailure("step \(n + 1) (\(op)): \(error)") }
+                let path = (str(o, "in") ?? "").split(separator: "/").map(String.init)
+                do { try doc.apply(PatchDocument.edit(edit, at: path)) } catch { throw ToolFailure("step \(n + 1) (\(op)): \(error)") }
             }
             let source = doc.source
             var extra: [String: JSONValue] = ["document": documentJSON(doc)]

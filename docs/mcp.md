@@ -63,7 +63,7 @@ To open a project at start, add `"--project", "/path/to/MyProject.loopstudio"` t
 | `patch_check` | reads | Compiles a patch text without placing it: the knobs, or the error with its line. The tool description holds the language in short. |
 | `patch_write` | changes | Compiles a text (or a graph document) and, when it is good, puts it on a Patch device and names the device after it. The sound keeps playing; delay lines carry over. |
 | `patch_modules` | reads | The module kinds of the modular patch (`docs/patcher.md`): ports with types, ranges and units, settings. |
-| `patch_edit` | changes | Steps on the graph of a Patch device, in order (add, remove, move, connect, disconnect, set, setting, source, label, expose, rename), compiled and put on the device as one undo step. A text becomes a graph with one Script module first. |
+| `patch_edit` | changes | Steps on the graph of a Patch device, in order (add, remove, move, connect, disconnect, set, setting, source, label, expose, rename, group, ungroup; `"in":"sub1"` runs a step inside a Sub), compiled and put on the device as one undo step. A text becomes a graph with one Script module first. |
 | `track_add`, `track_rename`, `track_set`, `track_remove` | changes | Named track edits. A track is an id, a name, `master` or its position from 1. |
 | `device_add`, `device_remove`, `device_move`, `device_bypass`, `param_set` | changes | Named device edits. A device is an id, a name or its position; a parameter its key or name. |
 | `clip_create`, `clip_set`, `clip_remove`, `notes_set` | changes | Named clip edits. A clip is an id, a name or `<track>/slot N`. |

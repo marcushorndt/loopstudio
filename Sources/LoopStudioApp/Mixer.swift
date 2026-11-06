@@ -425,11 +425,6 @@ struct TrackIOSection: View {
             .hint("Ext. In records the sound card input. A track records that track's sound. Resampling records the master mix; it is not monitored, because this track feeds the master. No Input: the track takes only what other tracks send to it with Audio To, and records that.")
             if source == .external { inputChannelPicker.fixedSize() }
         }
-        let feeders = track.feeders(in: model.project)
-        if !feeders.isEmpty {
-            Text("+ \(feeders.map(\.name).joined(separator: ", "))").font(.system(size: 9)).foregroundStyle(Theme.dim).lineLimit(1)
-                .hint("Tracks whose Audio To is this track. Their sound, after their faders, enters here before the devices. Off closes the input to them.")
-        }
         HStack(spacing: 2) {
             ForEach([(MonitorMode.input, "In"), (.auto, "Auto"), (.off, "Off")], id: \.1) { mode, name in
                 Button { model.apply(.setMonitor(id: track.id, mode: mode)) } label: {

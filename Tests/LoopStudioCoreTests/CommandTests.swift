@@ -69,12 +69,16 @@ private func track(_ name: String, _ kind: TrackKind) -> Track { Track(name: nam
     #expect(p.validate().isEmpty)
 }
 
-@Test func tracksCannotFeedAudioTracks() throws {
+@Test func tracksFeedAudioTracksButNotMIDITracks() throws {
     var p = Fixture.baseProject()
-    let a = track("A", .audio), b = track("B", .audio)
+    let a = track("A", .audio), b = track("B", .audio), m = track("M", .midi)
     try Command.insertTrack(track: a, index: 0).apply(to: &p)
     try Command.insertTrack(track: b, index: 1).apply(to: &p)
-    #expect(throws: CommandError.self) { try Command.setOutput(id: a.id, target: b.id).apply(to: &p) }
+    try Command.insertTrack(track: m, index: 2).apply(to: &p)
+    try Command.setOutput(id: a.id, target: b.id).apply(to: &p)
+    #expect(p.track(a.id)?.output == b.id, "Audio To an audio track: the sound enters its input")
+    #expect(throws: CommandError.self) { try Command.setOutput(id: a.id, target: m.id).apply(to: &p) }
+    #expect(p.validate().isEmpty)
 }
 
 @Test func removingATrackFixesRoutesAndUndoRestoresThem() throws {

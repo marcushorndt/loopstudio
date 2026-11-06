@@ -2,15 +2,30 @@ import AVFoundation
 import Foundation
 import LoopStudioCore
 
-/// The tracks a resampling take records, with the ring of each writer. Built on the control thread; the audio
-/// thread only reads it. `nil` as a track is the master.
+/// Where in the renderer a resampling take listens.
+public enum CapturePoint: Hashable, Sendable {
+    /// The mix after the master fader.
+    case master
+    /// A track after its fader: what it sends on.
+    case output(TrackID)
+    /// What a track takes from other tracks ("Audio To" it, "Audio From" a track), delay compensated, before
+    /// its own clips and devices.
+    case input(TrackID)
+}
+
+/// The points a resampling take records, with the ring of each writer. Built on the control thread; the audio
+/// thread only reads it.
 public final class CaptureSet: @unchecked Sendable {
-    let tracks: [TrackID?]
+    let points: [CapturePoint]
     let rings: [CaptureRing]
-    var count: Int { tracks.count }
-    public init(_ entries: [(track: TrackID?, writer: CaptureWriter)]) {
-        tracks = entries.map(\.track)
+    var count: Int { points.count }
+    public init(points entries: [(point: CapturePoint, writer: CaptureWriter)]) {
+        points = entries.map(\.point)
         rings = entries.map(\.writer.ring)
+    }
+    /// `nil` as a track is the master; a track is its output.
+    public convenience init(_ entries: [(track: TrackID?, writer: CaptureWriter)]) {
+        self.init(points: entries.map { ($0.track.map { .output($0) } ?? .master, $0.writer) })
     }
 }
 

@@ -639,6 +639,15 @@ public struct Send: Hashable, Codable, Sendable {
 /// track is armed; `off` never. Another track as input: `input` and `auto` pass its sound, `off` mutes it.
 public enum MonitorMode: String, Codable, Sendable, CaseIterable { case input, auto, off }
 
+/// The input of an audio track (Live: "Audio From"). `external` is the sound card; `track` is another track after
+/// its fader, or the master ("Resampling"); `noInput` is nothing. Tracks that send their output to this track
+/// ("Audio To") feed it in every case.
+public enum AudioSource: Hashable, Sendable {
+    case external
+    case track(TrackID)
+    case noInput
+}
+
 public struct Track: Hashable, Codable, Sendable, Identifiable {
     public static let dbRange: ClosedRange<Double> = -96...12
 
@@ -670,6 +679,9 @@ public struct Track: Hashable, Codable, Sendable, Identifiable {
     /// Audio tracks: take the sound of another track (after its fader) as input. Live: "Audio From" a track.
     /// Optional, so older project files still load.
     public var inputTrack: TrackID?
+    /// Audio tracks: no input at all (Live: "No Input"). The track plays its clips and what other tracks send to
+    /// it ("Audio To" this track); it records that fed sound, not the sound card. Wins over `inputTrack`.
+    public var noInput: Bool?
     /// Audio tracks: the sound card channels to record. `nil` uses the channels of the audio settings.
     public var inputChannels: InputChannels?
     public var monitor: MonitorMode?
@@ -690,6 +702,17 @@ public struct Track: Hashable, Codable, Sendable, Identifiable {
     public var midiOutput: MIDIOutputSelection?
     public var monitorMode: MonitorMode { monitor ?? .auto }
     public var isSendsOnly: Bool { sendsOnly ?? false }
+    public var hasNoInput: Bool { noInput ?? false }
+    /// What an audio track takes as input: the sound card, another track, or nothing. Only this decides; the
+    /// stored fields are read through it.
+    public var audioSource: AudioSource {
+        if hasNoInput { return .noInput }
+        return inputTrack.map { .track($0) } ?? .external
+    }
+    /// The tracks whose output is this track ("Audio To" it), in project order. They sum into its input.
+    public func feeders(in project: Project) -> [Track] {
+        project.tracks.filter { $0.output == id && !$0.isSendsOnly && $0.hardwareOutput == nil }
+    }
 
     public init(id: TrackID = TrackID(), name: String, kind: TrackKind, colorIndex: Int = 0,
                 volumeDb: Double = 0, pan: Double = 0, mute: Bool = false, solo: Bool = false,

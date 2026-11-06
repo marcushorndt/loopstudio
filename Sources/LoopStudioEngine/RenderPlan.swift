@@ -444,7 +444,7 @@ public struct RenderPlan {
             let silent = t.mute || !audible.contains(id)
             var clips: [ClipPlan] = []
             // Monitor In: the input takes the place of the clips (a muted track monitors nothing).
-            let input = t.kind == .audio && !silent && t.inputTrack == nil ? inputs[id] : nil
+            let input = t.kind == .audio && !silent && t.audioSource == .external ? inputs[id] : nil
             let clipsSilent = input?.mutesClips ?? false
 
             if t.kind == .audio && !silent && !clipsSilent {
@@ -538,9 +538,12 @@ public struct RenderPlan {
             }
 
             let (pl, pr) = balance(t.pan)
+            // Into an audio track the sound enters at its input: Monitor Off closes that input, like a tap's.
+            let outputTarget = t.output ?? project.master.id
+            let outputHeard = project.track(outputTarget).map { $0.kind != .audio || $0.monitorMode != .off } ?? true
             nodes.append(NodePlan(
                 isMaster: false, clips: clips, gain: silent ? 0 : dB(t.volumeDb), panLeft: pl, panRight: pr,
-                output: t.isSendsOnly || !keeps(t.id, t.output ?? project.master.id) ? nil : (t.output.flatMap { index[$0] } ?? masterIndex),
+                output: t.isSendsOnly || !outputHeard || !keeps(t.id, outputTarget) ? nil : (t.output.flatMap { index[$0] } ?? masterIndex),
                 sends: t.sends.filter { keeps(t.id, $0.target) }.compactMap { s in index[s.target].map {
                     SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader,
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
@@ -574,7 +577,8 @@ public struct RenderPlan {
                               volumeAuto: lane(project.master.id.rawValue, "volume"), panAuto: lane(project.master.id.rawValue, "pan")))
         // Input taps: a track that takes another track as input gets that track's sound, unless its monitor is off.
         for t in tracks {
-            guard let source = t.inputTrack, t.monitorMode != .off, keeps(source, t.id), let from = index[source], let to = index[t.id], from < to else { continue }
+            guard case .track(let source) = t.audioSource, t.monitorMode != .off, keeps(source, t.id),
+                  let from = index[source], let to = index[t.id], from < to else { continue }
             nodes[from].taps.append(to)
         }
         for i in nodes.indices {

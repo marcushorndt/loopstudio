@@ -53,6 +53,11 @@ extension RenderPlan {
         trackOrder.firstIndex(of: track).map { nodes[$0].arrival } ?? 0
     }
 
+    /// How many frames the sound at the input of `track` is late: what the other tracks send to it arrives there.
+    public func arrivalAtInput(of track: TrackID) -> Int {
+        trackOrder.firstIndex(of: track).map { nodes[$0].inputShift } ?? 0
+    }
+
     mutating func applyDelayCompensation() {
         let count = nodes.count
         var incoming = [[Int]](repeating: [], count: count)

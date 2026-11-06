@@ -305,7 +305,7 @@ final class AppModel {
     /// Monitor Auto while armed. A track that takes another track as input is not among them.
     func monitoredInputs() -> [TrackID: RenderPlan.MonitorInput] {
         var result: [TrackID: RenderPlan.MonitorInput] = [:]
-        for t in project.tracks where t.kind == .audio && t.inputTrack == nil {
+        for t in project.tracks where t.kind == .audio && t.audioSource == .external {
             switch t.monitorMode {
             case .input: result[t.id] = RenderPlan.MonitorInput(channels: inputChannels(of: t.id), mutesClips: true)
             case .auto where armedTracks.contains(t.id): result[t.id] = RenderPlan.MonitorInput(channels: inputChannels(of: t.id), mutesClips: false)

@@ -645,6 +645,13 @@ public final class Renderer {
             // The node's own clips and notes play `inputShift` late, so they line up with the sound it takes from
             // other nodes (delay compensation). `song` is the song frame at the start of this block for them.
             let song = startFrame - Int64(node.inputShift)
+            // A take of the track's input: the sum the earlier nodes sent here, before its own clips join.
+            if transport, let captures, i < plan.trackOrder.count, let track = plan.trackOrder[i] {
+                for k in 0..<captures.count where captures.points[k] == .input(track) {
+                    captures.rings[k].noteStart(frame: startFrame)
+                    captures.rings[k].write(l, r, frames: frames)
+                }
+            }
             // How much of this block the arrangement still plays: a session take-over cuts it on the session clock.
             var arrangement = frames
             if let end = node.arrangementEnd { arrangement = Int(max(0, min(Int64(frames), end - (song + sessionOffset)))) }
@@ -694,9 +701,9 @@ public final class Renderer {
             peaks[2 * i + 1] = max(peaks[2 * i + 1], peak.1)
             if let stemSink { stemSink(i, node.isMaster ? outLeft : l, node.isMaster ? outRight : r, frames) }
             if transport, let captures, i < plan.trackOrder.count {
-                // The master is `nil` in the track order, and in a set that records it.
-                let track = plan.trackOrder[i]
-                for k in 0..<captures.count where captures.tracks[k] == track {
+                // The master is `nil` in the track order.
+                let point: CapturePoint = plan.trackOrder[i].map { .output($0) } ?? .master
+                for k in 0..<captures.count where captures.points[k] == point {
                     captures.rings[k].noteStart(frame: startFrame)
                     captures.rings[k].write(node.isMaster ? outLeft : l, node.isMaster ? outRight : r, frames: frames)
                 }

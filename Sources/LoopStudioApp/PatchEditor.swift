@@ -2,40 +2,27 @@ import AppKit
 import LoopStudioCore
 import SwiftUI
 
-/// The card of a Patch device: its knobs from the `param` lines, the error when the text does not compile,
-/// and the button to the editor.
+/// The card of a Patch device: its knobs from the `param` lines, or the error when the text does not compile.
+/// The pen in the card's title row opens the editor.
 struct PatchCardView: View {
-    @Environment(AppModel.self) private var model
     let track: Track
     let device: DeviceSlot
     let spec: EffectSpec
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if let error = device.patchError {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Does not compile").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.automationDot)
-                    Text(error.description).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.dim).lineLimit(4)
-                    Text("The sound passes through unchanged.").font(.system(size: 10)).foregroundStyle(Theme.dim)
-                }
-                .frame(width: 200, alignment: .leading)
-            } else if spec.params.isEmpty {
-                Text("No knobs: add a param line.").font(.system(size: 10)).foregroundStyle(Theme.dim).frame(width: 140)
-            } else {
-                KnobSection(title: spec.name) {
-                    ForEach(spec.shownParams, id: \.key) { ParamKnob(track: track, device: device, spec: spec, key: $0.key) }
-                }
+        if let error = device.patchError {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Does not compile").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.automationDot)
+                Text(error.description).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.dim).lineLimit(4)
+                Text("The sound passes through unchanged. Click the pen to edit.").font(.system(size: 10)).foregroundStyle(Theme.dim)
             }
-            VStack(spacing: 6) {
-                Button { PatchEditorWindow.show(model: model, track: track.id, device: device.id) } label: {
-                    Label("Edit", systemImage: "chevron.left.forwardslash.chevron.right").font(.system(size: 10))
-                }
-                .controlSize(.small).hint("Open the patch editor: the text of this device, with the errors.")
-                if !spec.params.isEmpty, device.patchError == nil {
-                    Text("\(spec.params.count) knob\(spec.params.count == 1 ? "" : "s")").font(.system(size: 9)).foregroundStyle(Theme.dim)
-                }
+            .frame(width: 200, alignment: .leading)
+        } else if spec.params.isEmpty {
+            Text("No knobs: add a param line. Click the pen to edit.").font(.system(size: 10)).foregroundStyle(Theme.dim).frame(width: 150)
+        } else {
+            KnobSection(title: spec.name) {
+                ForEach(spec.shownParams, id: \.key) { ParamKnob(track: track, device: device, spec: spec, key: $0.key) }
             }
-            .frame(maxHeight: .infinity, alignment: .top)
         }
     }
 }

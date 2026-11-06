@@ -54,8 +54,10 @@ public enum Command: Codable, Sendable {
     case setSolo(id: TrackID, solo: Bool)
     case setOutput(id: TrackID, target: TrackID?)
     case setSends(id: TrackID, sends: [Send])
-    /// Audio From another track. `nil` is no input.
+    /// Audio From another track. `nil` is the sound card ("Ext. In"). A source clears "No Input".
     case setInputTrack(id: TrackID, source: TrackID?)
+    /// Audio From: No Input. The track then takes only what other tracks send to it ("Audio To").
+    case setNoInput(id: TrackID, noInput: Bool)
     case setMonitor(id: TrackID, mode: MonitorMode)
     case setSendsOnly(id: TrackID, sendsOnly: Bool)
 
@@ -285,13 +287,26 @@ extension Project {
                 // because the track feeds the master: that would be a loop.
                 guard track(source) != nil else { throw CommandError.trackNotFound(source) }
             }
-            let old = try withTrack(id) { t -> TrackID? in
+            let (old, wasNoInput) = try withTrack(id) { t -> (TrackID?, Bool) in
                 guard source == nil || t.kind == .audio else { throw CommandError.invalidValue("only audio tracks take an input track") }
-                defer { t.inputTrack = source }
-                return t.inputTrack
+                defer {
+                    t.inputTrack = source
+                    if source != nil { t.noInput = nil }
+                }
+                return (t.inputTrack, t.hasNoInput)
             }
             try checkRouting()
-            return .setInputTrack(id: id, source: old)
+            let inverse = Command.setInputTrack(id: id, source: old)
+            return source != nil && wasNoInput ? .batch(commands: [inverse, .setNoInput(id: id, noInput: true)]) : inverse
+
+        case .setNoInput(let id, let noInput):
+            guard id != master.id else { throw CommandError.cannotChangeMaster }
+            let old = try withTrack(id) { t -> Bool in
+                guard t.kind == .audio else { throw CommandError.invalidValue("only audio tracks have an audio input") }
+                defer { t.noInput = noInput ? true : nil }
+                return t.hasNoInput
+            }
+            return .setNoInput(id: id, noInput: old)
 
         case .setMonitor(let id, let mode):
             // `.auto` is stored as nil, so undo lands on the same stored value.
@@ -973,10 +988,11 @@ extension Project {
         for track in tracks {
             for target in Routing.edges(of: track) {
                 guard target != track.id else { throw CommandError.wouldCreateCycle }
-                guard let t = self.track(target) else { throw CommandError.trackNotFound(target) }
-                guard t.kind == .group || t.kind == .returnTrack || t.kind == .master else {
-                    throw CommandError.invalidRoute("\(t.name) cannot take input")
-                }
+                guard self.track(target) != nil else { throw CommandError.trackNotFound(target) }
+            }
+            // The output goes to a bus, or into the input of an audio track (Live: "Audio To" a track).
+            if let target = track.output, let t = self.track(target), !Routing.takesOutput(t) {
+                throw CommandError.invalidRoute("\(t.name) cannot take input")
             }
             for send in track.sends {
                 guard let t = self.track(send.target), t.kind == .group || t.kind == .returnTrack else {

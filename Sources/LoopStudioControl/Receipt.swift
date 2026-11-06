@@ -131,7 +131,9 @@ public enum ReadBack {
             pair("\(a.trackName(id)) › output", b.output(id), a.output(id))
         case .setSends(let id, _):
             pair("\(a.trackName(id)) › sends", b.sends(id), a.sends(id))
-        case .setInputTrack(let id, _), .setMonitor(let id, _), .setSendsOnly(let id, _), .setHardwareOutput(let id, _),
+        case .setInputTrack(let id, _), .setNoInput(let id, _):
+            pair("\(a.trackName(id)) › audio from", b.audioFrom(id), a.audioFrom(id))
+        case .setMonitor(let id, _), .setSendsOnly(let id, _), .setHardwareOutput(let id, _),
              .setAudioInput(let id, _), .setMIDIInput(let id, _), .setMIDIOutput(let id, _), .setInputChannels(let id, _):
             pair("\(a.trackName(id)) › \(command.kind)", nil, "changed")
         case .insertDevice(let t, _, _), .removeDevice(let t, _), .moveDevice(let t, _, _), .setDevices(let t, nil, _):
@@ -217,6 +219,14 @@ public enum ReadBack {
         func output(_ id: TrackID) -> String? {
             guard let t = track(id) else { return nil }
             return t.output.map(trackName) ?? "Master"
+        }
+        func audioFrom(_ id: TrackID) -> String? {
+            guard let t = track(id) else { return nil }
+            switch t.audioSource {
+            case .external: return "Ext. In"
+            case .track(let s): return s == p.master.id ? "Resampling" : trackName(s)
+            case .noInput: return "No Input"
+            }
         }
         func sends(_ id: TrackID) -> String? {
             guard let t = track(id) else { return nil }

@@ -69,7 +69,7 @@ To open a project at start, add `"--project", "/path/to/MyProject.loopstudio"` t
 
 Every changing tool returns a **receipt**: the command, the revision before and after, and the touched values read back from the project after the change ("Drums › Delay › Feedback: 0.40 to 0.55"). The receipt is the proof; the arguments are not. A name that matches several things is an error that lists them, so ask instead of guessing.
 
-`command_apply` takes every edit the app can do: tracks and routing (`setOutput`, `setSends`, `setInputTrack`, `setMonitor`, `setSendsOnly`), clips and session slots, follow actions, devices and their parameters, MIDI notes, automation on tracks and in dummy clips, warping (`setAssetTempo`, `setClipWarp`), tempo, loop and launches. `command_examples` shows a valid JSON for each.
+`command_apply` takes every edit the app can do: tracks and routing (`setOutput` to a bus or into an audio track, `setSends`, `setInputTrack`, `setNoInput`, `setMonitor`, `setSendsOnly`), clips and session slots, follow actions, devices and their parameters, MIDI notes, automation on tracks and in dummy clips, warping (`setAssetTempo`, `setClipWarp`), tempo, loop and launches. `command_examples` shows a valid JSON for each.
 
 Resources: `loopstudio://help/ui` (the words of the screen) and `loopstudio://help/patch` (the patch language on one page) always; `loopstudio://project/summary` and `loopstudio://project/full` when a project is open.
 

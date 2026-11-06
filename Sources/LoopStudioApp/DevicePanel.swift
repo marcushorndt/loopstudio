@@ -411,6 +411,14 @@ struct DeviceCard: View {
                 .hint("\(device.name). Drag the title to move the device. Double-click folds it.")
                 if let spec, spec.sidechain { sidechainMenu }
                 if let spec, spec.isDynamics { GainReductionMeter(device: device, bands: spec.id == "multiband" ? 3 : 1) }
+                // A Patch device: the pen opens its text.
+                if device.identifier == "patch", device.format == "builtin" {
+                    Button { PatchEditorWindow.show(model: model, track: track.id, device: device.id) } label: {
+                        Image(systemName: "pencil").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.dim)
+                            .frame(width: 18, height: 20).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).hint("Edit the patch: its text, with the errors. Apply is ⌘↩.")
+                }
                 // Presets: save the settings as a file, or bring a file in (it loads onto this device).
                 Button { model.presetPrompt = PresetPrompt(track: track.id, device: device.id, name: device.name) } label: {
                     DisketteIcon().foregroundStyle(Theme.dim).frame(width: 18, height: 20).contentShape(Rectangle())

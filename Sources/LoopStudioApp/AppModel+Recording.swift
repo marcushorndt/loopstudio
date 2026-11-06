@@ -55,23 +55,40 @@ extension AppModel {
     /// track's sound ("Audio From" a track, or the master) record it from the renderer, in the same take.
     func startAudioRecording() async {
         guard !recordAudioTracks.isEmpty else { return }
-        // "Audio From" another track: its sound after the fader, with no sound card involved. Tracks with
-        // the same source share one file.
-        var sources: [TrackID] = [], sourceTracks: [[TrackID]] = []
+        // "Audio From" another track: its sound after the fader, with no sound card involved. "No Input" with
+        // tracks sent to it ("Audio To"): their sum at its input. Tracks with the same source share one file.
+        // A track with no input and nothing sent to it has nothing to record.
+        var points: [CapturePoint] = [], pointTracks: [[TrackID]] = []
+        var skipped: [TrackID] = []
         for id in recordAudioTracks {
-            guard let source = project.track(id)?.inputTrack else { continue }
-            if let i = sources.firstIndex(of: source) { sourceTracks[i].append(id) } else { sources.append(source); sourceTracks.append([id]) }
+            guard let t = project.track(id) else { continue }
+            let point: CapturePoint
+            switch t.audioSource {
+            case .external: continue
+            case .track(let source): point = source == project.master.id ? .master : .output(source)
+            case .noInput:
+                guard !t.feeders(in: project).isEmpty else { skipped.append(id); continue }
+                point = .input(id)
+            }
+            if let i = points.firstIndex(of: point) { pointTracks[i].append(id) } else { points.append(point); pointTracks.append([id]) }
         }
-        if !sources.isEmpty {
+        recordAudioTracks.removeAll { skipped.contains($0) }
+        let skippedNote = skipped.isEmpty ? "" : " (\(skipped.compactMap { project.track($0)?.name }.joined(separator: ", ")): no input, and nothing is sent to it)"
+        if !points.isEmpty {
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("LoopStudio-\(UUID().uuidString)", isDirectory: true)
             do {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                resamples = try zip(sources, sourceTracks).map { source, tracks in
+                resamples = try zip(points, pointTracks).map { point, tracks in
                     let writer = try CaptureWriter(url: folder.appendingPathComponent("\(UUID().uuidString).caf"), sampleRate: sampleRate, channels: 2)
-                    let latency = source == project.master.id ? (plan?.latencyFrames ?? 0) : (plan?.arrival(of: source) ?? 0)
+                    let latency: Int
+                    switch point {
+                    case .master: latency = plan?.latencyFrames ?? 0
+                    case .output(let source): latency = plan?.arrival(of: source) ?? 0
+                    case .input(let track): latency = plan?.arrivalAtInput(of: track) ?? 0
+                    }
                     return (writer, latency, tracks)
                 }
-                engine.startCapture(CaptureSet(zip(sources, resamples).map { ($0 == project.master.id ? nil : $0, $1.writer) }))
+                engine.startCapture(CaptureSet(points: zip(points, resamples).map { ($0, $1.writer) }))
             } catch {
                 resamples = []
                 audioStartFailed("Cannot record: \(error.localizedDescription)")
@@ -80,9 +97,14 @@ extension AppModel {
         }
         // Each armed audio track on the sound card records its own input channels. Tracks on the same
         // channels share one file.
-        let external = recordAudioTracks.filter { project.track($0)?.inputTrack == nil }
+        let external = recordAudioTracks.filter { project.track($0)?.audioSource == .external }
         if external.isEmpty {
-            beginRecording(status: "Recording \(sources.map { project.track($0)?.name ?? "?" }.joined(separator: ", "))")
+            if points.isEmpty {
+                audioStartFailed("Nothing to record" + skippedNote)
+                return
+            }
+            let names = pointTracks.flatMap { $0 }.compactMap { project.track($0)?.name }
+            beginRecording(status: "Recording \(names.joined(separator: ", "))" + skippedNote)
             return
         }
         guard await microphoneAllowed() else {

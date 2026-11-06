@@ -432,7 +432,7 @@ private struct SceneColumn: View {
 
     var body: some View {
         VStack(spacing: gap) {
-            Text("Scenes").font(.system(size: 10)).foregroundStyle(Theme.dim).frame(height: 30)
+            Text("Master").font(.system(size: 10)).foregroundStyle(Theme.dim).frame(height: 30)
             ForEach(0..<rows, id: \.self) { row in
                 Button { model.launchScene(row) } label: {
                     TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !model.transportPlaying)) { _ in

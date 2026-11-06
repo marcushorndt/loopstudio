@@ -403,18 +403,32 @@ struct TrackIOSection: View {
 
     @ViewBuilder private var audioFrom: some View {
         label("Audio From")
+        let source = track.audioSource
         // Live puts the channel chooser beside the source: "Ext. In" and "1/2" on one line.
         HStack(spacing: 3) {
-            Picker("", selection: Binding(get: { track.inputTrack }, set: { model.apply(.setInputTrack(id: track.id, source: $0)) })) {
-                Text("Ext. In").tag(TrackID?.none)
+            Picker("", selection: Binding(get: { source }, set: { choice in
+                switch choice {
+                case .external: model.apply(.batch(commands: [.setNoInput(id: track.id, noInput: false), .setInputTrack(id: track.id, source: nil)]))
+                case .track(let id): model.apply(.setInputTrack(id: track.id, source: id))
+                case .noInput: model.apply(.batch(commands: [.setInputTrack(id: track.id, source: nil), .setNoInput(id: track.id, noInput: true)]))
+                }
+            })) {
+                Text("Ext. In").tag(AudioSource.external)
                 Divider()
-                ForEach(model.project.tracks.filter { $0.id != track.id && $0.kind != .returnTrack }, id: \.id) { Text($0.name).tag(Optional($0.id)) }
+                ForEach(model.project.tracks.filter { $0.id != track.id && $0.kind != .returnTrack }, id: \.id) { Text($0.name).tag(AudioSource.track($0.id)) }
                 Divider()
-                Text("Resampling").tag(Optional(model.project.master.id))
+                Text("Resampling").tag(AudioSource.track(model.project.master.id))
+                Divider()
+                Text("No Input").tag(AudioSource.noInput)
             }
             .labelsHidden().controlSize(.mini)
-            .hint("Ext. In records the sound card input. A track records that track's sound. Resampling records the master mix; it is not monitored, because this track feeds the master.")
-            if track.inputTrack == nil { inputChannelPicker.fixedSize() }
+            .hint("Ext. In records the sound card input. A track records that track's sound. Resampling records the master mix; it is not monitored, because this track feeds the master. No Input: the track takes only what other tracks send to it with Audio To, and records that.")
+            if source == .external { inputChannelPicker.fixedSize() }
+        }
+        let feeders = track.feeders(in: model.project)
+        if !feeders.isEmpty {
+            Text("+ \(feeders.map(\.name).joined(separator: ", "))").font(.system(size: 9)).foregroundStyle(Theme.dim).lineLimit(1)
+                .hint("Tracks whose Audio To is this track. Their sound, after their faders, enters here before the devices. Off closes the input to them.")
         }
         HStack(spacing: 2) {
             ForEach([(MonitorMode.input, "In"), (.auto, "Auto"), (.off, "Off")], id: \.1) { mode, name in
@@ -426,9 +440,9 @@ struct TrackIOSection: View {
                 .buttonStyle(.plain)
             }
         }
-        .hint(track.inputTrack == nil
+        .hint(source == .external
               ? "Monitor. In: the input plays always, in place of the clips. Auto: it plays while the track is armed. Off: never."
-              : "Monitor. In and Auto pass the other track's sound. Off mutes it.")
+              : "Monitor. In and Auto pass the sound of the other tracks. Off mutes it.")
     }
 
     /// The sound card channels of "Ext. In": one channel, or a pair. The device is chosen in the audio settings.
@@ -535,7 +549,9 @@ struct TrackIOSection: View {
     }
 
     private var outputPicker: some View {
-        let options = model.project.tracks.filter { ($0.kind == .group || $0.kind == .returnTrack) && $0.id != track.id }
+        let busses = model.project.tracks.filter { ($0.kind == .group || $0.kind == .returnTrack) && $0.id != track.id }
+        // Live: the output can go into the input of an audio track, after this track's fader.
+        let audioTracks = model.project.tracks.filter { $0.kind == .audio && $0.id != track.id }
         let current: Out = track.isSendsOnly ? .sendsOnly
             : track.hardwareOutput.map { .port($0) } ?? (track.output.map { .track($0) } ?? .master)
         // Leaving a direct output clears it first: a track goes to one place only.
@@ -550,7 +566,11 @@ struct TrackIOSection: View {
             }
         })) {
             Text("Master").tag(Out.master)
-            ForEach(options, id: \.id) { Text($0.name).tag(Out.track($0.id)) }
+            ForEach(busses, id: \.id) { Text($0.name).tag(Out.track($0.id)) }
+            if !audioTracks.isEmpty {
+                Divider()
+                ForEach(audioTracks, id: \.id) { Text($0.name).tag(Out.track($0.id)) }
+            }
             if !model.assignablePorts.isEmpty {
                 Divider()
                 ForEach(model.assignablePorts, id: \.id) { Text("Ext. Out: \($0.name)").tag(Out.port($0.id)) }
@@ -558,7 +578,8 @@ struct TrackIOSection: View {
             Divider()
             Text("Sends Only").tag(Out.sendsOnly)
         }
-        .labelsHidden().controlSize(.mini).hint("Output routing")
+        .labelsHidden().controlSize(.mini)
+        .hint("Audio To: the master, a group or return, an audio track (the sound enters its input, after this fader; its monitor must not be Off), a sound card output, or the sends only.")
     }
 }
 

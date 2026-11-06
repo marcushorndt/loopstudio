@@ -554,3 +554,72 @@ private func raw(_ plan: RenderPlan, frames: Int, block: Int = 4096) -> [Float] 
     #expect((0..<256).allSatisfy { l[$0] == 0 }, "the master is silent")
     #expect(abs(renderer.portLeft(0)[100] - 0.5) < 0.001 && abs(renderer.portRight(0)[100] - 0.5) < 0.001)
 }
+
+// MARK: Audio To an audio track
+
+/// A track sent into an audio track ("Audio To") enters that track's input: its fader and its devices apply,
+/// its monitor can close the input, and an armed take at its input records the sum.
+private struct Route {
+    var rig = Rig()
+    let source: TrackID, target: TrackID
+
+    init(targetVolume: Double = 0) {
+        let a = rig.asset(seconds: 1) { _ in 0.5 }
+        target = rig.track("Target", volume: targetVolume)
+        source = rig.track("Source", output: target)
+        rig.clip(a, on: source)
+        // The target sorts before the source in the project; the plan orders the source first anyway.
+    }
+}
+
+@Test func audioToATrackPassesThroughThatTracksFader() {
+    let set = Route(targetVolume: -6.0206)
+    let out = set.rig.render()
+    #expect(abs(out.left[10_000] - 0.25) < 0.001, "0.5 at the source, half of it after the target's fader")
+    #expect(set.rig.plan.warnings.isEmpty)
+}
+
+@Test func monitorOffClosesTheInputToTheSentTracks() throws {
+    var set = Route()
+    try Command.setMonitor(id: set.target, mode: .off).apply(to: &set.rig.project)
+    #expect(set.rig.render().left[10_000] == 0, "Off: nothing comes in, and the source goes nowhere else")
+    try Command.setMonitor(id: set.target, mode: .input).apply(to: &set.rig.project)
+    #expect(abs(set.rig.render().left[10_000] - 0.5) < 0.001, "In passes it")
+}
+
+@Test func twoTracksSentIntoOneAudioTrackSumThere() throws {
+    var set = Route()
+    let b = set.rig.asset(seconds: 1) { _ in 0.25 }
+    let second = set.rig.track("Second", .midi)
+    _ = b
+    try Command.setOutput(id: second, target: set.target).apply(to: &set.rig.project)
+    let out = set.rig.render()
+    #expect(abs(out.left[10_000] - 0.5) < 0.001, "a MIDI track without an instrument adds silence; the route itself is valid")
+    #expect(set.rig.plan.warnings.filter { $0.contains("loop") }.isEmpty)
+}
+
+@Test func aTakeAtTheInputRecordsWhatIsSentToTheTrack() throws {
+    var set = Route(targetVolume: -20)
+    try Command.setNoInput(id: set.target, noInput: true).apply(to: &set.rig.project)
+    let renderer = Renderer(plan: set.rig.plan, maxBlock: 256)
+    var l = [Float](repeating: 0, count: 256), r = l
+    func block(_ start: Int64) {
+        l.withUnsafeMutableBufferPointer { lb in r.withUnsafeMutableBufferPointer { rb in
+            renderer.process(startFrame: start, frames: 256, transport: true, outLeft: lb.baseAddress!, outRight: rb.baseAddress!)
+        } }
+    }
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("LoopStudio-input-take-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let writer = try CaptureWriter(url: dir.appendingPathComponent("in.caf"), sampleRate: set.rig.project.sampleRate, channels: 2)
+    let captureSet = CaptureSet(points: [(.input(set.target), writer)]) // the renderer holds it unowned
+    renderer.captures = captureSet
+    block(0); block(256)
+    renderer.captures = nil
+    var out = [Float](repeating: 0, count: 1_000), outR = out
+    let n = out.withUnsafeMutableBufferPointer { o in outR.withUnsafeMutableBufferPointer { ro in writer.ring.read(into: o.baseAddress!, ro.baseAddress!, max: 1_000) } }
+    #expect(n == 512)
+    #expect(abs(out[100] - 0.5) < 1e-6, "the take is the source after its fader, before the target's fader at -20 dB")
+    #expect(writer.ring.startFrame == 0)
+    _ = writer.finish()
+}

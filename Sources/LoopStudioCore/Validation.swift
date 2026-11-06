@@ -10,7 +10,13 @@ public enum Routing {
 
     /// Tracks that `track` feeds: its output and sends, and every track that takes it as input.
     public static func feeds(of track: Track, in project: Project) -> [TrackID] {
-        edges(of: track) + project.tracks.filter { $0.inputTrack == track.id }.map(\.id)
+        edges(of: track) + project.tracks.filter { $0.audioSource == .track(track.id) }.map(\.id)
+    }
+
+    /// True for a track that another track's output can go to: a bus, the master, or an audio track (into its
+    /// input). MIDI tracks take notes, not sound.
+    public static func takesOutput(_ track: Track) -> Bool {
+        track.kind == .group || track.kind == .returnTrack || track.kind == .master || track.kind == .audio
     }
 
     /// True if the routing graph has a cycle (a track feeding itself, directly or through others).
@@ -113,9 +119,8 @@ extension Project {
                     issues.append(.routeTargetMissing(from: track.id, to: target))
                     continue
                 }
-                if t.kind != .group && t.kind != .returnTrack && t.kind != .master {
-                    issues.append(.routeTargetWrongKind(from: track.id, to: target))
-                }
+                let fits = track.output == target ? Routing.takesOutput(t) : (t.kind == .group || t.kind == .returnTrack || t.kind == .master)
+                if !fits { issues.append(.routeTargetWrongKind(from: track.id, to: target)) }
             }
         }
         if Routing.hasCycle(self) { issues.append(.routeCycle) }

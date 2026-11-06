@@ -468,6 +468,8 @@ public enum StandardTools {
         var hardwareOutput: PortID?
         var audioInput: PortID?
         var inputTrack: TrackID?
+        /// Audio tracks: "No Input". The track then takes only what other tracks send to it (`output`).
+        var noInput: Bool?
         var inputChannels: InputChannels?
         var midiInput: MIDIInputSelection?
         /// MIDI tracks: the hardware destination of the notes ("MIDI To").
@@ -483,7 +485,8 @@ public enum StandardTools {
         init(_ t: Track) {
             id = t.id; name = t.name; kind = t.kind; volumeDb = t.volumeDb; pan = t.pan; mute = t.mute; solo = t.solo
             output = t.output; hardwareOutput = t.hardwareOutput; audioInput = t.audioInput
-            inputTrack = t.inputTrack; inputChannels = t.inputChannels; midiInput = t.midiInput; midiOutput = t.midiOutput
+            inputTrack = t.inputTrack; noInput = t.kind == .audio ? t.hasNoInput : nil; inputChannels = t.inputChannels
+            midiInput = t.midiInput; midiOutput = t.midiOutput
             monitor = t.monitorMode; armed = t.armed ?? false
             clips = t.clips.count; slots = t.slots.compactMap { $0 }.count; devices = t.devices.count
         }
@@ -579,6 +582,7 @@ public enum StandardTools {
             ("setClipEnvelope", .setClipEnvelope(clip: ClipID(uuid(4)), points: [AutomationPoint(tick: 0, value: 0), AutomationPoint(tick: 1920, value: -12)])),
             ("setTrackColor", .setTrackColor(id: track.id, colorIndex: 5)),
             ("setInputTrack (Audio From another track)", .setInputTrack(id: TrackID(uuid(7)), source: track.id)),
+            ("setNoInput (Audio From: No Input; the track takes only what is sent to it)", .setNoInput(id: TrackID(uuid(7)), noInput: true)),
             ("setMonitor", .setMonitor(id: TrackID(uuid(7)), mode: .auto)),
             ("setSendsOnly", .setSendsOnly(id: track.id, sendsOnly: true)),
             ("setAssetTempo", .setAssetTempo(id: AssetID(uuid(8)), bpm: 92)),

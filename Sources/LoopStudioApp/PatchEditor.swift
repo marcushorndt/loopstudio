@@ -670,6 +670,8 @@ private struct PatchModuleView: View {
                     dragging = false
                     let far = hypot(v.translation.width, v.translation.height) >= 2
                     dropped(far ? v.translation : .zero)
+                    // The title takes the clicks for the drag, so the double-click to open a Sub is read here.
+                    if !far, module.kind == "subpatch", NSApp.currentEvent?.clickCount == 2 { open() }
                 })
             ForEach(0..<rows, id: \.self) { i in
                 HStack(spacing: 0) {

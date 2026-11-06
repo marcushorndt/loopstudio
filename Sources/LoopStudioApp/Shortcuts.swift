@@ -7,7 +7,7 @@ enum AppAction: String, CaseIterable, Identifiable {
     case newProject, newDemo, save, saveAs, exportAudio
     case undo, redo, cut, copy, paste, duplicate, deleteSelection, splitAtPlayhead, deactivateClip, drawMode
     case record, toggleMetronome, play, pause, stopRewind, stopAllClips, loopSelection, loopToggle, backToArrangement, captureSession
-    case insertAudioTrack, insertMIDITrack, insertReturnTrack, insertGroupTrack, groupTracks, renameTrack, duplicateTrack
+    case insertAudioTrack, insertMIDITrack, insertReturnTrack, insertGroupTrack, groupTracks, ungroup, renameTrack, duplicateTrack
     case insertScene, deleteScene, duplicateScene
     case toggleKeyboardMIDI, midiLearn
     case moveUp, moveDown, moveLeft, moveRight, extendUp, extendDown, extendLeft, extendRight, launchSelected
@@ -23,7 +23,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .newProject, .newDemo, .save, .saveAs, .exportAudio: .file
         case .undo, .redo, .cut, .copy, .paste, .duplicate, .deleteSelection, .splitAtPlayhead, .deactivateClip, .drawMode: .edit
         case .record, .toggleMetronome, .play, .pause, .stopRewind, .stopAllClips, .loopSelection, .loopToggle, .backToArrangement, .captureSession: .transport
-        case .insertAudioTrack, .insertMIDITrack, .insertReturnTrack, .insertGroupTrack, .groupTracks, .renameTrack, .duplicateTrack: .track
+        case .insertAudioTrack, .insertMIDITrack, .insertReturnTrack, .insertGroupTrack, .groupTracks, .ungroup, .renameTrack, .duplicateTrack: .track
         case .insertScene, .deleteScene, .duplicateScene: .scene
         case .toggleKeyboardMIDI, .midiLearn: .transport
         case .moveUp, .moveDown, .moveLeft, .moveRight, .extendUp, .extendDown, .extendLeft, .extendRight, .launchSelected: .navigate
@@ -64,7 +64,8 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .insertMIDITrack: "Insert MIDI Track"
         case .insertReturnTrack: "Insert Return Track"
         case .insertGroupTrack: "Insert Group Track"
-        case .groupTracks: "Group Selected Tracks"
+        case .groupTracks: "Group (selected tracks; marked devices into a Rack)"
+        case .ungroup: "Ungroup Rack"
         case .renameTrack: "Rename Track"
         case .duplicateTrack: "Duplicate Track"
         case .insertScene: "Insert Scene"
@@ -126,6 +127,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .insertMIDITrack: KeyBinding("t", [.command, .shift])
         case .insertReturnTrack: KeyBinding("t", [.command, .option])
         case .groupTracks: KeyBinding("g", .command)
+        case .ungroup: KeyBinding("g", [.command, .shift])
         case .renameTrack: KeyBinding("r", .command)
         case .insertScene: KeyBinding("i", [.command, .shift])
         case .toggleKeyboardMIDI: KeyBinding("m", [])

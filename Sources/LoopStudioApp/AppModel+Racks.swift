@@ -133,21 +133,56 @@ extension AppModel {
 
     // MARK: Grouping
 
-    /// Wraps a device in a new rack at its place, like Live's Group (⌘G). An instrument gets a MIDI rack,
-    /// an effect an audio effect rack. The device keeps its ID, so its automation and mappings stay.
-    func groupDevice(_ id: DeviceID, on trackID: TrackID) {
-        guard let track = project.track(trackID), let device = track.device(id) else { return }
-        let isInstrument = self.isInstrument(device)
+    /// Wraps devices in a new rack at the place of the first, like Live's Group (⌘G). The devices sit in one
+    /// list (the track's, or one chain's): the anchor's list; marked cards in other lists stay out. An
+    /// instrument among them gets a MIDI rack, effects an audio effect rack. The devices keep their IDs and
+    /// their order, so automation and mappings stay.
+    func groupDevices(_ ids: Set<DeviceID>, on trackID: TrackID) {
+        guard let track = project.track(trackID),
+              let anchor = ids.first(where: { $0 == selectedDevice }) ?? ids.first(where: { track.device($0) != nil }) else { return }
+        let chain = track.chainHolding(anchor)
+        let list = siblings(of: anchor, on: track)
+        let members = list.filter { ids.contains($0.id) }
+        guard let first = list.firstIndex(where: { ids.contains($0.id) }), !members.isEmpty else { return }
+        let isInstrument = members.contains(where: isInstrument)
         guard var rack = BuiltInEffects.makeSlot(isInstrument ? "midirack" : "audiorack") else { return }
-        rack.rack?.chains[0].devices = [device]
-        rack.rack?.chains[0].name = device.name
-        let chain = track.chainHolding(id)
-        var list = siblings(of: id, on: track)
-        guard let i = list.firstIndex(where: { $0.id == id }) else { return }
-        list[i] = rack
-        apply(.setDevices(track: trackID, chain: chain?.id, devices: list))
+        rack.rack?.chains[0].devices = members
+        rack.rack?.chains[0].name = members.count == 1 ? members[0].name : "Chain 1"
+        var next = list.filter { !ids.contains($0.id) }
+        next.insert(rack, at: min(first, next.count))
+        apply(.setDevices(track: trackID, chain: chain?.id, devices: next))
         selectedDevice = rack.id
-        status = "\(device.name) sits in a new \(rack.name). Add chains, then map its knobs to the macros."
+        let what = members.count == 1 ? "\(members[0].name) sits" : "\(members.count) devices sit"
+        status = "\(what) in a new \(rack.name). Add chains, then map its knobs to the macros."
+        if members.count < ids.count { status += " Marked devices in other lists stayed out." }
+    }
+
+    func groupDevice(_ id: DeviceID, on trackID: TrackID) { groupDevices([id], on: trackID) }
+
+    /// ⌘G with marked device cards: they go into one rack.
+    func groupSelectedDevices() {
+        guard let anchor = selectedDevice, let (track, _) = deviceLocation(anchor) else { return }
+        groupDevices(selectedDevices, on: track.id)
+    }
+
+    /// The rack ⌘⇧G opens up: the marked rack, else the rack around the marked device (the innermost).
+    var rackToUngroup: (track: Track, rack: DeviceSlot)? {
+        guard let id = selectedDevice, let (track, device) = deviceLocation(id) else { return nil }
+        if device.isRack { return (track, device) }
+        if let outer = track.racksHolding(id).last { return (track, outer) }
+        return nil
+    }
+
+    func ungroupSelectedRack() {
+        guard let (track, rack) = rackToUngroup else { return }
+        ungroupRack(rack.id, on: track.id)
+    }
+
+    /// The marked devices without those that sit inside another marked rack: one command per device then
+    /// cannot fail on a device that already went with its rack.
+    func topLevel(of ids: Set<DeviceID>) -> [DeviceID] {
+        let racks = ids.compactMap { id in project.allTracks.lazy.compactMap { $0.device(id) }.first }.filter(\.isRack)
+        return ids.filter { id in !racks.contains { $0.id != id && $0.nestedDevice(id) != nil } }
     }
 
     /// Puts the devices of every chain back at the rack's place, in chain order. The rack and its macros go.

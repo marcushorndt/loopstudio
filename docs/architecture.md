@@ -265,6 +265,8 @@ A rack is a `DeviceSlot` with `format "builtin"` and the identifier `audiorack` 
 
 Macro resolution lives in Core (`Project.macroDriving`): the mapping's min and max are positions (0…1) of the target parameter, max below min inverts, and the curve bends the ramp. The engine mirrors it as `MacroLink`s resolved once per plan (`RackRuntime.resolveLinks`) and applied per block, so the audio thread never looks a parameter up. A driven parameter's own knob shows the driven value and takes no input.
 
+Grouping in the UI: device cards have a marking (`AppModel.selectedDevices`: a click marks one, ⌘-click adds or takes out, ⇧-click marks a range in the same list; `selectedDevice` is the anchor that Copy and Duplicate take). ⌘G (`groupSelectedDevices`) puts the marked cards of the anchor's list into one new rack at the place of the first, in their order and with their IDs; ⌘⇧G (`ungroupSelectedRack`) opens the marked rack, or the rack around the marked device. Delete removes every marked card in one undo step. With no device marked, ⌘G groups tracks.
+
 Audio racks sum their chains after each chain's volume, pan and selector-zone gain (fades inside the zone; every chain runs even at zero gain, so a fade-in has a tail to fade into). Chains with different latencies are aligned to the slowest. MIDI racks route each note to the chains whose key and velocity zones hold it, scale velocity by the zone fades, and remember held keys per chain so a zone change mid-note ends the note in the chain that started it.
 
 ## 12. Devices and failure handling

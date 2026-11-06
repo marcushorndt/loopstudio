@@ -35,7 +35,9 @@ extension AppModel {
         case .paste: !clipboard.isEmpty || !noteClipboard.isEmpty || deviceClipboard != nil
         case .backToArrangement, .captureSession: arrangementOverridden
         case .renameTrack: selectedTrack != nil || selectedClip != nil
-        case .groupTracks, .duplicateTrack: selectedTrack != nil
+        case .groupTracks: selectedTrack != nil || deviceFocused
+        case .ungroup: rackToUngroup != nil
+        case .duplicateTrack: selectedTrack != nil
         case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .noteOtherGridLeft, .noteOtherGridRight: markedMIDIClip != nil
         // Shift and an arrow: the same keys move marked notes an octave or a step, so they come first.
         case .extendUp, .extendDown, .extendLeft, .extendRight: viewMode == .session && markedMIDIClip == nil
@@ -87,7 +89,9 @@ extension AppModel {
         case .insertMIDITrack: addTrack(kind: .midi)
         case .insertReturnTrack: addTrack(kind: .returnTrack)
         case .insertGroupTrack: addTrack(kind: .group)
-        case .groupTracks: groupSelectedTracks()
+        // ⌘G is Live's Group: marked device cards go into a Rack, else the selected tracks into a group track.
+        case .groupTracks: if deviceFocused { groupSelectedDevices() } else { groupSelectedTracks() }
+        case .ungroup: ungroupSelectedRack()
         case .renameTrack:
             if let clip = selectedClip { clipRenameRequest = clip } else { renameRequest = selectedTrack }
         case .duplicateTrack: if let t = selectedTrack { duplicateTrack(t) }

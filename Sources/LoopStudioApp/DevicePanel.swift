@@ -374,7 +374,7 @@ struct DeviceCard: View {
         .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Theme.radius))
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : Color.clear, lineWidth: 1.5))
         .contentShape(Rectangle())
-        .simultaneousGesture(TapGesture().onEnded { model.selectDevice(device.id) })
+        .simultaneousGesture(TapGesture().onEnded { click() })
         .contextMenu { DeviceMenu(track: track, device: device) }
     }
 
@@ -479,12 +479,19 @@ struct DeviceCard: View {
         // A click on the card marks the device: Delete removes it, like a clip. Knobs and buttons keep their own clicks.
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : Color.clear, lineWidth: 1.5))
         .contentShape(Rectangle())
-        .simultaneousGesture(TapGesture().onEnded { model.selectDevice(device.id) })
+        .simultaneousGesture(TapGesture().onEnded { click() })
         .contextMenu { DeviceMenu(track: track, device: device) }
-        .hint(selected ? "\(device.name): marked. Delete removes it; right-click for more." : "\(device.name). Click to mark it, right-click for more.")
+        .hint(selected ? "\(device.name): marked. Delete removes it, ⌘G puts the marked cards into a Rack; right-click for more."
+                       : "\(device.name). Click to mark it, ⌘-click to add it to the marking, ⇧-click for a range; right-click for more.")
     }
 
-    private var selected: Bool { model.selectedDevice == device.id }
+    private var selected: Bool { model.selectedDevices.contains(device.id) }
+
+    /// A click marks the card; ⌘ adds it to the marking, ⇧ marks the cards up to it.
+    private func click() {
+        let flags = NSEvent.modifierFlags
+        model.selectDevice(device.id, toggle: flags.contains(.command), range: flags.contains(.shift))
+    }
 
     /// The source a sidechain effect listens to: its own input, or another track's output.
     private var sidechainMenu: some View {

@@ -71,6 +71,7 @@ struct LoopStudioApp: App {
                 AppAction.insertGroupTrack.button(model)
                 Divider()
                 AppAction.groupTracks.button(model)
+                AppAction.ungroup.button(model)
                 AppAction.renameTrack.button(model)
                 AppAction.duplicateTrack.button(model)
                 Divider()

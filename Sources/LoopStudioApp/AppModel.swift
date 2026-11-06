@@ -121,8 +121,16 @@ final class AppModel {
     var keyboardOctave = 3
     var keyboardVelocity = 100
     var detailTab: DetailTab = .clip
-    /// The device card last clicked. Delete removes it; a click on a clip or track lets it go.
-    var selectedDevice: DeviceID?
+    /// The device card last clicked: the anchor of the marking, the one Copy and Duplicate take. A click on
+    /// a clip or track lets it go.
+    var selectedDevice: DeviceID? {
+        didSet {
+            if let id = selectedDevice { if !selectedDevices.contains(id) { selectedDevices = [id] } } else { selectedDevices = [] }
+        }
+    }
+    /// Every marked device card: the anchor plus the ⌘-clicked ones and a ⇧-clicked range in its list.
+    /// Delete removes them all; ⌘G puts them into one Rack.
+    var selectedDevices: Set<DeviceID> = []
     /// Device cards folded to their title, like Live's folded devices. Saved with the project.
     var foldedDevices: Set<DeviceID> = []
     /// Rack panels hidden on their cards ("<rack>:macros", "<rack>:chains"). Saved with the project.
@@ -281,9 +289,29 @@ final class AppModel {
         didSet { updateLiveTarget(); if selectedTrack != oldValue { selectedDevice = nil } }
     }
 
-    /// A click on a device card: Delete then removes that device, not the clip or track.
-    func selectDevice(_ id: DeviceID) {
-        selectedDevice = id
+    /// A click on a device card: Delete then removes that device, not the clip or track. `toggle` (⌘-click)
+    /// adds the card to the marking or takes it out; `range` (⇧-click) marks every card between the anchor
+    /// and this one in the same list.
+    func selectDevice(_ id: DeviceID, toggle: Bool = false, range: Bool = false) {
+        if toggle {
+            var set = selectedDevices
+            if set.contains(id), set.count > 1 {
+                set.remove(id)
+                selectedDevices = set
+                if selectedDevice == id { selectedDevice = set.first }
+            } else {
+                set.insert(id)
+                selectedDevices = set
+                selectedDevice = id
+            }
+        } else if range, let anchor = selectedDevice, anchor != id, let (track, _) = deviceLocation(anchor),
+                  case let list = siblings(of: anchor, on: track),
+                  let a = list.firstIndex(where: { $0.id == anchor }), let b = list.firstIndex(where: { $0.id == id }) {
+            selectedDevices = Set(list[min(a, b)...max(a, b)].map(\.id))
+        } else {
+            selectedDevices = [id]
+            selectedDevice = id
+        }
         trackFocused = false
     }
     /// The tracks armed for recording (their arm buttons). They record and get the MIDI keyboard, whatever is
@@ -1486,12 +1514,15 @@ final class AppModel {
             selectedNotes = []
             return
         }
-        if let device = selectedDevice {
+        if selectedDevice != nil {
+            // Every marked card goes, in one undo step. A device inside a marked rack goes with the rack.
+            let ids = topLevel(of: selectedDevices)
             selectedDevice = nil
-            if let track = project.allTracks.first(where: { $0.device(device) != nil }) {
-                apply(.removeDevice(track: track.id, device: device))
-                return
+            let commands: [Command] = ids.compactMap { id in
+                project.allTracks.first { $0.device(id) != nil }.map { .removeDevice(track: $0.id, device: id) }
             }
+            if commands.count == 1 { apply(commands[0]); return }
+            if !commands.isEmpty { apply(.batch(commands: commands)); return }
         }
         if trackFocused { deleteFocusedTracks(); return }
         if let scene = selectedScene { deleteScene(scene); return }

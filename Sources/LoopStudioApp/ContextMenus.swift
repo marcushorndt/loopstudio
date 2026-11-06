@@ -276,6 +276,8 @@ struct DeviceMenu: View {
         if device.isRack {
             Button("Ungroup Rack") { model.ungroupRack(device.id, on: track.id) }
             Button("Add Chain") { model.addChain(to: device.id, on: track.id) }
+        } else if model.selectedDevices.contains(device.id), model.selectedDevices.count > 1 {
+            Button("Group \(model.selectedDevices.count) Marked Devices into a Rack") { model.groupDevices(model.selectedDevices, on: track.id) }
         } else {
             Button("Group into a Rack") { model.groupDevice(device.id, on: track.id) }
         }

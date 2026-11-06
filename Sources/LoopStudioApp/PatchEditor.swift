@@ -104,6 +104,7 @@ struct PatchEditorView: View {
     @State private var doc = PatchDocument()
     @State private var loadedSource: String?
     @State private var selected: String?
+    @State private var renameRequest = 0
 
     private var slot: DeviceSlot? { model.project.track(track)?.device(device) }
     private var compiled: Result<PatchProgram, PatchError> { PatchCompiler.cached(doc.source) }
@@ -113,15 +114,21 @@ struct PatchEditorView: View {
             toolbar
             Divider()
             HStack(spacing: 0) {
-                PatchCanvas(doc: $doc, selected: $selected, commit: commit)
+                PatchCanvas(doc: $doc, selected: $selected, commit: commit, add: { kind, point in add(kind, at: point) },
+                            rename: { renameRequest += 1 })
                 Divider()
-                PatchInspector(doc: doc, selected: selected, commit: commit)
+                PatchInspector(doc: doc, selected: selected, renameRequest: renameRequest, commit: commit)
                     .frame(width: 300)
             }
             Divider()
             status
         }
         .frame(minWidth: 720, minHeight: 420)
+        .background {
+            // ⌘R: rename the selected module (the label field in the inspector takes the focus).
+            Button("Rename") { if selected != nil { renameRequest += 1 } }
+                .keyboardShortcut("r", modifiers: .command).hidden()
+        }
         .onAppear { load() }
         .onChange(of: slot?.source) { _, _ in load() }
     }
@@ -141,14 +148,7 @@ struct PatchEditorView: View {
                 }
             }
             .menuStyle(.borderlessButton).fixedSize()
-            .hint("Put a module on the canvas. Drag from an output dot to an input dot to cable it.")
-            Menu("Script Examples") {
-                ForEach(PatchExamples.all, id: \.name) { example in
-                    Button(example.name) { addScript(example.source) }
-                }
-            }
-            .menuStyle(.borderlessButton).fixedSize()
-            .hint("A Script module with an example text, wired between Audio In and Audio Out.")
+            .hint("Put a module on the canvas, or right-click the canvas. Drag from an output dot to an input dot to cable it.")
         }
         .padding(10)
     }
@@ -194,32 +194,13 @@ struct PatchEditorView: View {
         if case .failure(let e) = PatchCompiler.cached(source) { model.status = "Patch: \(e.description)" }
     }
 
-    private func add(_ kind: String) {
+    /// A new module: where the pointer was (the canvas menu), or on a grid from the toolbar.
+    private func add(_ kind: String, at point: CGPoint? = nil) {
         let n = doc.modules.count
-        let x = 60 + Double(n % 6) * 160, y = 60 + Double(n / 6) * 90
+        let x = point.map { max(0, $0.x).rounded() } ?? 60 + Double(n % 6) * 160
+        let y = point.map { max(0, $0.y).rounded() } ?? 60 + Double(n / 6) * 90
         let id = doc.freeID(for: kind)
         commit(.add(kind: kind, id: id, x: x, y: y))
-        selected = id
-    }
-
-    private func addScript(_ text: String) {
-        var next = doc
-        let id = next.freeID(for: "script")
-        do {
-            try next.apply(.add(kind: "script", id: id, x: 220, y: 60 + Double(next.modules.count) * 20))
-            try next.apply(.setSource(id: id, source: text))
-            let ports = PatchModules.ports(of: next.module(id)!)
-            if let inp = next.modules.first(where: { $0.kind == "in" }), let p = ports.inputs.first {
-                try next.apply(.connect(from: inp.id, fromPort: "out", to: id, toPort: p.name))
-            }
-            if let out = next.modules.first(where: { $0.kind == "out" }), let p = ports.outputs.first {
-                try next.apply(.connect(from: id, fromPort: p.name, to: out.id, toPort: "in"))
-            }
-        } catch { model.status = "\(error)"; return }
-        doc = next
-        loadedSource = next.source
-        let name = (try? PatchCompiler.compile(next.source).name).flatMap { $0 == slot?.name ? nil : $0 }
-        model.apply(.setDeviceSource(track: track, device: device, source: next.source, name: name))
         selected = id
     }
 }
@@ -284,8 +265,14 @@ struct PatchCanvas: View {
     @Binding var doc: PatchDocument
     @Binding var selected: String?
     let commit: (PatchEdit) -> Void
+    /// A new module of a kind at a point on the canvas (the background menu).
+    let add: (String, CGPoint) -> Void
+    /// Rename the selected module: the inspector's label field takes the focus.
+    let rename: () -> Void
     @State private var dragOffsets: [String: CGSize] = [:]
     @State private var cableDrag: CableDrag?
+    /// Where the pointer was last seen, in canvas coordinates: the place for a module added by the menu.
+    @State private var pointer: CGPoint = CGPoint(x: 60, y: 60)
 
     private var feedback: Set<PatchCable> { PatchGraphCompiler.feedback(in: doc) }
 
@@ -301,10 +288,13 @@ struct PatchCanvas: View {
                 Theme.panel
                     .contentShape(Rectangle())
                     .onTapGesture { selected = nil }
+                    .contextMenu { addMenu }
                 cables
+                cableHits
                 ForEach(doc.modules) { m in
                     PatchModuleView(module: m, doc: doc, selected: selected == m.id, offset: dragOffsets[m.id] ?? .zero,
                                     select: { selected = m.id }, commit: commit,
+                                    rename: { selected = m.id; rename() },
                                     moved: { translation in dragOffsets[m.id] = translation },
                                     dropped: { translation in
                                         dragOffsets[m.id] = nil
@@ -317,6 +307,9 @@ struct PatchCanvas: View {
             }
             .frame(width: canvasSize.width, height: canvasSize.height)
             .coordinateSpace(name: "canvas")
+            .onContinuousHover(coordinateSpace: .named("canvas")) { phase in
+                if case .active(let p) = phase { pointer = p }
+            }
         }
         .background(Theme.panel)
         .focusable()
@@ -327,13 +320,9 @@ struct PatchCanvas: View {
         Canvas { context, _ in
             let feedback = self.feedback
             for cable in doc.cables {
-                guard let a = doc.module(cable.from), let b = doc.module(cable.to) else { continue }
-                let pa = PatchModules.ports(of: a), pb = PatchModules.ports(of: b)
-                guard let oi = pa.outputs.firstIndex(where: { $0.name == cable.fromPort }),
-                      let ii = pb.inputs.firstIndex(where: { $0.name == cable.toPort }) else { continue }
-                let from = PatchLayout.outputPoint(a, index: oi, offset: dragOffsets[a.id] ?? .zero)
-                let to = PatchLayout.inputPoint(b, index: ii, offset: dragOffsets[b.id] ?? .zero)
-                let color = PatchLayout.color(pa.outputs[oi].type)
+                guard let (from, to) = endpoints(cable), let a = doc.module(cable.from),
+                      let port = PatchModules.ports(of: a).outputs.first(where: { $0.name == cable.fromPort }) else { continue }
+                let color = PatchLayout.color(port.type)
                 context.stroke(path(from, to), with: .color(color.opacity(0.9)), lineWidth: 1.5)
                 if feedback.contains(cable) {
                     // One frame of delay on the cable that closes a loop.
@@ -351,6 +340,43 @@ struct PatchCanvas: View {
             }
         }
         .allowsHitTesting(false)
+    }
+
+    /// The Add Module menu of the canvas: the module lands where the pointer was.
+    @ViewBuilder private var addMenu: some View {
+        let at = pointer
+        ForEach(PatchModules.categories, id: \.self) { category in
+            Menu(category) {
+                ForEach(PatchModules.all.filter { $0.category == category }) { spec in
+                    Button(spec.name) { add(spec.id, at) }
+                        .disabled(spec.single && doc.modules.contains { $0.kind == spec.id })
+                }
+            }
+        }
+    }
+
+    /// An invisible stroke over every cable, so a right-click on a cable finds it.
+    private var cableHits: some View {
+        ForEach(doc.cables, id: \.self) { cable in
+            if let (from, to) = endpoints(cable) {
+                let p = path(from, to)
+                p.stroke(.clear, lineWidth: 10)
+                    .contentShape(p.strokedPath(StrokeStyle(lineWidth: 10)))
+                    .contextMenu {
+                        Text("\(cable.from).\(cable.fromPort) → \(cable.to).\(cable.toPort)")
+                        Button("Remove Cable") { commit(.disconnect(from: cable.from, fromPort: cable.fromPort, to: cable.to, toPort: cable.toPort)) }
+                    }
+            }
+        }
+    }
+
+    private func endpoints(_ cable: PatchCable) -> (CGPoint, CGPoint)? {
+        guard let a = doc.module(cable.from), let b = doc.module(cable.to) else { return nil }
+        let pa = PatchModules.ports(of: a), pb = PatchModules.ports(of: b)
+        guard let oi = pa.outputs.firstIndex(where: { $0.name == cable.fromPort }),
+              let ii = pb.inputs.firstIndex(where: { $0.name == cable.toPort }) else { return nil }
+        return (PatchLayout.outputPoint(a, index: oi, offset: dragOffsets[a.id] ?? .zero),
+                PatchLayout.inputPoint(b, index: ii, offset: dragOffsets[b.id] ?? .zero))
     }
 
     private func path(_ a: CGPoint, _ b: CGPoint) -> Path {
@@ -385,11 +411,16 @@ private struct PatchModuleView: View {
     let offset: CGSize
     let select: () -> Void
     let commit: (PatchEdit) -> Void
+    let rename: () -> Void
     let moved: (CGSize) -> Void
     let dropped: (CGSize) -> Void
     let cableStarted: (String, PortType, CGPoint) -> Void
     let cableMoved: (CGPoint) -> Void
     let cableEnded: (CGPoint) -> Void
+
+    /// The output port whose cable is being dragged out, while the drag lasts.
+    @State private var cabling: String?
+    @State private var hovering = false
 
     private var ports: (inputs: [ModulePort], outputs: [ModulePort]) { PatchModules.ports(of: module) }
     private var isScript: Bool { module.kind == "script" }
@@ -404,6 +435,12 @@ private struct PatchModuleView: View {
                 if module.isOnPanel {
                     Image(systemName: "slider.horizontal.3").font(.system(size: 9)).foregroundStyle(Theme.accent)
                         .hint("On the panel: its knobs show on the device.")
+                }
+                if hovering {
+                    Button { commit(.remove(id: module.id)) } label: {
+                        Image(systemName: "trash").font(.system(size: 9)).foregroundStyle(Theme.dim)
+                    }
+                    .buttonStyle(.plain).hint("Remove the module and its cables.")
                 }
             }
             .padding(.horizontal, 6).frame(height: PatchLayout.header)
@@ -427,9 +464,19 @@ private struct PatchModuleView: View {
         .overlay(RoundedRectangle(cornerRadius: 4).stroke(selected ? Theme.text : Theme.line, lineWidth: selected ? 1.5 : 1))
         .offset(x: module.x + offset.width, y: module.y + offset.height)
         .onTapGesture { select() }
+        .onHover { hovering = $0 }
         .contextMenu {
+            Button("Rename…") { rename() }.keyboardShortcut("r", modifiers: .command)
             Button(module.isOnPanel ? "Take off the Panel" : "Put on the Panel") { commit(.expose(id: module.id, on: !module.isOnPanel)) }
                 .disabled(module.kind == "in" || module.kind == "out" || module.kind == "clock")
+            let cables = doc.cables.filter { $0.from == module.id || $0.to == module.id }
+            if !cables.isEmpty {
+                Menu("Disconnect") {
+                    ForEach(cables, id: \.self) { c in
+                        Button("\(c.from).\(c.fromPort) → \(c.to).\(c.toPort)") { commit(.disconnect(from: c.from, fromPort: c.fromPort, to: c.to, toPort: c.toPort)) }
+                    }
+                }
+            }
             Button("Remove") { commit(.remove(id: module.id)) }
         }
         .hint(PatchModules.spec(module.kind)?.help ?? module.kind)
@@ -479,10 +526,16 @@ private struct PatchModuleView: View {
                 .contentShape(Circle().scale(2.5))
                 .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("canvas"))
                     .onChanged { v in
-                        if v.translation == .zero { cableStarted(port.name, port.type, v.location) }
+                        if cabling != port.name {
+                            cabling = port.name
+                            cableStarted(port.name, port.type, v.location)
+                        }
                         cableMoved(v.location)
                     }
-                    .onEnded { v in cableEnded(v.location) })
+                    .onEnded { v in
+                        cabling = nil
+                        cableEnded(v.location)
+                    })
                 .hint("Drag to an input dot to cable it.")
         }
     }
@@ -494,16 +547,18 @@ struct PatchInspector: View {
     @Environment(AppModel.self) private var model
     let doc: PatchDocument
     let selected: String?
+    /// Counts up on ⌘R: the label field of the selected module takes the focus.
+    let renameRequest: Int
     let commit: (PatchEdit) -> Void
 
     var body: some View {
         ScrollView {
             if let id = selected, let m = doc.module(id), let spec = PatchModules.spec(m.kind) {
-                ModuleInspector(module: m, spec: spec, doc: doc, commit: commit)
+                ModuleInspector(module: m, spec: spec, doc: doc, renameRequest: renameRequest, commit: commit)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Select a module").font(.system(size: 12, weight: .semibold))
-                    Text("Click a module to see its values. Drag a title to move it, drag an output dot to an input dot to cable it. Right-click an input dot to disconnect. Delete removes the selected module.")
+                    Text("Click a module to see its values. Drag a title to move it, drag an output dot to an input dot to cable it. Right-click a cable to remove it, right-click the canvas to add a module. ⌘R renames, Delete removes the selected module.")
                         .font(.system(size: 11)).foregroundStyle(Theme.dim)
                     Text("Modules on the panel show their free inputs as knobs on the device: automation, macros and MIDI learn work on them.")
                         .font(.system(size: 11)).foregroundStyle(Theme.dim)
@@ -521,10 +576,12 @@ private struct ModuleInspector: View {
     let module: PatchModule
     let spec: ModuleSpec
     let doc: PatchDocument
+    let renameRequest: Int
     let commit: (PatchEdit) -> Void
     @State private var label = ""
     @State private var scriptText = ""
     @State private var loadedID = ""
+    @FocusState private var labelFocused: Bool
 
     private var ports: (inputs: [ModulePort], outputs: [ModulePort]) { PatchModules.ports(of: module) }
     private var canExpose: Bool { !["in", "out", "clock"].contains(module.kind) }
@@ -534,7 +591,11 @@ private struct ModuleInspector: View {
             VStack(alignment: .leading, spacing: 3) {
                 TextField("Label", text: $label, prompt: Text(spec.name))
                     .textFieldStyle(.roundedBorder).font(.system(size: 12, weight: .semibold))
-                    .onSubmit { commit(.setLabel(id: module.id, label: label)) }
+                    .focused($labelFocused)
+                    .onSubmit { commit(.setLabel(id: module.id, label: label)); labelFocused = false }
+                    .onChange(of: labelFocused) { _, focused in
+                        if !focused, label != (module.label ?? "") { commit(.setLabel(id: module.id, label: label)) }
+                    }
                 Text("\(spec.name) · \(module.id)").font(.system(size: 10)).foregroundStyle(Theme.dim)
                 Text(spec.help).font(.system(size: 10)).foregroundStyle(Theme.dim)
             }
@@ -597,6 +658,7 @@ private struct ModuleInspector: View {
         .padding(12)
         .onAppear { sync() }
         .onChange(of: module.id) { sync() }
+        .onChange(of: renameRequest) { labelFocused = true }
         .onChange(of: module.source) { if scriptText == (loadedSourceText ?? "") { scriptText = module.source ?? "" }; loadedSourceText = module.source }
     }
 
@@ -642,6 +704,16 @@ private struct ModuleInspector: View {
             HStack {
                 Text("Text").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.dim)
                 Spacer()
+                Menu("Examples") {
+                    ForEach(PatchExamples.all, id: \.name) { example in
+                        Button(example.name) {
+                            scriptText = example.source
+                            commit(.setSource(id: module.id, source: example.source))
+                        }
+                    }
+                }
+                .menuStyle(.borderlessButton).controlSize(.mini).fixedSize()
+                .hint("Put an example text on this module. Cables to ports that stay keep.")
                 Button("Revert") { scriptText = module.source ?? "" }.controlSize(.mini).disabled(!scriptDirty)
                 Button("Apply") { commit(.setSource(id: module.id, source: scriptText)) }
                     .keyboardShortcut(.return, modifiers: .command).controlSize(.mini).buttonStyle(.borderedProminent)

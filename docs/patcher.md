@@ -190,10 +190,12 @@ focused work on top of stage 1. Stages 3 and 4 are three to four days each.
   it `z⁻¹`. The search runs in canvas order (left to right, top to bottom), so moving a module can move the
   mark; the sound is the same either way.
 - **App** `PatchEditor.swift`: the card draws the panel (groups and meters); the editor window has the
-  canvas (drag a title to move, drag an output dot to an input dot to cable, right-click a dot to
-  disconnect, Delete removes), the inspector (label, on the panel, the knob's range and unit, the settings,
-  the inputs without a cable, the Script text with Apply ⌘↩, the cables, Remove), Add Module by category,
-  Script Examples. Every step is one undo step through `Command.setDeviceSource`; a move coalesces.
+  canvas (drag a title to move, drag an output dot to an input dot to cable, right-click a cable to
+  remove it, right-click the canvas to add a module where the pointer is, right-click a module for
+  rename, panel, disconnect and remove, a trash icon on hover, ⌘R renames, Delete removes), the
+  inspector (label, on the panel, the knob's range and unit, the settings, the inputs without a cable,
+  the Script text with Examples and Apply ⌘↩, the cables, Remove), Add Module by category in the
+  toolbar. Every step is one undo step through `Command.setDeviceSource`; a move coalesces.
   `defaults write app.loopstudio.dev openPatchEditor -bool true` opens the first Patch's editor at launch.
 - **MCP**: `patch_modules` (the kinds with ports and settings), `patch_edit` (steps in order, one receipt),
   `patch_read` returns the graph. `patch_check` and `patch_write` take a document as well as a text.

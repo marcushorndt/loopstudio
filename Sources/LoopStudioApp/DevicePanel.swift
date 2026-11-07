@@ -28,8 +28,31 @@ struct Knob: View {
     var automation: KnobAutomation? = nil
     var sync: KnobSync? = nil
     @State private var startPosition: Double?
+    @State private var entering = false
+    @State private var entry = ""
 
     private var rotary: Bool { param.choices.isEmpty || param.rotary }
+
+    /// A double-click opens the number entry; with Option held it resets the knob instead.
+    private func doubleClick() {
+        if NSEvent.modifierFlags.contains(.option) { onReset(); return }
+        entry = param.choices.isEmpty ? String(param.format(value).split(separator: " ").first ?? "") : param.format(value)
+        entering = true
+    }
+
+    /// Reads the typed text: a number, with or without the unit, a comma as the decimal point, or a choice name.
+    private func submitEntry() {
+        defer { entering = false }
+        let text = entry.trimmingCharacters(in: .whitespaces)
+        if !param.choices.isEmpty, let i = param.choices.firstIndex(where: { $0.caseInsensitiveCompare(text) == .orderedSame }) {
+            onChange(Double(i)); return
+        }
+        var digits = text.replacingOccurrences(of: ",", with: ".")
+        if !param.unit.isEmpty, digits.hasSuffix(param.unit) { digits = String(digits.dropLast(param.unit.count)) }
+        digits = digits.filter { "0123456789.-".contains($0) }
+        guard let number = Double(digits) else { return }
+        onChange(param.clamp(number))
+    }
 
     var body: some View {
         VStack(spacing: 3) {
@@ -46,9 +69,19 @@ struct Knob: View {
                         onChange(param.value(atPosition: (startPosition ?? 0) - Double(g.translation.height) / 160))
                     }
                     .onEnded { _ in startPosition = nil })
-                .simultaneousGesture(TapGesture(count: 2).onEnded { onReset() })
+                .simultaneousGesture(TapGesture(count: 2).onEnded { doubleClick() })
                 // The tempo switch sits in the gap of the arc, at the bottom of the dial: every knob has that room.
                 .overlay(alignment: .bottom) { if let sync { SyncToggle(sync: sync, tint: tint).offset(y: 3) } }
+                .popover(isPresented: $entering, arrowEdge: .bottom) {
+                    HStack(spacing: 4) {
+                        TextField(param.name, text: $entry)
+                            .textFieldStyle(.roundedBorder).frame(width: 72)
+                            .font(.system(size: 11, design: .monospaced))
+                            .onSubmit { submitEntry() }
+                        if !param.unit.isEmpty { Text(param.unit).font(.system(size: 10)).foregroundStyle(Theme.dim) }
+                    }
+                    .padding(8)
+                }
             } else {
                 Menu(param.format(value)) {
                     ForEach(Array(param.choices.enumerated()), id: \.offset) { i, name in Button(name) { onChange(Double(i)) } }
@@ -74,7 +107,7 @@ struct Knob: View {
         }
         .frame(width: 66)
         .hint(param.isSwitch ? "\(param.name): \(value >= 0.5 ? "On" : "Off"). Click to switch."
-              : "\(param.name): \(param.format(value)). Drag up or down; double-click resets. Right-click for automation.")
+              : "\(param.name): \(param.format(value)). Drag up or down; double-click to type a value; Option-double-click resets. Right-click for automation.")
         .overlay(alignment: .topTrailing) {
             if automation?.hasCurve == true {
                 Circle().fill(Theme.track(0)).frame(width: 6, height: 6).padding(4).hint("Automated")

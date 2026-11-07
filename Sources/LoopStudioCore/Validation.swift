@@ -149,12 +149,13 @@ extension Project {
         return issues
     }
 
-    /// Audio clips live on audio tracks, MIDI clips on MIDI tracks. Dummy clips fit any track but the master.
+    /// Audio clips live on audio tracks, MIDI clips on MIDI tracks. Dummy clips fit any track, the master
+    /// too: there they are never heard, they only move its knobs.
     static func clip(_ clip: Clip, fits kind: TrackKind) -> Bool {
         switch clip {
         case .audio: kind == .audio
         case .midi: kind == .midi
-        case .dummy: kind != .master
+        case .dummy: true
         }
     }
 }

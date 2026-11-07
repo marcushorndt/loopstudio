@@ -204,7 +204,7 @@ struct UnitList: View {
                             .contextMenu {
                                 Button("Add to Selected Track") { model.addEffect(spec.id) }
                                 Menu("Add to Track") {
-                                    let tracks = model.project.tracks.filter { spec.isInstrument ? $0.kind == .midi : $0.kind != .master }
+                                    let tracks = spec.isInstrument ? model.project.tracks.filter { $0.kind == .midi } : model.project.allTracks
                                     ForEach(tracks, id: \.id) { t in Button(t.name) { model.addEffect(spec.id, to: t.id) } }
                                     if spec.isInstrument { Button("New MIDI Track") { model.addEffect(spec.id, to: nil); } }
                                 }
@@ -230,7 +230,7 @@ struct UnitList: View {
                     .contextMenu {
                         Button("Add to Selected Track") { model.addAudioUnit(identifier: unit.identifier, name: unit.name) }
                         if !unit.identifier.hasPrefix("aumu") {
-                            Menu("Add to Track") { ForEach(model.project.tracks.filter { $0.kind != .master }, id: \.id) { t in Button(t.name) { model.addAudioUnit(identifier: unit.identifier, name: unit.name, to: t.id) } } }
+                            Menu("Add to Track") { ForEach(model.project.allTracks, id: \.id) { t in Button(t.name) { model.addAudioUnit(identifier: unit.identifier, name: unit.name, to: t.id) } } }
                         }
                     }
                     .hint("Double-click to add. Drag onto a track.")

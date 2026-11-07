@@ -518,7 +518,6 @@ extension Project {
                 }
             }
             try withTrack(trackID) { t in
-                guard t.kind != .master else { throw CommandError.cannotChangeMaster }
                 if let slot, !Self.clip(slot.clip, fits: t.kind) {
                     throw CommandError.invalidValue("clip does not fit track kind")
                 }
@@ -917,7 +916,7 @@ extension Project {
 
         case .setLaunches(let list):
             for launch in list {
-                guard let t = track(launch.track), t.kind != .master else { throw CommandError.trackNotFound(launch.track) }
+                guard track(launch.track) != nil else { throw CommandError.trackNotFound(launch.track) }
                 if let slot = launch.slot, !(0...maxSlotIndex).contains(slot) { throw CommandError.invalidValue("launch slot \(slot)") }
             }
             let old = launches

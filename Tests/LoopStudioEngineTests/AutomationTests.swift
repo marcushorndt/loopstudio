@@ -333,3 +333,24 @@ private let ownVolume = ParameterAddress(node: ParameterAddress.ownTrack, parame
     #expect(rms(audio.left[20_000..<90_000]) < 0.05, "inside the clip: 440 Hz is filtered away")
     #expect(rms(audio.left[110_000..<180_000]) > 0.3, "after it: the knob is back at 20 kHz")
 }
+
+/// The master is a track like the others, the last one: its slots take dummy clips, never heard, that move
+/// its knobs while they play. A scene launches the master's slot with the rest of the row.
+@Test func aDummyClipOnTheMasterMovesItsVolumeWhileItPlays() throws {
+    var rig = Rig()
+    let master = rig.project.master.id
+    let target = ParameterAddress(node: master.rawValue, parameter: "volume")
+    let dummy = DummyClip(length: 3_840, lanes: [AutomationLane(target: target, points: [AutomationPoint(tick: 0, value: -96)])])
+    try Command.setSlot(track: master, index: 0, slot: SessionSlot(clip: .dummy(dummy), quantize: .none)).apply(to: &rig.project)
+    #expect(rig.project.master.slots.count == 1)
+    try Command.setLaunches(launches: [Launch(track: master, slot: 0, tick: 1_920)]).apply(to: &rig.project)
+    let session = SessionSimulator.run(rig.project, horizon: 20_000)
+    #expect(session.events.count == 1)
+    let audio = rig.render(session: session)
+    #expect(rms(audio.left[0..<40_000]) > 0.3, "before the dummy clip: normal")
+    #expect(rms(audio.left[50_000..<140_000]) < 0.001, "while it plays: the master is silent")
+    // Sound never sits on the master.
+    #expect(throws: CommandError.self) {
+        try Command.setSlot(track: master, index: 1, slot: SessionSlot(clip: .midi(MIDIClip(length: 960)))).apply(to: &rig.project)
+    }
+}

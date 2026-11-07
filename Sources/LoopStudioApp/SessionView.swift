@@ -231,6 +231,8 @@ private struct SlotCell: View {
     @Environment(AppModel.self) private var model
     let track: Track
     let row: Int
+    /// A dragged clip hovers over this slot: it shows where the clip would land.
+    @State private var targeted = false
 
     var body: some View {
         Group {
@@ -244,7 +246,20 @@ private struct SlotCell: View {
                 cell(.empty, look: SlotLook(.empty, blink: false))
             }
         }
-        .dropDestination(for: DropItem.self) { items, _ in model.dropOnSlot(items, track: track.id, row: row) }
+        .dropDestination(for: DropItem.self) { items, _ in model.dropOnSlot(items, track: track.id, row: row) } isTargeted: { targeted = $0 }
+        .overlay { if targeted { placeholder } }
+    }
+
+    /// The placeholder under a dragged clip: a dashed frame on the slot it would drop into. With Option held
+    /// the drop is a copy, and the frame says so.
+    private var placeholder: some View {
+        let copy = NSEvent.modifierFlags.contains(.option)
+        return RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.accent.opacity(0.22))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
+            .overlay(alignment: .trailing) {
+                if copy { Image(systemName: "plus").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.accent).padding(.trailing, 6) }
+            }
+            .allowsHitTesting(false)
     }
 
     @ViewBuilder
@@ -420,7 +435,8 @@ private struct NewTrackColumn: View {
     }
 }
 
-/// Scene launch buttons: one per row. Starts every clip of that row.
+/// The master's column: a scene launch button per row, and beside it the master's own slot. A clip there
+/// is a dummy clip: never heard, it moves the master's knobs while it plays, and a scene launches it too.
 private struct SceneColumn: View {
     @Environment(AppModel.self) private var model
     let rows: Int
@@ -430,10 +446,39 @@ private struct SceneColumn: View {
         model.selectedTrack == model.project.master.id && model.selectedSceneRow == row && model.selectedClip == nil
     }
 
+    private static let sceneWidth: CGFloat = 40
+
     var body: some View {
+        let master = model.project.master
         VStack(spacing: gap) {
-            Text("Master").font(.system(size: 10)).foregroundStyle(Theme.dim).frame(height: 30)
+            header(master)
             ForEach(0..<rows, id: \.self) { row in
+                HStack(spacing: gap) {
+                    sceneButton(row)
+                    SlotCell(track: master, row: row)
+                }
+            }
+        }
+        .frame(width: columnWidth)
+    }
+
+    /// The master's header: a click selects the master (its devices show below), an effect dropped on it
+    /// lands on the master.
+    private func header(_ master: Track) -> some View {
+        let selected = model.selectedTrack == master.id
+        return Text("Master").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text)
+            .frame(maxWidth: .infinity).frame(height: 30)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text.opacity(0.7) : Theme.line, lineWidth: 1))
+            .contentShape(Rectangle())
+            .onTapGesture { model.focusTrack(master.id) }
+            .simultaneousGesture(TapGesture(count: 2).onEnded { model.openTrackInspector(master.id) })
+            .dropDestination(for: String.self) { items, _ in model.dropDevices(items, on: master.id) }
+            .contextMenu { TrackMenuItems(track: master) }
+            .hint("The master: every track ends here. Click to see its effects; drop an effect on it. Its slots take dummy clips that move its knobs.")
+    }
+
+    private func sceneButton(_ row: Int) -> some View {
                 Button { model.launchScene(row) } label: {
                     TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !model.transportPlaying)) { _ in
                         // A clip of this scene waits to launch: the play icon blinks with the beat, like a slot's.
@@ -445,14 +490,13 @@ private struct SceneColumn: View {
                         }
                     }
                     .foregroundStyle(Theme.text)
-                    .frame(width: columnWidth, height: slotHeight)
+                    .frame(width: Self.sceneWidth, height: slotHeight)
                     .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: 3))
                 }
                 .buttonStyle(.plain)
                 .overlay(RoundedRectangle(cornerRadius: 3).stroke(sceneSelected(row) ? Theme.text : Color.clear, lineWidth: 1.5))
                 .midiLearnable(.scene(row))
                 .contextMenu { SceneMenu(row: row) }
-            }
-        }
+                .hint("Scene \(row + 1): launches every clip of this row, the master's too.")
     }
 }

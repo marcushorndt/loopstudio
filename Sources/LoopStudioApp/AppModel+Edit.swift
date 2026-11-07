@@ -173,7 +173,7 @@ extension AppModel {
     /// Marks every clip in the rectangle of slots between two slots. Columns are the session's tracks in
     /// their shown order, so a rectangle can span busses too.
     func markSlots(from a: (track: TrackID, row: Int), to b: (track: TrackID, row: Int)) {
-        let columns = orderedTracks
+        let columns = sessionColumns
         guard let ca = columns.firstIndex(where: { $0.id == a.track }), let cb = columns.firstIndex(where: { $0.id == b.track }) else { return }
         var ids = Set<ClipID>()
         for c in min(ca, cb)...max(ca, cb) {
@@ -190,7 +190,7 @@ extension AppModel {
     /// Shift and an arrow key in the Session view: the marking grows from the anchor to the new slot.
     func extendSelection(rows: Int, tracks: Int) {
         guard viewMode == .session else { moveSelection(rows: rows, tracks: tracks); return }
-        let columns = orderedTracks
+        let columns = sessionColumns
         guard !columns.isEmpty else { return }
         let anchor = slotAnchor ?? selectedTrack.map { ($0, selectedSceneRow ?? 0) } ?? (columns[0].id, 0)
         slotAnchor = anchor
@@ -222,10 +222,11 @@ extension AppModel {
 
     /// A slot dragged onto another slot. The dragged clip moves there; when it is part of the marking, the
     /// whole marking moves by the same offset, so a column of clips can go down a row together. The clips
-    /// keep their IDs, so follow actions and automation stay. A full slot in the way stops the move.
-    func moveSlots(from source: (track: TrackID, row: Int), to destination: (track: TrackID, row: Int)) {
+    /// keep their IDs, so follow actions and automation stay. With `copy` (Option held) the clips stay and
+    /// copies land, with new IDs. A full slot in the way is replaced, like in Live; undo brings it back.
+    func moveSlots(from source: (track: TrackID, row: Int), to destination: (track: TrackID, row: Int), copy: Bool = false) {
         guard source.track != destination.track || source.row != destination.row else { return }
-        let columns = orderedTracks
+        let columns = sessionColumns
         guard let cs = columns.firstIndex(where: { $0.id == source.track }), let cd = columns.firstIndex(where: { $0.id == destination.track }),
               let st = project.track(source.track), source.row < st.slots.count, let sourceSlot = st.slots[source.row] else { return }
         var moving: [(track: Track, row: Int, slot: SessionSlot)] = []
@@ -242,25 +243,28 @@ extension AppModel {
             let tc = ci + dc, tr = m.row + dr
             guard tc >= 0, tc < columns.count, tr >= 0 else { status = "The clips do not fit there"; return }
             let target = columns[tc]
-            guard target.kind != .master else { status = "The master has no slots"; return }
-            if tr < target.slots.count, let occupied = target.slots[tr], !movingIDs.contains(occupied.clip.id) {
-                status = "Slot \(tr + 1) of \(target.name) is not empty"
-                return
-            }
-            clears.append(.setSlot(track: m.track.id, index: m.row, slot: nil))
-            sets.append(.setSlot(track: target.id, index: tr, slot: m.slot))
+            guard fits(m.slot.clip, target.kind) else { status = "\(clipName(m.slot.clip)) does not fit on \(target.name)"; return }
+            var slot = m.slot
+            if copy { slot.clip = fresh(slot.clip, start: slot.clip.start) }
+            // A copy onto its own source: nothing to clear. Clearing comes first, so no clip exists twice.
+            if !copy { clears.append(.setSlot(track: m.track.id, index: m.row, slot: nil)) }
+            sets.append(.setSlot(track: target.id, index: tr, slot: slot))
         }
-        do { try tryApply(.batch(commands: clears + sets)) } catch { status = "Cannot move: \(error)"; return }
-        selectedClips = movingIDs
-        selectedClip = sourceSlot.clip.id
+        let replaced = sets.filter { if case .setSlot(let t, let i, _) = $0, let track = project.track(t), i < track.slots.count,
+                                        let old = track.slots[i], !movingIDs.contains(old.clip.id) { true } else { false } }.count
+        do { try tryApply(.batch(commands: clears + sets)) } catch { status = "Cannot \(copy ? "copy" : "move"): \(error)"; return }
+        let landed = Set(sets.compactMap { if case .setSlot(_, _, let s) = $0 { s?.clip.id } else { nil } })
+        selectedClips = landed
+        selectedClip = sets.compactMap { if case .setSlot(_, _, let s) = $0 { s?.clip.id } else { nil } }.first
         selectedTrack = destination.track
         selectedSceneRow = destination.row
         slotAnchor = destination
-        status = moving.count == 1 ? "" : "\(moving.count) clips moved"
+        let what = moving.count == 1 ? "clip" : "\(moving.count) clips"
+        status = (copy ? "Copied \(what)" : (moving.count == 1 ? "" : "Moved \(what)")) + (replaced > 0 ? " (\(replaced) replaced)" : "")
     }
 
     /// The rows the Session view shows: at least 8, and one empty row below the last slot.
-    var sessionRows: Int { max(8, (project.tracks.map(\.slots.count).max() ?? 0) + 1) }
+    var sessionRows: Int { max(8, (project.allTracks.map(\.slots.count).max() ?? 0) + 1) }
 
     /// Arrow keys. Session view moves through slots; arrangement view moves between tracks.
     /// In the Session view the master is the last column (the scene buttons), and the row under the last
@@ -271,7 +275,7 @@ extension AppModel {
             nudgeNotes(pitch: -rows, time: Int64(tracks) * noteStep, toGrid: snapNotes)
             return
         }
-        let columns = viewMode == .session ? orderedTracks + [project.master] : orderedTracks
+        let columns = viewMode == .session ? sessionColumns : orderedTracks
         guard !columns.isEmpty else { return }
         let current = selectedTrack.flatMap { id in columns.firstIndex { $0.id == id } } ?? 0
         let column = min(max(current + tracks + (viewMode == .arrangement ? rows : 0), 0), columns.count - 1)
@@ -285,8 +289,11 @@ extension AppModel {
         let row = min(max(start + rows, 0), last)
         selectedSceneRow = row
         let track = columns[column]
-        selectedClip = row < track.slots.count && track.kind != .master ? track.slots[row]?.clip.id : nil
+        selectedClip = row < track.slots.count ? track.slots[row]?.clip.id : nil
     }
+
+    /// The columns of the Session view in their shown order: the tracks, the busses, then the master.
+    var sessionColumns: [Track] { orderedTracks + [project.master] }
 
     /// The step of the arrow keys on notes: the grid of the piano roll at its zoom with snap on, a 1/128
     /// note with snap off. `otherNoteStep` is the one the switch does not point at (Command and an arrow).
@@ -530,7 +537,7 @@ extension AppModel {
         switch clip {
         case .audio: kind == .audio
         case .midi: kind == .midi
-        case .dummy: kind != .master
+        case .dummy: true
         }
     }
 
@@ -766,7 +773,7 @@ extension AppModel {
 
     func deleteScene(_ row: Int) {
         var commands: [Command] = []
-        for t in project.tracks {
+        for t in project.allTracks {
             if row < t.slots.count, t.slots[row] != nil { commands.append(.setSlot(track: t.id, index: row, slot: nil)) }
             for i in stride(from: row + 1, to: t.slots.count, by: 1) {
                 guard let slot = t.slots[i] else { continue }
@@ -780,7 +787,7 @@ extension AppModel {
 
     func duplicateScene(_ row: Int) {
         var commands = shiftCommands(from: row + 1, by: 1)
-        for t in project.tracks where row < t.slots.count {
+        for t in project.allTracks where row < t.slots.count {
             if var slot = t.slots[row] { slot.clip = fresh(slot.clip, start: slot.clip.start); commands.append(.setSlot(track: t.id, index: row + 1, slot: slot)) }
         }
         apply(.batch(commands: commands))
@@ -790,7 +797,7 @@ extension AppModel {
     /// Moves every slot from `row` downward by `by` rows (top row first, so no clip exists twice).
     private func shiftCommands(from row: Int, by: Int) -> [Command] {
         var commands: [Command] = []
-        for t in project.tracks {
+        for t in project.allTracks {
             for i in stride(from: t.slots.count - 1, through: row, by: -1) {
                 guard let slot = t.slots[i] else { continue }
                 commands.append(.setSlot(track: t.id, index: i, slot: nil))

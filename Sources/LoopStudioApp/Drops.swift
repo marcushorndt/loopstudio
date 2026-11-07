@@ -1,3 +1,4 @@
+import AppKit
 import CoreTransferable
 import LoopStudioCore
 import SwiftUI
@@ -42,7 +43,9 @@ extension AppModel {
         var used = false
         if !items.files.isEmpty { used = dropOnSlot(items.files, track: track, row: row) || used }
         if !items.devices.isEmpty { used = dropDevices(items.devices, on: track) || used }
-        for s in items.slots { moveSlots(from: s, to: (track, row)); used = true }
+        // Option held at the drop: the clips are copied, not moved.
+        let copy = NSEvent.modifierFlags.contains(.option)
+        for s in items.slots { moveSlots(from: s, to: (track, row), copy: copy); used = true }
         return used
     }
 

@@ -1281,14 +1281,14 @@ final class AppModel {
 
     func launchScene(_ row: Int) {
         guard row >= 0 else { return }
-        let ids = project.tracks.filter { row < $0.slots.count && $0.slots[row] != nil }.map(\.id)
+        let ids = project.allTracks.filter { row < $0.slots.count && $0.slots[row] != nil }.map(\.id)
         guard !ids.isEmpty else { return }
         startIfStopped()
         let now = sessionTick
         for id in ids { session.add(Launch(track: id, slot: row, tick: now), in: project) }
         // As in Live, an empty slot in the scene stops its track, on the next bar.
         let stopAt = project.barBoundary(atOrAfter: now)
-        for t in project.tracks where !ids.contains(t.id) && !t.slots.isEmpty {
+        for t in project.allTracks where !ids.contains(t.id) && !t.slots.isEmpty {
             session.add(Launch(track: t.id, slot: nil, tick: stopAt), in: project)
         }
         rebuild()
@@ -1327,7 +1327,7 @@ final class AppModel {
     func stopAllClips() {
         guard transportPlaying else { return }
         let at = project.barBoundary(atOrAfter: sessionTick)
-        for t in project.tracks where !t.slots.isEmpty { session.add(Launch(track: t.id, slot: nil, tick: at), in: project) }
+        for t in project.allTracks where !t.slots.isEmpty { session.add(Launch(track: t.id, slot: nil, tick: at), in: project) }
         rebuild()
     }
 
@@ -1373,7 +1373,7 @@ final class AppModel {
     /// Some slot of this scene row waits to launch.
     func sceneQueued(_ row: Int) -> Bool {
         let tick = sessionTick
-        return project.tracks.contains { row < $0.slots.count && slotState(track: $0, row: row, at: tick).isQueued }
+        return project.allTracks.contains { row < $0.slots.count && slotState(track: $0, row: row, at: tick).isQueued }
     }
 
     /// Ticks since the clip began its current play, or `nil` when it does not play now.
@@ -1840,7 +1840,7 @@ final class AppModel {
     }
 
     func createDummyClip(track: TrackID, row: Int) {
-        let n = project.tracks.flatMap { $0.slots.compactMap { $0?.clip } }.filter { if case .dummy = $0 { true } else { false } }.count + 1
+        let n = project.allTracks.flatMap { $0.slots.compactMap { $0?.clip } }.filter { if case .dummy = $0 { true } else { false } }.count + 1
         let clip = DummyClip(name: "Auto \(n)", length: Tick(barTicks * 2))
         apply(.setSlot(track: track, index: row, slot: SessionSlot(clip: .dummy(clip))))
         selectedClip = clip.id

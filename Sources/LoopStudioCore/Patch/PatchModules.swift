@@ -68,6 +68,8 @@ public enum PatchModules {
     static let audioOut = ModulePort("out", .audio)
     static func hz(_ name: String, _ def: Double) -> ModulePort { ModulePort(name, .audio, def: def, min: 20, max: 20_000, unit: "Hz", log: true) }
     static func ms(_ name: String, _ def: Double, max: Double = 2000) -> ModulePort { ModulePort(name, .audio, def: def, min: 0, max: max, unit: "ms") }
+    /// Where a cycle starts, as a share of the cycle: 0.25 moves the zero point a quarter cycle on.
+    static let offset = ModulePort("offset", .audio, def: 0, min: 0, max: 1)
 
     public static let all: [ModuleSpec] = [
         // I/O
@@ -82,12 +84,12 @@ public enum PatchModules {
         ModuleSpec("meter", "Meter", category: "Panel", help: "Shows the level of its input on the panel. At most four per patch.", inputs: [audioIn], display: true),
         // Generate
         ModuleSpec("osc", "Oscillator", category: "Generate", help: "A waveform at a frequency, -1 to 1.", inputs: [hz("freq", 440)], outputs: [audioOut], settings: [shapes]),
-        ModuleSpec("lfo", "LFO", category: "Generate", help: "A slow waveform at a rate in Hz, 0 to 1.",
-                   inputs: [ModulePort("rate", .audio, def: 2, min: 0.01, max: 50, unit: "Hz", log: true)], outputs: [audioOut], settings: [shapes]),
-        ModuleSpec("lfosync", "LFO (synced)", category: "Generate", help: "A slow waveform locked to the song at a note value, 0 to 1.",
-                   inputs: [ModulePort("rate", .audio, def: Double(NoteDivision.index("1/4")), unit: "note")], outputs: [audioOut], settings: [shapes]),
-        ModuleSpec("phase", "Phase", category: "Generate", help: "The position inside a note value, 0 to 1, on the song clock.",
-                   inputs: [ModulePort("note", .audio, def: Double(NoteDivision.index("1/4")), unit: "note")], outputs: [audioOut]),
+        ModuleSpec("lfo", "LFO", category: "Generate", help: "A slow waveform at a rate in Hz, 0 to 1. 'offset' moves the zero point of the cycle: 0.25 is a quarter cycle.",
+                   inputs: [ModulePort("rate", .audio, def: 2, min: 0.01, max: 50, unit: "Hz", log: true), offset], outputs: [audioOut], settings: [shapes]),
+        ModuleSpec("lfosync", "LFO (synced)", category: "Generate", help: "A slow waveform locked to the song at a note value, 0 to 1. 'offset' moves the zero point of the cycle away from the beat: 0.25 is a quarter cycle.",
+                   inputs: [ModulePort("rate", .audio, def: Double(NoteDivision.index("1/4")), unit: "note"), offset], outputs: [audioOut], settings: [shapes]),
+        ModuleSpec("phase", "Phase", category: "Generate", help: "The position inside a note value, 0 to 1, on the song clock. 'offset' moves the zero point away from the beat.",
+                   inputs: [ModulePort("note", .audio, def: Double(NoteDivision.index("1/4")), unit: "note"), offset], outputs: [audioOut]),
         ModuleSpec("noise", "Noise", category: "Generate", help: "White noise, -1 to 1.", outputs: [audioOut]),
         ModuleSpec("const", "Number", category: "Generate", help: "A fixed number.", outputs: [ModulePort("out", .control)], numbers: ["value": 1]),
         // Filter

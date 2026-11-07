@@ -668,21 +668,25 @@ public enum PatchCompiler {
                 let v = try args(fn, a, 3...3)
                 return Value(slot: emit(.mix, v[0].slot, v[1].slot, v[2].slot), unit: .plain)
             case "osc":
-                guard (1...2).contains(a.count) else { throw fail("osc takes a frequency and an optional shape") }
+                guard (1...3).contains(a.count) else { throw fail("osc takes a frequency, an optional shape and an optional offset") }
                 let f = try compile(a[0])
                 let hz = try convert(f, to: .hz, what: "osc")
-                return Value(slot: emit(.osc, hz, k: try shape(a.count > 1 ? a[1] : nil), state: state(2)), unit: .plain)
+                let k = try shape(a.count > 1 ? a[1] : nil)
+                let offset = a.count > 2 ? try compile(a[2]).slot : -1
+                return Value(slot: emit(.osc, hz, offset, k: k, state: state(2)), unit: .plain)
             case "lfo":
-                guard (1...2).contains(a.count) else { throw fail("lfo takes a rate and an optional shape") }
+                // The third argument moves the zero point of the cycle, 0…1: lfo(1/4, sine, 0.25) peaks on the beat.
+                guard (1...3).contains(a.count) else { throw fail("lfo takes a rate, an optional shape and an optional offset") }
                 let f = try compile(a[0])
                 let k = try shape(a.count > 1 ? a[1] : nil)
-                if f.unit == .note { return Value(slot: emit(.lfoSync, f.slot, k: k), unit: .plain) }
+                let offset = a.count > 2 ? try compile(a[2]).slot : -1
+                if f.unit == .note { return Value(slot: emit(.lfoSync, f.slot, offset, k: k), unit: .plain) }
                 let hz = try convert(f, to: .hz, what: "lfo")
-                return Value(slot: emit(.lfo, hz, k: k, state: state(2)), unit: .plain)
+                return Value(slot: emit(.lfo, hz, offset, k: k, state: state(2)), unit: .plain)
             case "phase":
-                let v = try args(fn, a, 1...1)
-                guard v[0].unit == .note else { throw fail("phase takes a note value, such as 1/16") }
-                return Value(slot: emit(.phase, v[0].slot), unit: .plain)
+                let v = try args(fn, a, 1...2)
+                guard v[0].unit == .note else { throw fail("phase takes a note value, such as 1/16, and an optional offset") }
+                return Value(slot: emit(.phase, v[0].slot, v.count > 1 ? v[1].slot : -1), unit: .plain)
             case "lp", "hp", "bp":
                 let v = try args(fn, a, 2...3)
                 let cut = try convert(v[1], to: .hz, what: fn)

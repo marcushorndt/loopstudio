@@ -197,3 +197,23 @@ private func run(_ source: String, _ params: [String: Double] = [:], _ input: [F
     let targets = project.automationTargets(of: project.track(track.id)!)
     #expect(targets.contains { $0.address.parameter == "rate" && $0.address.node == slot.id.rawValue })
 }
+
+/// The optional last argument of lfo and phase moves the zero point of the cycle: a quarter on, the sine
+/// peaks on the beat instead of crossing it, and the phase reads a quarter at the beat.
+@Test func anOffsetMovesTheZeroPointOfAnLFO() throws {
+    let src = """
+    patch "Peak"
+    in x
+    out y
+    y = lfo(1/4, sine, 0.25)
+    """
+    let (out, _) = try run(src, [:], [Float](repeating: 0, count: 48_000))
+    #expect(abs(out[0] - 1) < 1e-4 && abs(out[24_000] - 1) < 1e-3, "peaks on the beat")
+    #expect(abs(out[12_000]) < 1e-3, "at the bottom on the half beat")
+    let plain = try run("in x\nout y\ny = lfo(1/4, sine)", [:], [Float](repeating: 0, count: 100)).out
+    #expect(abs(plain[0] - 0.5) < 1e-4, "no offset: the cycle crosses on the beat")
+    let phase = try run("in x\nout y\ny = phase(1/4, 0.25)", [:], [Float](repeating: 0, count: 100)).out
+    #expect(abs(phase[0] - 0.25) < 1e-4)
+    let free = try run("in x\nout y\ny = lfo(2 Hz, saw, 0.5)", [:], [Float](repeating: 0, count: 100)).out
+    #expect(abs(free[0] - 0.5) < 1e-3, "a free LFO starts half way through its cycle")
+}

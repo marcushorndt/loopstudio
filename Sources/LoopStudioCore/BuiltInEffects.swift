@@ -178,8 +178,11 @@ public enum BuiltInEffects {
             EffectParam("resonance", "Resonance", 0.3, 12, 0.707),
             // The LFO moves the cutoff up and down by up to four octaves each way.
             EffectParam("lfoAmount", "LFO", 0, 1, 0),
-        ] + EffectParam.synced("lfoRate", "Rate", 0.05, 20, 1, unit: "Hz", division: "1/4"),
-        groups: [EffectGroup("Filter", ["type", "cutoff", "resonance"]), EffectGroup("LFO", ["lfoAmount", "lfoRate"])]),
+        ] + EffectParam.synced("lfoRate", "Rate", 0.05, 20, 1, unit: "Hz", division: "1/4") + [
+            // Where the cycle starts: a synced LFO at 90° peaks on the beat instead of crossing it.
+            EffectParam("lfoOffset", "Offset", 0, 360, 0, unit: "°"),
+        ],
+        groups: [EffectGroup("Filter", ["type", "cutoff", "resonance"]), EffectGroup("LFO", ["lfoAmount", "lfoRate", "lfoOffset"])]),
         EffectSpec(id: "eq3", name: "Tone EQ", params: [
             EffectParam("low", "Low", -18, 18, 0, unit: "dB"),
             EffectParam("mid", "Mid", -18, 18, 0, unit: "dB"),
@@ -242,6 +245,8 @@ public enum BuiltInEffects {
         var spec = EffectSpec(id: "livecut", name: "Live Cut", params: [
             EffectParam("proc", "Cut Proc", 0, 2, 0, choices: ["CutProc11", "WarpCut", "SQPusher"]),
             stepped("subdiv", "Subdiv", ["6", "8", "12", "16", "18", "24", "32"], def: 1),
+            // Where the cutter's bar starts, as a share of the song's bar: 0.25 moves its grid of units one beat late.
+            EffectParam("offset", "Offset", 0, 1, 0, unit: "bar"),
             stepped("seed", "Seed", (1...16).map(String.init), def: 0),
             EffectParam("fadeMs", "Fade", 0, 100, 0, unit: "ms"),
             EffectParam("mix", "Dry/Wet", 0, 1, 1),
@@ -266,7 +271,7 @@ public enum BuiltInEffects {
             EffectParam("activity", "Activity", 0, 1, 0.5),
         ])
         spec.groups = [
-            EffectGroup("Cutter", ["proc", "subdiv", "seed", "fadeMs", "mix"]),
+            EffectGroup("Cutter", ["proc", "subdiv", "offset", "seed", "fadeMs", "mix"]),
             EffectGroup("Random", ["minAmp", "maxAmp", "minPan", "maxPan", "minPitch", "maxPitch"]),
             EffectGroup("Phrase", ["minPhrase", "maxPhrase"], row: 1),
             EffectGroup("Duty", ["duty", "fillDuty"], row: 1),

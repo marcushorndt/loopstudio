@@ -157,18 +157,22 @@ public final class PatchDSP: DSPEffect, @unchecked Sendable {
                     let i = min(max(0, Int(slots[a].rounded())), divisions.count - 1)
                     slots[o] = divisions[i]; slots[o + 1] = divisions[i]
                 case .osc, .lfo:
+                    // b (optional): the offset of the cycle, 0…1. The phase itself keeps running unshifted,
+                    // so an offset that moves does not change the rate.
                     let s = Int(op.state)
                     let unipolar = op.code == .lfo
                     for ch in 0..<2 {
                         var phase = state[s + ch] + slots[a + ch] / sr
                         phase -= floorf(phase)
                         state[s + ch] = phase
+                        if b >= 0 { phase += slots[b + ch]; phase -= floorf(phase) }
                         slots[o + ch] = wave(phase, op.k, unipolar: unipolar)
                     }
                 case .lfoSync:
                     for ch in 0..<2 {
                         let q = max(slots[a + ch], 1e-6)
                         var phase = slots[PatchProgram.beatSlot * 2 + ch] / q
+                        if b >= 0 { phase += slots[b + ch] }
                         phase -= floorf(phase)
                         slots[o + ch] = wave(phase, op.k, unipolar: true)
                     }
@@ -176,6 +180,7 @@ public final class PatchDSP: DSPEffect, @unchecked Sendable {
                     for ch in 0..<2 {
                         let q = max(slots[a + ch], 1e-6)
                         var phase = slots[PatchProgram.beatSlot * 2 + ch] / q
+                        if b >= 0 { phase += slots[b + ch] }
                         phase -= floorf(phase)
                         slots[o + ch] = phase
                     }

@@ -231,13 +231,13 @@ public enum PatchGraphCompiler {
                 set(m, c.emit(.osc, try c.convert(v[0], to: .hz, what: "osc"), k: shape(m), state: c.state(2)))
             case "lfo":
                 let v = try inputs(m)
-                set(m, c.emit(.lfo, try c.convert(v[0], to: .hz, what: "lfo"), k: shape(m), state: c.state(2)))
+                set(m, c.emit(.lfo, try c.convert(v[0], to: .hz, what: "lfo"), v[1].slot, k: shape(m), state: c.state(2)))
             case "lfosync":
                 let v = try inputs(m)
-                set(m, c.emit(.lfoSync, v[0].slot, k: shape(m)))
+                set(m, c.emit(.lfoSync, v[0].slot, v[1].slot, k: shape(m)))
             case "phase":
                 let v = try inputs(m)
-                set(m, c.emit(.phase, v[0].slot))
+                set(m, c.emit(.phase, v[0].slot, v[1].slot))
             case "noise":
                 set(m, c.emit(.noise, -1, state: c.state(1)))
             case "lp", "hp", "bp":

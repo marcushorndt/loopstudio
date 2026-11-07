@@ -173,3 +173,15 @@ private let flat: [String: Double] = ["minAmp": 1, "maxAmp": 1, "minPan": 0, "ma
     #expect(out.allSatisfy { $0.isFinite && abs($0) <= 1.01 }, "bounded")
     #expect(out.contains { $0 != 0 })
 }
+
+/// The Offset knob moves the cutter's bar behind the song's downbeat. At a quarter bar the first beat still
+/// passes dry (it belongs to the bar before, which has no downbeat yet), and the cuts start one beat late.
+@Test func theOffsetMovesTheCuttersBar() {
+    let input = noise(Int(rate * 3))
+    let params = flat.merging(["proc": 0, "minPan": -1, "maxPan": 1, "minAmp": 0, "offset": 0.25]) { $1 }
+    let out = runCut(params, input)
+    #expect(Array(out[..<24_000]) == Array(input[..<24_000]), "dry for one beat")
+    #expect(Array(out[24_000...]) != Array(input[24_000...]), "cut from the moved bar on")
+    let plain = runCut(flat.merging(["proc": 0, "minPan": -1, "maxPan": 1, "minAmp": 0]) { $1 }, input)
+    #expect(Array(plain[..<96_000]) != Array(input[..<96_000]), "without an offset the first bar is cut")
+}

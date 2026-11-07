@@ -105,9 +105,9 @@ public enum PatchExamples {
       + - * / ^   > < >= <= == (0 or 1)   ( )   -x
       numbers with units: 10 ms, 2 s, 440 Hz, 2 kHz, -6 dB; note values: 1/16, 1/8., 1/4T
       beat (quarter notes from the start), bar (0..1 inside the bar), tempo (BPM), sr, pi
-      osc(hz, shape)        -1..1 oscillator; shape: sine saw square tri
-      lfo(rate, shape)      0..1; a note value as the rate locks it to the song grid
-      phase(1/16)           0..1 inside the note value
+      osc(hz, shape, offset)   -1..1 oscillator; shape: sine saw square tri; offset 0..1 moves the zero point
+      lfo(rate, shape, offset) 0..1; a note value as the rate locks it to the song grid; lfo(1/4, sine, 0.25) peaks on the beat
+      phase(1/16, offset)      0..1 inside the note value; the offset moves the zero point away from the beat
       lp(x, hz, q) hp(…) bp(…)   state-variable filter, q 0..1
       slew(x, up, down)     limits how fast x moves (times)
       follow(x, attack, release)   envelope of |x| (times)

@@ -213,7 +213,7 @@ struct Biquad {
 final class FilterDSP: DSPEffect, @unchecked Sendable {
     private var left = Biquad(), right = Biquad()
     private var type = 0, cutoff = 1_000.0, q = 0.707
-    private var lfoAmount = 0.0, lfoHz = 1.0
+    private var lfoAmount = 0.0, lfoHz = 1.0, lfoOffset = 0.0
     private var lfoQuarters: Double?
     /// The free LFO's phase, carried from grid step to grid step, so a rate change does not jump.
     private var lfoPhase = 0.0, lfoFrame = Int64.min
@@ -222,6 +222,7 @@ final class FilterDSP: DSPEffect, @unchecked Sendable {
         type = Int(value(p, "type"))
         cutoff = Double(value(p, "cutoff")); q = Double(value(p, "resonance"))
         lfoAmount = Double(value(p, "lfoAmount")); lfoHz = Double(value(p, "lfoRate"))
+        lfoOffset = Double(value(p, "lfoOffset")) / 360
         lfoQuarters = syncedQuarters(p, "lfoRate")
         followsTempo = lfoAmount > 0
         design(cutoff)
@@ -241,7 +242,9 @@ final class FilterDSP: DSPEffect, @unchecked Sendable {
             phase = lfoPhase
         }
         lfoFrame = frame
-        let lfo = sin(2 * .pi * (phase - phase.rounded(.down)))
+        // The offset moves the zero point of the cycle: at 90° the peak sits where the crossing was.
+        let shifted = phase + lfoOffset
+        let lfo = sin(2 * .pi * (shifted - shifted.rounded(.down)))
         design(min(20_000, max(20, cutoff * pow(2, 4 * lfoAmount * lfo))))
     }
 

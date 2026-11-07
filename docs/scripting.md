@@ -95,6 +95,10 @@ The rules that keep it simple and realtime-safe:
   a compile error with the two names in it.
 - **Units in literals.** `ms`, `s`, `Hz`, `dB`, `st` (semitones), `ct` (cents), note values (`1/16`, `1/8.`,
   `1/4T`), `bars`, `beats`. The compiler converts to frames and factors at the song's sample rate and tempo.
+- **The zero point of a cycle.** `osc`, `lfo` and `phase` take an optional last argument, the offset, 0 to 1 of
+  the cycle: `lfo(1/4, sine, 0.25)` peaks on the beat instead of crossing it. The same offset is an input of
+  the LFO, LFO (synced) and Phase modules of the modular editor, and the Offset knob of the Auto Filter's LFO
+  (in degrees) and of Live Cut (a share of the bar: its grid of units starts there, not on the downbeat).
 - **The song clock.** `beat`, `bar`, `tempo`, `phase(1/16)` (0 to 1 inside the note value), `on grid(1/16)
   { }` runs a block at each boundary, on its exact frame, like Live Cut's units. `random(seed: bar)` makes a
   bar repeat its choices.

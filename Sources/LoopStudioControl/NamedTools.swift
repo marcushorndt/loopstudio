@@ -433,8 +433,9 @@ public extension StandardTools {
             are seconds in the program) or param key note = 1/16 (a note value knob that follows the tempo); in x; out y; \
             delay name = 2 s; meter name; name = expression; delay.write(expression). Expressions run once per sample on stereo \
             values: + - * / ^, comparisons (0 or 1), numbers with units (10 ms, 2 s, 440 Hz, 2 kHz, -6 dB) and note values \
-            (1/16, 1/8., 1/4T), beat, bar (0..1 inside the bar), tempo, sr, pi. Functions: osc(hz, shape), lfo(rate, shape) 0..1 \
-            (a note value locks it to the song), phase(note) 0..1, lp/hp/bp(x, hz, q 0..1), slew(x, up, down), \
+            (1/16, 1/8., 1/4T), beat, bar (0..1 inside the bar), tempo, sr, pi. Functions: osc(hz, shape[, offset]), \
+            lfo(rate, shape[, offset]) 0..1 (a note value locks it to the song; the offset 0..1 moves the zero point of the \
+            cycle), phase(note[, offset]) 0..1, lp/hp/bp(x, hz, q 0..1), slew(x, up, down), \
             follow(x, attack, release), prev(name) (last frame's value: feedback), sah(x, trigger), noise(), \
             delay.read(time), tanh abs sqrt sin cos exp log floor, clip(x, lo, hi), mix(a, b, t), min max pow, gain(dB). \
             Shapes: sine saw square tri.

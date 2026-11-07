@@ -412,6 +412,8 @@ final class LiveCutDSP: DSPEffect, @unchecked Sendable {
     private var cutter = BBCutter()
     private var mix: Float = 1
     private var fade = 1
+    /// Where the cutter's bar starts, as a share of the song's bar. Its units count from there.
+    private var offset = 0.0
 
     // The player.
     private let capacity: Int
@@ -445,6 +447,7 @@ final class LiveCutDSP: DSPEffect, @unchecked Sendable {
         cutter.kind = CutProcKind(rawValue: Int(value(p, "proc").rounded())) ?? .cutProc11
         cutter.subdiv = Self.subdivisions[max(0, min(Self.subdivisions.count - 1, Int(value(p, "subdiv").rounded())))]
         cutter.seed = UInt64(Int(value(p, "seed").rounded()) + 1)
+        offset = Double(value(p, "offset"))
         fade = max(1, Int(Double(value(p, "fadeMs")) * 0.001 * sampleRate))
         mix = value(p, "mix")
         var s = cutter.shaping
@@ -474,9 +477,14 @@ final class LiveCutDSP: DSPEffect, @unchecked Sendable {
         gridFrame = Int64.min
     }
 
-    /// Units since the downbeat, at `beat`.
-    private func units(at beat: Double) -> Double {
-        (beat - barStart) / max(0.001, barBeats) * Double(cutter.subdiv)
+    /// The cutter's bar at `beat`: its number and the units since its start. The offset moves the start
+    /// behind the song's downbeat; before it, the position still belongs to the bar before.
+    private func position(at beat: Double) -> (bar: Int, units: Double) {
+        let length = max(0.001, barBeats)
+        var start = barStart + offset * length
+        var bar = Int((barStart / length).rounded(.down))
+        if beat < start { start -= length; bar -= 1 }
+        return (bar, (beat - start) / length * Double(cutter.subdiv))
     }
 
     override func step(frame: Int64, beat: Double) {
@@ -484,8 +492,7 @@ final class LiveCutDSP: DSPEffect, @unchecked Sendable {
         cutter.samplesPerUnit = quarterSeconds * sampleRate * barBeats / Double(cutter.subdiv)
         let subdiv = cutter.subdiv
         // Units are counted across bars, so a bar line is one more unit, not a jump; the bar number seeds the phrase.
-        let barIndex = Int((barStart / max(0.001, barBeats)).rounded(.down))
-        let u = units(at: beat)
+        let (barIndex, u) = position(at: beat)
         let sd = max(0, min(subdiv - 1, Int(u.rounded(.down))))
         let index = barIndex * subdiv + sd
         func place(_ i: Int) -> (bar: Int, sd: Int) {

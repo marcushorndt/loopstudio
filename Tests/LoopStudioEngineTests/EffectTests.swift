@@ -295,3 +295,16 @@ private func division(_ name: String) -> Double { Double(NoteDivision.index(name
     block(96_512, transport: true)
     #expect(fx.lastClockFrame == 96_512 + 480, "playing again: back on the song position")
 }
+
+/// The Offset knob moves the zero point of the filter's LFO: at 90° the cutoff starts at its top, at 270° at
+/// its bottom. A full turn is the same cycle again.
+@Test func theFilterLFOOffsetMovesTheZeroPoint() {
+    let input = sine(330, 24_000) + sine(3_000, 24_000)
+    let base = ["cutoff": 800, "lfoAmount": 0.8, "lfoRateSync": 1, "lfoRateDivision": division("1/4")]
+    let up = runClocked("filter", base.merging(["lfoOffset": 90]) { $1 }, input, bpm: 120, block: 256)
+    let down = runClocked("filter", base.merging(["lfoOffset": 270]) { $1 }, input, bpm: 120, block: 256)
+    // Right after the start: the cutoff is up at 90°, so the treble passes; down at 270°, so it does not.
+    #expect(peak(up[500..<2_000]) > peak(down[500..<2_000]) * 4)
+    #expect(runClocked("filter", base.merging(["lfoOffset": 360]) { $1 }, input, bpm: 120, block: 256)
+            == runClocked("filter", base, input, bpm: 120, block: 256))
+}

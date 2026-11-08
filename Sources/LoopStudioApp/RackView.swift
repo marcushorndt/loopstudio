@@ -281,13 +281,16 @@ struct MacroMappingsEditor: View {
                         Text(rangeText(m, target)).font(.system(size: 9, design: .monospaced)).foregroundStyle(Theme.dim)
                     }
                     .frame(width: 170, alignment: .leading)
-                    MiniKnob(title: "Min", position: m.min, display: format(target, m.min)) { p in
+                    MiniKnob(title: "Min", position: m.min, display: format(target, m.min), unit: target?.unit ?? "%",
+                             parse: target.map { t in { parse(t, $0) } }) { p in
                         var c = m; c.min = p; model.setMacroMapping(c, rack: device.id, on: track.id)
                     } onReset: { var c = m; c.min = 0; model.setMacroMapping(c, rack: device.id, on: track.id) }
-                    MiniKnob(title: "Max", position: m.max, display: format(target, m.max)) { p in
+                    MiniKnob(title: "Max", position: m.max, display: format(target, m.max), unit: target?.unit ?? "%",
+                             parse: target.map { t in { parse(t, $0) } }) { p in
                         var c = m; c.max = p; model.setMacroMapping(c, rack: device.id, on: track.id)
                     } onReset: { var c = m; c.max = 1; model.setMacroMapping(c, rack: device.id, on: track.id) }
-                    MiniKnob(title: "Curve", position: (m.curve + 1) / 2, display: String(format: "%+.2f", m.curve)) { p in
+                    MiniKnob(title: "Curve", position: (m.curve + 1) / 2, display: String(format: "%+.2f", m.curve),
+                             parse: { KnobEntry.number(from: $0).map { ($0 + 1) / 2 } }) { p in
                         var c = m; c.curve = p * 2 - 1; model.setMacroMapping(c, rack: device.id, on: track.id)
                     } onReset: { var c = m; c.curve = 0; model.setMacroMapping(c, rack: device.id, on: track.id) }
                     Button { model.apply(.removeMacroMapping(track: track.id, rack: device.id, mapping: m.id)) } label: {
@@ -305,6 +308,15 @@ struct MacroMappingsEditor: View {
         "\(format(target, m.min)) → \(format(target, m.max))" + (m.max < m.min ? " (inverted)" : "")
     }
 
+    /// A typed value in the target's own units, or a choice name, as a position (0...1).
+    private func parse(_ target: AutomationTarget, _ text: String) -> Double? {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        if !target.choices.isEmpty, let i = target.choices.firstIndex(where: { $0.caseInsensitiveCompare(t) == .orderedSame }) {
+            return target.position(Double(i))
+        }
+        return KnobEntry.number(from: t).map { target.position(min(max($0, target.min), target.max)) }
+    }
+
     /// A position (0...1) in the target's own units.
     private func format(_ target: AutomationTarget?, _ position: Double) -> String {
         guard let target else { return String(format: "%.0f %%", position * 100) }
@@ -316,32 +328,47 @@ struct MacroMappingsEditor: View {
     }
 }
 
-/// A small knob over a 0...1 position with its own display text. Drag up or down; double-click resets.
+/// A small knob over a 0...1 position with its own display text. Drag up or down; double-click opens a
+/// number entry, Option-double-click resets. `parse` turns a typed text into a position; without it the
+/// knob reads a percentage.
 struct MiniKnob: View {
     let title: String
     let position: Double
     let display: String
+    var unit = ""
+    var parse: ((String) -> Double?)? = nil
     let onChange: (Double) -> Void
     let onReset: () -> Void
     @State private var start: Double?
+    @State private var entering = false
+    @State private var entry = ""
 
     var body: some View {
         VStack(spacing: 2) {
             KnobDial(position: min(max(position, 0), 1), tint: Theme.macroMap, lineWidth: 3)
                 .frame(width: 32, height: 32)
                 .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0)
+                .gesture(DragGesture(minimumDistance: KnobEntry.dragStart)
                     .onChanged { g in
                         if start == nil { start = position }
                         onChange(min(max((start ?? 0) - Double(g.translation.height) / 160, 0), 1))
                     }
                     .onEnded { _ in start = nil })
-                .simultaneousGesture(TapGesture(count: 2).onEnded { onReset() })
+                .simultaneousGesture(TapGesture(count: 2).onEnded {
+                    if NSEvent.modifierFlags.contains(.option) { onReset(); return }
+                    entry = KnobEntry.digits(of: display); entering = true
+                })
+                .popover(isPresented: $entering, arrowEdge: .bottom) {
+                    KnobEntry(title: title, unit: parse == nil ? "%" : unit, text: $entry, shown: $entering) {
+                        let p = parse?(entry) ?? KnobEntry.number(from: entry).map { $0 / 100 }
+                        if let p, p.isFinite { onChange(min(max(p, 0), 1)) }
+                    }
+                }
             Text(title).font(.system(size: 9)).foregroundStyle(Theme.dim)
             Text(display).font(.system(size: 9, design: .monospaced)).lineLimit(1)
         }
         .frame(width: 60)
-        .hint("\(title): \(display). Drag up or down; double-click resets.")
+        .hint("\(title): \(display). Drag up or down; double-click to type a value; Option-double-click resets.")
     }
 }
 

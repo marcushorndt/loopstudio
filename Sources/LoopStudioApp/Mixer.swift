@@ -335,6 +335,8 @@ struct SendKnob: View {
     let track: Track
     let ret: Track
     @State private var start: Double?
+    @State private var entering = false
+    @State private var entry = ""
 
     /// -48 dB to 0 dB over the knob; the bottom is off.
     private var position: Double { (model.sendLevel(track, to: ret.id) + 48) / 48 }
@@ -351,13 +353,23 @@ struct SendKnob: View {
             KnobDial(position: max(0, min(1, position)), tint: Theme.track(ret.colorIndex), lineWidth: 3)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0)
+                .gesture(DragGesture(minimumDistance: KnobEntry.dragStart)
                     .onChanged { g in
                         if start == nil { start = max(0, min(1, position)) }
                         set((start ?? 0) - Double(g.translation.height) / 140)
                     }
                     .onEnded { _ in start = nil })
-                .simultaneousGesture(TapGesture(count: 2).onEnded { set(0) })
+                .simultaneousGesture(TapGesture(count: 2).onEnded {
+                    if NSEvent.modifierFlags.contains(.option) { set(0); return }
+                    entry = db <= -47.5 ? "-inf" : String(format: "%.1f", db); entering = true
+                })
+                .popover(isPresented: $entering, arrowEdge: .bottom) {
+                    KnobEntry(title: "Send to \(ret.name)", unit: "dB", text: $entry, shown: $entering) {
+                        // Typed in dB: anything under the knob's floor turns the send off.
+                        guard let typed = KnobEntry.number(from: entry) else { return }
+                        set(typed <= -48 ? 0 : (min(typed, 0) + 48) / 48)
+                    }
+                }
                 .midiLearnable(.send(track.id, ret.id))
             Text(start != nil ? (db <= -47.5 ? "-inf" : String(format: "%.0f", db)) : String(ret.name.prefix(1)))
                 .font(.system(size: 9, weight: .bold, design: start != nil ? .monospaced : .default))
@@ -365,7 +377,7 @@ struct SendKnob: View {
                 .lineLimit(1)
         }
         .frame(width: 36)
-        .hint("Send to \(ret.name): \(db <= -47.5 ? "off" : String(format: "%.1f dB", db))")
+        .hint("Send to \(ret.name): \(db <= -47.5 ? "off" : String(format: "%.1f dB", db)). Drag up or down; double-click to type a level; Option-double-click turns it off.")
         .contextMenu {
             Button("Send Off") { set(0) }
             Button("Send at 0 dB") { set(1) }

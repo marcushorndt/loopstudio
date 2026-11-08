@@ -36,21 +36,17 @@ struct Knob: View {
     /// A double-click opens the number entry; with Option held it resets the knob instead.
     private func doubleClick() {
         if NSEvent.modifierFlags.contains(.option) { onReset(); return }
-        entry = param.choices.isEmpty ? String(param.format(value).split(separator: " ").first ?? "") : param.format(value)
+        entry = param.choices.isEmpty ? KnobEntry.digits(of: param.format(value)) : param.format(value)
         entering = true
     }
 
     /// Reads the typed text: a number, with or without the unit, a comma as the decimal point, or a choice name.
     private func submitEntry() {
-        defer { entering = false }
         let text = entry.trimmingCharacters(in: .whitespaces)
         if !param.choices.isEmpty, let i = param.choices.firstIndex(where: { $0.caseInsensitiveCompare(text) == .orderedSame }) {
             onChange(Double(i)); return
         }
-        var digits = text.replacingOccurrences(of: ",", with: ".")
-        if !param.unit.isEmpty, digits.hasSuffix(param.unit) { digits = String(digits.dropLast(param.unit.count)) }
-        digits = digits.filter { "0123456789.-".contains($0) }
-        guard let number = Double(digits) else { return }
+        guard let number = KnobEntry.number(from: text) else { return }
         onChange(param.clamp(number))
     }
 
@@ -63,7 +59,7 @@ struct Knob: View {
                 KnobDial(position: param.position(value), tint: tint)
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0)
+                .gesture(DragGesture(minimumDistance: KnobEntry.dragStart)
                     .onChanged { g in
                         if startPosition == nil { startPosition = param.position(value) }
                         onChange(param.value(atPosition: (startPosition ?? 0) - Double(g.translation.height) / 160))
@@ -73,14 +69,7 @@ struct Knob: View {
                 // The tempo switch sits in the gap of the arc, at the bottom of the dial: every knob has that room.
                 .overlay(alignment: .bottom) { if let sync { SyncToggle(sync: sync, tint: tint).offset(y: 3) } }
                 .popover(isPresented: $entering, arrowEdge: .bottom) {
-                    HStack(spacing: 4) {
-                        TextField(param.name, text: $entry)
-                            .textFieldStyle(.roundedBorder).frame(width: 72)
-                            .font(.system(size: 11, design: .monospaced))
-                            .onSubmit { submitEntry() }
-                        if !param.unit.isEmpty { Text(param.unit).font(.system(size: 10)).foregroundStyle(Theme.dim) }
-                    }
-                    .padding(8)
+                    KnobEntry(title: param.name, unit: param.choices.isEmpty ? param.unit : "", text: $entry, shown: $entering, submit: submitEntry)
                 }
             } else {
                 Menu(param.format(value)) {
@@ -127,6 +116,48 @@ struct Knob: View {
             if let sync { Button(sync.synced ? "Free Time (\(sync.unit))" : "Follow the Tempo", action: sync.toggle) }
             Button("Reset to Default", action: onReset)
         }
+    }
+}
+
+/// The number entry under a knob: a text field that Enter submits and Escape closes. The knob views share
+/// its parsing, so every knob reads a typed value the same way.
+struct KnobEntry: View {
+    let title: String
+    let unit: String
+    @Binding var text: String
+    @Binding var shown: Bool
+    let submit: () -> Void
+    @FocusState private var focused: Bool
+
+    /// A double-click is two clicks with a little hand movement between them. A drag starts only after this
+    /// much movement, so the clicks do not nudge the knob before the entry opens.
+    static let dragStart: CGFloat = 2
+
+    var body: some View {
+        HStack(spacing: 4) {
+            TextField(title, text: $text)
+                .textFieldStyle(.roundedBorder).frame(width: 72)
+                .font(.system(size: 11, design: .monospaced))
+                .focused($focused)
+                .onSubmit { submit(); shown = false }
+                .onExitCommand { shown = false }
+            if !unit.isEmpty { Text(unit).font(.system(size: 10)).foregroundStyle(Theme.dim) }
+        }
+        .padding(8)
+        .onAppear { focused = true }
+    }
+
+    /// The number in a formatted value, without its unit: "12.5 ms" gives "12.5".
+    static func digits(of formatted: String) -> String {
+        String(formatted.split(separator: " ").first ?? "")
+    }
+
+    /// Reads a typed number: a comma works as the decimal point, a unit after the number is ignored.
+    static func number(from text: String) -> Double? {
+        var digits = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+        if digits.lowercased().hasPrefix("-inf") { return -.infinity }
+        digits = String(digits.prefix { "0123456789.-+".contains($0) })
+        return Double(digits)
     }
 }
 

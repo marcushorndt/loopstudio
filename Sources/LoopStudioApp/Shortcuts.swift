@@ -227,14 +227,35 @@ extension AppAction {
     @ViewBuilder
     func button(_ model: AppModel, title custom: String? = nil, run: (() -> Void)? = nil) -> some View {
         let label = custom ?? model.title(of: self)
-        let enabled = run != nil || model.isEnabled(self)
+        // A text edit stays enabled: with the cursor in a text field its key goes to the field, whatever
+        // the selection on the screen is.
+        let enabled = run != nil || textSelector != nil || model.isEnabled(self)
+        let act = { if let run { run() } else if !self.forwardToText() { model.perform(self) } }
         if let b = binding {
-            Button(label) { if let run { run() } else { model.perform(self) } }
+            Button(label, action: act)
                 .keyboardShortcut(b.key, modifiers: b.modifiers)
                 .disabled(!enabled)
         } else {
-            Button(label) { if let run { run() } else { model.perform(self) } }.disabled(!enabled)
+            Button(label, action: act).disabled(!enabled)
         }
+    }
+
+    /// The field editor's own action for an edit that a text field also knows.
+    private var textSelector: Selector? {
+        switch self {
+        case .cut: #selector(NSText.cut(_:))
+        case .copy: #selector(NSText.copy(_:))
+        case .paste: #selector(NSText.paste(_:))
+        case .selectAll: #selector(NSText.selectAll(_:))
+        case .deleteSelection: #selector(NSText.deleteBackward(_:))
+        default: nil
+        }
+    }
+
+    /// With the cursor in a text field, the edit goes to that field. Returns true when it did.
+    private func forwardToText() -> Bool {
+        guard let selector = textSelector, let window = NSApp.keyWindow, window.firstResponder is NSText else { return false }
+        return NSApp.sendAction(selector, to: window.firstResponder, from: nil)
     }
 }
 

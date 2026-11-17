@@ -77,6 +77,7 @@ final class AssistantModel {
     @ObservationIgnored private var decisions: [String: CheckedContinuation<Bool, Never>] = [:]
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var pendingSerial = 0
+    @ObservationIgnored private var firstEventSeen = false
 
     init(app: AppModel) { self.app = app }
 
@@ -127,12 +128,23 @@ final class AssistantModel {
                 }
             }
         }
+        // A firewall (Little Snitch) holds a new connection until the person answers its alert. The request
+        // then neither fails nor answers, so the pane says what is going on after a while.
+        let turnSerial = pendingSerial + 1
+        pendingSerial = turnSerial
+        firstEventSeen = false
+        let providerName = provider.name
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard let self, self.running, !self.firstEventSeen, self.pendingSerial == turnSerial else { return }
+            self.rows.append(.notice(id: UUID().uuidString, text: "No answer from \(providerName) after 20 seconds. A firewall such as Little Snitch may hold the connection: allow LoopStudio to reach \(providerName), or check the network."))
+        }
         task = Task { [weak self] in
             let runner = Task {
                 await engine.run(user: text, context: context, askBeforeChanges: ask, gate: gate) { continuation.yield($0) }
                 continuation.finish()
             }
-            for await event in stream { self?.handle(event) }
+            for await event in stream { self?.firstEventSeen = true; self?.handle(event) }
             _ = await runner.value
             guard let self else { return }
             self.lastTurnUndoable = self.app.endUndoGroup()

@@ -15,6 +15,7 @@ func usage() -> Never {
       loopstudio devices
       loopstudio midi
       loopstudio mcp [--project <project.loopstudio>] [--files | --live]
+      loopstudio assistant-check [--model <id>] [<question>]   key from OPENAI_API_KEY or ANTHROPIC_API_KEY
     """)
     exit(2)
 }
@@ -67,6 +68,42 @@ case "mcp":
         catch { FileHandle.standardError.write(Data("cannot open project: \(error)\n".utf8)); exit(1) }
     }
     await LoopStudioServer.make(session: session).serveStandardIO()
+case "assistant-check":
+    // One turn against the real provider, with the same engine and tools as the app, on an empty project.
+    // Shows what the app would show: text, tool calls, notices, and the stop reason.
+    let model: String = {
+        if let i = args.firstIndex(of: "--model"), i + 1 < args.count { return args[i + 1] }
+        return ModelProvider.openai.defaultModel
+    }()
+    let provider = ModelProvider.of(model: model)
+    let env = ProcessInfo.processInfo.environment
+    guard let key = env[provider == .openai ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"], !key.isEmpty else {
+        FileHandle.standardError.write(Data("set \(provider == .openai ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY") for model \(model)\n".utf8))
+        exit(1)
+    }
+    let question = args.dropFirst().filter { !$0.hasPrefix("--") && $0 != model }.joined(separator: " ")
+    let text = question.isEmpty ? "How many tracks does the project have? Answer in one sentence." : question
+    let trace = env["LOOPSTUDIO_TRACE"] != nil
+    func note(_ s: String) { if trace { FileHandle.standardError.write(Data("[trace] \(s)\n".utf8)) } }
+    note("tools")
+    let registry = StandardTools.registry(session: ProjectSession())
+    note("\(registry.tools.count) tools, engine")
+    let engine = AssistantEngine(transport: provider.transport(apiKey: key), registry: registry, config: AssistantConfig(model: model))
+    print("\(provider.name) \(model): \"\(text)\"")
+    fflush(stdout)
+    note("run")
+    await engine.run(user: text) { event in
+        switch event {
+        case .text(let t): print(t, terminator: ""); fflush(stdout)
+        case .progress(let t): FileHandle.standardError.write(Data(t.utf8))
+        case .toolCall(_, let name, let input): print("\n[tool \(name) \(input.text)]")
+        case .toolResult(_, let name, let result, let isError, _): print("[\(name) \(isError ? "error" : "ok"): \(result.text.prefix(200))]")
+        case .toolSkipped(_, let name): print("[\(name) skipped]")
+        case .notice(let n): print("\n[notice] \(n)")
+        case .usage(let u, _): print("\n[usage] in \(u.input) cached \(u.cacheRead) out \(u.output)")
+        case .finished(let reason): print("\n[finished: \(reason)]")
+        }
+    }
 case "info":
     guard args.count > 1 else { usage() }
     do {

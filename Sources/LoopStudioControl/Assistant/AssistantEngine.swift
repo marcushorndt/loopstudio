@@ -104,7 +104,11 @@ public actor AssistantEngine {
                 reason = "error"
                 break
             }
-            if answer.blocks.isEmpty, answer.stopReason == nil { reason = "error"; break }
+            if answer.blocks.isEmpty, answer.stopReason == nil {
+                events(.notice("The model sent an empty answer (model \(config.model)). Check the model id in Settings › Assistant."))
+                reason = "error"
+                break
+            }
             messages.append(.object(["role": .string("assistant"), "content": .array(answer.blocks)]))
             finalText = answer.text
             reason = answer.stopReason ?? "end_turn"

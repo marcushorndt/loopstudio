@@ -1,4 +1,5 @@
 import LoopStudioCore
+import LoopStudioEngine
 import SwiftUI
 
 /// A rotary knob. Drag up or down to change it, double-click to reset.
@@ -27,16 +28,20 @@ struct Knob: View {
     /// Automation of this knob: nil hides the menu entries (a knob with no automation target).
     var automation: KnobAutomation? = nil
     var sync: KnobSync? = nil
+    /// The text under the knob, in place of `param.format`: a hosted plugin gives its own strings.
+    var format: ((Double) -> String)? = nil
     @State private var startPosition: Double?
     @State private var entering = false
     @State private var entry = ""
 
     private var rotary: Bool { param.choices.isEmpty || param.rotary }
 
+    private func shown(_ v: Double) -> String { format?(v) ?? param.format(v) }
+
     /// A double-click opens the number entry; with Option held it resets the knob instead.
     private func doubleClick() {
         if NSEvent.modifierFlags.contains(.option) { onReset(); return }
-        entry = param.choices.isEmpty ? KnobEntry.digits(of: param.format(value)) : param.format(value)
+        entry = param.choices.isEmpty ? KnobEntry.digits(of: shown(value)) : shown(value)
         entering = true
     }
 
@@ -72,19 +77,19 @@ struct Knob: View {
                     KnobEntry(title: param.name, unit: param.choices.isEmpty ? param.unit : "", text: $entry, shown: $entering, submit: submitEntry)
                 }
             } else {
-                Menu(param.format(value)) {
+                Menu(shown(value)) {
                     ForEach(Array(param.choices.enumerated()), id: \.offset) { i, name in Button(name) { onChange(Double(i)) } }
                 }
                 .menuStyle(.borderlessButton).frame(width: 74, height: 44).font(.system(size: 11))
             }
             Text(sync == nil ? param.name : param.name.replacingOccurrences(of: " Note", with: ""))
                 .font(.system(size: 10)).foregroundStyle(Theme.dim).lineLimit(1)
-            if rotary { Text(param.format(value)).font(.system(size: 10, design: .monospaced)) }
+            if rotary { Text(shown(value)).font(.system(size: 10, design: .monospaced)).lineLimit(1) }
         }
         // One element per knob for VoiceOver: its name, its value, and up and down with the arrow keys.
         .accessibilityElement(children: param.isSwitch || rotary ? .ignore : .contain)
         .accessibilityLabel(param.name)
-        .accessibilityValue(param.isSwitch ? (value >= 0.5 ? "On" : "Off") : param.format(value))
+        .accessibilityValue(param.isSwitch ? (value >= 0.5 ? "On" : "Off") : shown(value))
         .accessibilityAddTraits(param.isSwitch ? .isButton : [])
         .accessibilityAction { if param.isSwitch { onChange(value >= 0.5 ? 0 : 1) } }
         .accessibilityAdjustableAction { direction in
@@ -96,7 +101,7 @@ struct Knob: View {
         }
         .frame(width: 66)
         .hint(param.isSwitch ? "\(param.name): \(value >= 0.5 ? "On" : "Off"). Click to switch."
-              : "\(param.name): \(param.format(value)). Drag up or down; double-click to type a value; Option-double-click resets. Right-click for automation.")
+              : "\(param.name): \(shown(value)). Drag up or down; double-click to type a value; Option-double-click resets. Right-click for automation.")
         .overlay(alignment: .topTrailing) {
             if automation?.hasCurve == true {
                 Circle().fill(Theme.track(0)).frame(width: 6, height: 6).padding(4).hint("Automated")
@@ -366,6 +371,8 @@ struct DeviceCard: View {
     /// Where a drag over the card would land: -1 left of it, 1 right of it, 0 nothing hovers.
     @State private var dropSide = 0
     @State private var width: CGFloat = 200
+    /// The page of knobs a hosted plugin with a flat parameter list shows (16 per page).
+    @State private var pluginPage = 0
 
     /// The string the card drags: the chain and the card drop targets move the device by it.
     private var dragItem: String { "device:\(device.id.rawValue.uuidString)" }
@@ -386,21 +393,52 @@ struct DeviceCard: View {
             }
     }
 
+    /// The body of a hosted plugin: its parameters as knobs once it is loaded.
     @ViewBuilder
     private var pluginBody: some View {
         let _ = model.pluginRevision
-        VStack(alignment: .leading, spacing: 6) {
-            if let unit = model.host.units[device.id] {
-                Text(unit.isInstrument ? "Instrument" : "Audio Unit effect").font(.caption).foregroundStyle(Theme.dim)
-                Button("Open Plugin Window") { PluginWindow.show(unit, title: device.name) }.controlSize(.small)
-            } else if let failure = model.host.failures[device.id] {
+        if let unit = model.host.units[device.id] {
+            AudioUnitKnobs(track: track, device: device, unit: unit, page: $pluginPage)
+        } else if let failure = model.host.failures[device.id] {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Could not load").font(.caption).foregroundStyle(.red)
                 Text(failure).font(.system(size: 9)).foregroundStyle(Theme.dim).lineLimit(3).frame(width: 150, alignment: .leading)
-            } else {
-                HStack { ProgressView().controlSize(.small); Text("Loading…").font(.caption).foregroundStyle(Theme.dim) }
             }
+            .frame(width: 170, alignment: .topLeading)
+        } else {
+            HStack { ProgressView().controlSize(.small); Text("Loading…").font(.caption).foregroundStyle(Theme.dim) }
+                .frame(width: 170, alignment: .topLeading)
         }
-        .frame(width: 170, alignment: .topLeading)
+    }
+
+    /// The header items of a hosted plugin: the kind, the page switch of a flat parameter list, and the
+    /// button that opens the plugin's own window.
+    @ViewBuilder
+    private var pluginHeader: some View {
+        let _ = model.pluginRevision
+        if let unit = model.host.units[device.id] {
+            Text(unit.isInstrument ? "Instrument" : "AU effect").font(.system(size: 9)).foregroundStyle(Theme.dim).lineLimit(1)
+            let pages = AudioUnitKnobs.pageCount(unit)
+            if pages > 1 {
+                HStack(spacing: 0) {
+                    Button { pluginPage = (pluginPage + pages - 1) % pages } label: {
+                        Image(systemName: "chevron.left").font(.system(size: 8, weight: .semibold)).frame(width: 14, height: 18).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).hint("Previous page of knobs")
+                    Text("\(min(pluginPage, pages - 1) + 1)/\(pages)").font(.system(size: 9, design: .monospaced)).foregroundStyle(Theme.dim)
+                    Button { pluginPage = (pluginPage + 1) % pages } label: {
+                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold)).frame(width: 14, height: 18).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).hint("Next page of knobs")
+                }
+                .foregroundStyle(Theme.dim)
+            }
+            Button { PluginWindow.show(unit, title: device.name) } label: {
+                Image(systemName: "macwindow").font(.system(size: 10)).foregroundStyle(Theme.dim)
+                    .frame(width: 18, height: 20).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).hint("Open the plugin's own window.")
+        }
     }
 
     private var folded: Bool { model.foldedDevices.contains(device.id) }
@@ -475,6 +513,7 @@ struct DeviceCard: View {
                 .hint("\(device.name). Drag the title to move the device. Double-click folds it.")
                 if let spec, spec.sidechain { sidechainMenu }
                 if let spec, spec.isDynamics { GainReductionMeter(device: device, bands: spec.id == "multiband" ? 3 : 1) }
+                if device.format == "audiounit" { pluginHeader }
                 // A Patch device: the pen opens its text.
                 if device.identifier == "patch", device.format == "builtin" {
                     Button { PatchEditorWindow.show(model: model, track: track.id, device: device.id) } label: {
@@ -583,6 +622,120 @@ struct DeviceCard: View {
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .hint("Sidechain: the signal the detector listens to. Own input, or another track.")
+    }
+}
+
+/// The parameters of a hosted plugin as knobs, the same `Knob` the built-in devices use: double-click entry,
+/// Option-double-click reset, automation menu, macro and MIDI map. A tree with groups shows one row per
+/// group, each foldable to its title; a flat tree shows pages of 16, two rows of eight, switched from the
+/// card header. A knob writes the parameter itself (`AudioUnitEffect.setParameter`); the values are read
+/// again when a plugin parameter moves elsewhere and, while the transport plays, ten times a second, so
+/// automation shows on the knobs.
+struct AudioUnitKnobs: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+    let device: DeviceSlot
+    let unit: AudioUnitEffect
+    @Binding var page: Int
+
+    static let perRow = 8
+    static let perPage = 16
+
+    /// Pages of a flat list; 1 for a grouped tree, which scrolls instead.
+    static func pageCount(_ unit: AudioUnitEffect) -> Int {
+        let groups = unit.knobGroups()
+        guard groups.count == 1, groups[0].name.isEmpty else { return 1 }
+        return max(1, (groups[0].knobs.count + perPage - 1) / perPage)
+    }
+
+    var body: some View {
+        let groups = unit.knobGroups()
+        let flat = groups.count == 1 && groups[0].name.isEmpty
+        let _ = model.pluginParamRevision
+        TimelineView(.animation(minimumInterval: 0.1, paused: !model.transportPlaying)) { _ in
+            if groups.isEmpty {
+                Text("No parameters.").font(.caption).foregroundStyle(Theme.dim).frame(width: 150, alignment: .topLeading)
+            } else if flat {
+                flatPage(groups[0].knobs)
+            } else {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: DeviceLayout.groupGap) {
+                        ForEach(groups, id: \.name) { group in section(group) }
+                    }
+                }
+                .frame(height: DeviceLayout.bodyHeight)
+            }
+        }
+    }
+
+    /// One page of a flat list: two rows of eight.
+    private func flatPage(_ knobs: [AUKnob]) -> some View {
+        let pages = max(1, (knobs.count + Self.perPage - 1) / Self.perPage)
+        let p = min(max(page, 0), pages - 1)
+        let shown = Array(knobs[(p * Self.perPage)..<min(knobs.count, (p + 1) * Self.perPage)])
+        return VStack(alignment: .leading, spacing: DeviceLayout.groupGap) {
+            ForEach(Array(shown.chunked(Self.perRow).enumerated()), id: \.offset) { row in
+                KnobSection(title: row.offset == 0 ? (pages > 1 ? "\(device.name) \(p + 1)/\(pages)" : device.name) : " ") {
+                    ForEach(row.element, id: \.address) { knob($0) }
+                }
+            }
+        }
+    }
+
+    /// A group of the tree: its title with a fold chevron, then its knobs in rows of eight.
+    private func section(_ group: AUKnobGroup) -> some View {
+        let key = "\(device.id.rawValue.uuidString)|\(group.name)"
+        let folded = model.foldedPluginGroups.contains(key)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                if folded { model.foldedPluginGroups.remove(key) } else { model.foldedPluginGroups.insert(key) }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: folded ? "chevron.right" : "chevron.down").font(.system(size: 7, weight: .semibold))
+                    Text(group.name.uppercased()).font(.system(size: 8.5, weight: .semibold)).tracking(0.8).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Theme.dim).padding(.leading, 6).padding(.top, 3).padding(.bottom, folded ? 3 : 0)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .hint(folded ? "\(group.name): folded. Click to show its knobs." : "\(group.name). Click to fold.")
+            if !folded {
+                ForEach(Array(group.knobs.chunked(Self.perRow).enumerated()), id: \.offset) { row in
+                    HStack(alignment: .top, spacing: 0) { ForEach(row.element, id: \.address) { knob($0) } }
+                        .padding(.horizontal, 2).padding(.bottom, 2)
+                }
+            }
+        }
+        .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line.opacity(0.7), lineWidth: 1))
+    }
+
+    private func knob(_ k: AUKnob) -> some View {
+        let param = EffectParam(k.key, k.name, k.min, k.max, k.def, unit: k.unit, choices: k.choices, log: k.logarithmic)
+        let address = ParameterAddress(node: device.id.rawValue, parameter: k.key)
+        let driven = model.macroDriving(address, on: track)
+        let value = driven?.value ?? unit.parameterValue(k.address) ?? k.def
+        return Knob(param: param, value: value, tint: Theme.accent,
+                    onChange: { model.setDeviceParam(track.id, device.id, k.key, param.clamp($0)) },
+                    onReset: { model.setDeviceParam(track.id, device.id, k.key, nil) },
+                    automation: KnobAutomation(
+                        hasCurve: track.automation.contains { $0.target == address && !$0.points.isEmpty },
+                        laneShown: model.isLaneShown(track, address),
+                        toggleLane: { model.toggleLaneAndReveal(track, address) },
+                        clear: { model.apply(.setAutomation(track: track.id, target: address, points: [])) }),
+                    format: k.choices.isEmpty ? { unit.displayString(k.address, $0) ?? param.format($0) } : nil)
+            .allowsHitTesting(driven == nil)
+            .overlay(alignment: .topTrailing) { if let driven { MacroBadge(track: track, address: address, driving: driven) } }
+            .midiLearnable(.deviceParam(track.id, device.id, k.key))
+            .macroMappable(address, track: track)
+    }
+}
+
+private extension Array {
+    /// The array in pieces of `size`; the last piece may be shorter.
+    func chunked(_ size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }
     }
 }
 

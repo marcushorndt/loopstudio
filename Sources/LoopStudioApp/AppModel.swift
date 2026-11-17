@@ -363,6 +363,11 @@ final class AppModel {
     }
     /// Bumped when a plugin finished loading, so the device cards refresh.
     private(set) var pluginRevision = 0
+    /// Goes up when a plugin parameter moved outside the device panel (the plugin's window, a preset, a MIDI
+    /// mapping), so the panel's knobs read their values again.
+    private(set) var pluginParamRevision = 0
+    /// Knob groups of plugin cards that are folded to their title: "<device>|<group>". View state, not saved.
+    var foldedPluginGroups: Set<String> = []
     /// The MIDI sources online now. Refreshed when a device is plugged in or out.
     private(set) var midiDevices: [MIDIEndpointInfo] = []
     var midiSources: Int { midiDevices.count }
@@ -1570,8 +1575,19 @@ final class AppModel {
         Task { @MainActor in
             if await host.sync(project: project) {
                 recordPluginParams()
+                watchPluginParameters()
                 pluginRevision += 1
                 rebuild()
+            }
+        }
+    }
+
+    /// Every loaded plugin reports a parameter moved by its own window or a preset; the device panel's
+    /// knobs then read again. Setting the same closure twice is harmless.
+    private func watchPluginParameters() {
+        for unit in host.units.values where unit.parameterChanged == nil {
+            unit.parameterChanged = { [weak self] _, _ in
+                Task { @MainActor in self?.pluginParamRevision += 1 }
             }
         }
     }
@@ -1872,6 +1888,14 @@ final class AppModel {
     }
 
     func setDeviceParam(_ track: TrackID, _ device: DeviceID, _ key: String, _ value: Double?) {
+        // A plugin parameter is written into the plugin itself, as its own window does: the plugin state
+        // carries it, so there is no command and no undo step. A reset goes back to the value at load.
+        if key.hasPrefix("au."), let unit = host.units[device] {
+            let loaded = project.track(track)?.device(device)?.pluginParams?.first { $0.key == key }?.def
+            if let v = value ?? loaded { unit.setParameter(key: key, v) }
+            pluginParamRevision += 1
+            return
+        }
         apply(.setDeviceParam(track: track, device: device, key: key, value: value), key: "dev\(device)\(key)")
     }
 

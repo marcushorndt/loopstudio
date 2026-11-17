@@ -273,7 +273,7 @@ extension AppModel {
         case .send(let id, let ret): return "\(name(id)) send to \(name(ret))"
         case .deviceParam(let id, let device, let key):
             let d = project.track(id)?.device(device)
-            var p = d.flatMap { $0.spec?.params.first { $0.key == key }?.name } ?? key
+            var p = d.flatMap { $0.spec?.params.first { $0.key == key }?.name ?? $0.pluginParams?.first { $0.key == key }?.name } ?? key
             if let rack = d?.rack, key.hasPrefix("macro"), let n = Int(key.dropFirst(5)) { p = rack.macroName(n - 1) }
             return "\(d?.name ?? "device") \(p) on \(name(id))"
         case .deviceOn(let id, let device): return "\(project.track(id)?.device(device)?.name ?? "device") on/off on \(name(id))"

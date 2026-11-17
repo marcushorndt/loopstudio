@@ -6,6 +6,30 @@ public func fourCC(_ s: String) -> FourCharCode {
     s.utf8.prefix(4).reduce(0) { ($0 << 8) | FourCharCode($1) }
 }
 
+/// One parameter of a hosted plugin as the device panel shows it: a knob with the plugin's name, range and
+/// value names. The key is the automation key ("au.<address>").
+public struct AUKnob: Hashable, Sendable {
+    public var address: AUParameterAddress
+    public var name: String
+    public var min: Double
+    public var max: Double
+    /// The value the plugin had when it loaded. The reset of the knob goes back to it.
+    public var def: Double
+    public var unit: String
+    /// The names of an indexed parameter's values, one per step. Empty for a continuous one.
+    public var choices: [String]
+    public var logarithmic: Bool
+
+    public var key: String { "au.\(address)" }
+}
+
+/// The knobs of one group of the plugin's parameter tree. The group with the empty name holds the parameters
+/// outside every group; a plugin whose tree has no groups gives that one group only.
+public struct AUKnobGroup: Hashable, Sendable {
+    public var name: String
+    public var knobs: [AUKnob]
+}
+
 /// Hosts one effect Audio Unit by calling its render block directly.
 /// This is what the future mix graph does for every plugin: no `AVAudioEngine` in between.
 ///
@@ -20,7 +44,17 @@ public final class AudioUnitEffect: @unchecked Sendable {
     public let unit: AUAudioUnit
     /// True for a synth: no audio input, MIDI in.
     public let isInstrument: Bool
+    /// True for a plugin that takes MIDI: an instrument, or a music effect (`aumf`) such as a MIDI-controlled
+    /// reverb. The renderer sends such an effect the notes of its track.
+    public let acceptsMIDI: Bool
     private let midiBlock: AUScheduleMIDIEventBlock?
+    /// The host's parameter observer. A write with it as the originator does not come back through it.
+    private var observerToken: AUParameterObserverToken?
+    /// Called on any thread when the plugin, its own window or a preset changes a parameter. The app
+    /// refreshes the knobs of the device panel from it.
+    public var parameterChanged: (@Sendable (AUParameterAddress, Float) -> Void)?
+    /// The knob groups, built once from the parameter tree on the first request.
+    private var cachedKnobGroups: [AUKnobGroup]?
     private let parameterBlock: AUScheduleParameterBlock
     /// Parameters that accept a ramp. Others ignore an event with a ramp, so they get a step.
     private let rampable: Set<AUParameterAddress>
@@ -76,7 +110,9 @@ public final class AudioUnitEffect: @unchecked Sendable {
         // The component type decides, not the bus layout: a synth with an audio input (an external-in jack,
         // a vocoder) is still an instrument and must get the track's notes. Its input bus is enabled below
         // and the renderer feeds it silence.
-        self.isInstrument = unit.componentDescription.componentType == kAudioUnitType_MusicDevice
+        let type = unit.componentDescription.componentType
+        self.isInstrument = type == kAudioUnitType_MusicDevice
+        self.acceptsMIDI = type == kAudioUnitType_MusicDevice || type == kAudioUnitType_MusicEffect
         self.midiBlock = unit.scheduleMIDIEventBlock
         self.sampleRate = sampleRate
         self.channels = channels
@@ -138,9 +174,14 @@ public final class AudioUnitEffect: @unchecked Sendable {
             }
             return noErr
         }
+        // The plugin's own window, a preset or a state restore moves a parameter: the panel hears of it here.
+        observerToken = unit.parameterTree?.token(byAddingParameterObserver: { [weak self] address, value in
+            self?.parameterChanged?(address, value)
+        })
     }
 
     deinit {
+        if let observerToken { unit.parameterTree?.removeParameterObserver(observerToken) }
         unit.deallocateRenderResources()
         outputList.unsafeMutablePointer.deallocate()
         inputPointers.deallocate()
@@ -222,6 +263,88 @@ public final class AudioUnitEffect: @unchecked Sendable {
                 PluginParam(key: "au.\(p.address)", name: p.displayName, min: Double(p.minValue), max: Double(p.maxValue),
                             def: Double(p.value), unit: p.unitName ?? "")
             }
+    }
+
+    // MARK: Knobs
+
+    /// The knobs of the device panel, grouped as the plugin's parameter tree groups them. Built once; the
+    /// tree of a loaded plugin does not change. Main thread.
+    public func knobGroups() -> [AUKnobGroup] {
+        if let cachedKnobGroups { return cachedKnobGroups }
+        let groups = unit.parameterTree.map { Self.knobGroups(of: $0) } ?? []
+        cachedKnobGroups = groups
+        return groups
+    }
+
+    /// Walks a parameter tree. The parameters outside every group come first, under the empty name; a nested
+    /// group is named through its parents ("Filter / Envelope"). A group with no shown parameter is left out.
+    public static func knobGroups(of tree: AUParameterGroup) -> [AUKnobGroup] {
+        var groups: [AUKnobGroup] = []
+        func walk(_ group: AUParameterGroup, name: String) {
+            var knobs: [AUKnob] = []
+            var nested: [AUParameterGroup] = []
+            for child in group.children {
+                if let p = child as? AUParameter { if let knob = knob(for: p) { knobs.append(knob) } }
+                else if let g = child as? AUParameterGroup { nested.append(g) }
+            }
+            if !knobs.isEmpty { groups.append(AUKnobGroup(name: name, knobs: knobs)) }
+            for g in nested {
+                let own = g.displayName.trimmingCharacters(in: .whitespaces)
+                walk(g, name: name.isEmpty ? own : (own.isEmpty ? name : name + " / " + own))
+            }
+        }
+        walk(tree, name: "")
+        return groups
+    }
+
+    /// A parameter as a knob, or `nil` for one the panel hides: no display name (an unused slot of a machine
+    /// with fixed slots), not writable, a meter, or an empty range. The Audio Unit API has no hidden flag of
+    /// its own; a read-only meter is the nearest thing.
+    public static func knob(for p: AUParameter) -> AUKnob? {
+        let name = p.displayName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, p.flags.contains(.flag_IsWritable), !p.flags.contains(.flag_MeterReadOnly),
+              p.maxValue > p.minValue, p.minValue.isFinite, p.maxValue.isFinite else { return nil }
+        var choices: [String] = []
+        if p.unit == .boolean, p.minValue == 0, p.maxValue == 1 {
+            choices = ["Off", "On"]
+        } else if p.unit == .indexed, let strings = p.valueStrings {
+            let steps = Int((p.maxValue - p.minValue).rounded()) + 1
+            // One name per step, or the knob stays continuous and shows the plugin's string for the value.
+            if strings.count == steps, steps <= 64, p.minValue == 0 { choices = strings }
+        }
+        let logarithmic = p.flags.contains(.flag_DisplayLogarithmic) && p.minValue > 0
+        return AUKnob(address: p.address, name: name, min: Double(p.minValue), max: Double(p.maxValue), def: Double(p.value),
+                      unit: choices.isEmpty ? (p.unitName ?? "") : "", choices: choices, logarithmic: logarithmic)
+    }
+
+    /// The value of a parameter now. `nil` for an address the unit does not have.
+    public func parameterValue(_ address: AUParameterAddress) -> Double? {
+        unit.parameterTree?.parameter(withAddress: address).map { Double($0.value) }
+    }
+
+    /// The plugin's own text for a value of a parameter ("2.5 kHz", "BRIDGE"). `nil` when the unit has no
+    /// such parameter.
+    public func displayString(_ address: AUParameterAddress, _ value: Double) -> String? {
+        guard let p = unit.parameterTree?.parameter(withAddress: address) else { return nil }
+        var v = AUValue(value)
+        return p.string(fromValue: &v)
+    }
+
+    /// Moves a parameter now, as the plugin's own window would: through `AUParameter.value`, with the host
+    /// as the originator, so the plugin's view follows and the host's own observer stays quiet. Not on the
+    /// audio thread; the value is clamped to the parameter's range.
+    public func setParameter(_ address: AUParameterAddress, _ value: Double) {
+        guard let p = unit.parameterTree?.parameter(withAddress: address) else { return }
+        let clamped = min(max(AUValue(value), p.minValue), p.maxValue)
+        p.setValue(clamped, originator: observerToken)
+    }
+
+    /// `setParameter` by automation key ("au.<address>"). False for another key.
+    @discardableResult
+    public func setParameter(key: String, _ value: Double) -> Bool {
+        guard key.hasPrefix("au."), let address = AUParameterAddress(key.dropFirst(3)) else { return false }
+        setParameter(address, value)
+        return true
     }
 
     /// All notes off and all sound off on every channel.

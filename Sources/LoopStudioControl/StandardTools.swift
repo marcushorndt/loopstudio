@@ -69,7 +69,7 @@ public enum StandardTools {
 
         r.add(Tool(
             name: "project_info", title: "Project summary",
-            description: "Name, tempo, track count, hardware ports, revision, unsaved state, and any problems found in the project.",
+            description: "Name, tempo, track count (tracks holds audio, MIDI, group and return tracks; tracksByKind splits them; the master is separate), hardware ports, revision, unsaved state, and any problems found in the project.",
             inputSchema: Schema.object(), annotations: .read
         ) { _ in try await summary(session) })
 
@@ -500,6 +500,7 @@ public enum StandardTools {
             "sampleRate": .number(project.sampleRate),
             "bpm": .number(project.tempoMap.bpm(at: 0)),
             "tracks": .number(Double(project.tracks.count)),
+            "tracksByKind": .object(Dictionary(grouping: project.tracks, by: { $0.kind.rawValue }).mapValues { .number(Double($0.count)) }),
             "assets": .number(Double(project.assets.count)),
             "ports": try JSONValue(encoding: project.ports),
             "masterId": .string(project.master.id.description),

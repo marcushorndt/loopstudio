@@ -217,7 +217,9 @@ struct UnitList: View {
             presetSection
             Section("Audio Units") {
                 if !loaded { ProgressView().controlSize(.small) }
-                let shown = units.filter { $0.kind.localizedCaseInsensitiveContains(match) && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) }
+                // An instrument is a Music Device (aumu); everything else goes to the effects list.
+                let wantInstruments = match == "instrument"
+                let shown = units.filter { $0.identifier.hasPrefix("aumu") == wantInstruments && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) }
                 ForEach(Array(shown.enumerated()), id: \.offset) { _, unit in
                     VStack(alignment: .leading, spacing: 0) {
                         Text(unit.name).lineLimit(1)

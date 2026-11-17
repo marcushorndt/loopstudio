@@ -148,12 +148,16 @@ final class AppModel {
         // One selection: no clip in focus means no marked clips either, so Delete cannot hit a clip out of view.
         didSet {
             if selectedClip != oldValue { selectedDevice = nil }
+            if let c = selectedClip, let (track, _) = project.findClip(c) { lastClipOnTrack[track] = c }
             if let c = selectedClip { if !selectedClips.contains(c) { selectedClips = [c] } } else if oldValue != nil { selectedClips = [] }
             // Like Live: selecting a clip shows it (its waveform or its notes) in the panel.
             if let c = selectedClip, c != oldValue { detailTab = .clip }
             if selectedClip != oldValue { selectedNotes = [] }
         }
     }
+    /// The clip selected last on each track. A click on the track header drops the clip selection to show
+    /// the devices; a knob there still offers this clip for its automation.
+    var lastClipOnTrack: [TrackID: ClipID] = [:]
     /// All marked clips. `selectedClip` is the one the clip panel shows.
     var selectedClips: Set<ClipID> = [] {
         didSet { if !selectedClips.isEmpty { trackFocused = false } }
@@ -1087,8 +1091,11 @@ final class AppModel {
     /// carry a lane for this parameter (a clip on this track, or a dummy clip, which moves any track).
     func knobAutomation(_ track: Track, _ address: ParameterAddress) -> KnobAutomation {
         var entry: KnobAutomation.ClipEntry?
-        // The selected clip; with none (a click on the track header drops it), the clip that plays on the track.
-        let candidate = selectedClip ?? (transportPlaying ? session.plays(of: track.id, at: sessionTick).now?.clip : nil)
+        // The selected clip; with none (a click on the track header drops it), the clip selected last on this
+        // track, else the clip that plays on it.
+        let candidate = selectedClip
+            ?? lastClipOnTrack[track.id].flatMap { project.findClip($0) == nil ? nil : $0 }
+            ?? (transportPlaying ? session.plays(of: track.id, at: sessionTick).now?.clip : nil)
         if let id = candidate, let (ownerID, clip) = project.findClip(id), let owner = project.track(ownerID) {
             let name: String? = switch clip {
             case .audio(let a): a.name

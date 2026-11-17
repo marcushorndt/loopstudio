@@ -150,7 +150,7 @@ public protocol ModelTransport: Sendable {
 public struct ClaudeAPIError: Error, CustomStringConvertible, Sendable {
     public let status: Int
     public let message: String
-    public var description: String { "Claude API \(status): \(message)" }
+    public var description: String { status == 0 ? message : "HTTP \(status): \(message)" }
 }
 
 /// The Messages API over HTTPS. The key lives in the caller's hands (the app keeps it in the Keychain).

@@ -13,6 +13,11 @@ struct ParamKnob: View {
     var tint: Color = Theme.accent
 
     var body: some View {
+        // While the transport runs, the knob redraws ten times a second, so the automated mark follows the curve.
+        TimelineView(.animation(minimumInterval: 0.1, paused: !model.transportPlaying)) { _ in knob }
+    }
+
+    @ViewBuilder private var knob: some View {
         if let free = spec.param(key) {
             // A synced knob shows its note value instead of the free value.
             let synced = free.syncable && (device.params[free.syncKey] ?? 0) >= 0.5
@@ -24,6 +29,7 @@ struct ParamKnob: View {
                             onChange: { model.setDeviceParam(track.id, device.id, param.key, param.clamp($0)) },
                             onReset: { model.setDeviceParam(track.id, device.id, param.key, nil) },
                             automation: param.fixed ? nil : automation(param),
+                            automated: param.fixed ? nil : model.automatedValue(track, address),
                             sync: free.syncable ? KnobSync(synced: synced, unit: free.unit) {
                                 model.setDeviceParam(track.id, device.id, free.syncKey, synced ? 0 : 1)
                             } : nil)

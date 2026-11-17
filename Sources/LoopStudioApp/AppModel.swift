@@ -1119,6 +1119,37 @@ final class AppModel {
             clip: entry)
     }
 
+    /// The value automation gives a parameter of `track` right now, or `nil` when no curve moves it at the
+    /// play position. The knob draws it as a separate mark, so the setting and the curve can disagree. The
+    /// order is the engine's: a session clip while it plays, else the arrangement clip under the playhead,
+    /// else the track lane.
+    func automatedValue(_ track: Track, _ address: ParameterAddress) -> Double? {
+        func inClip(_ clip: Clip, at local: Tick) -> Double? {
+            guard let lane = project.effectiveLanes(of: clip, owner: track).first(where: { $0.target == address }) else { return nil }
+            // A looped clip and an own automation length repeat the curve; a dummy clip plays it once.
+            let loops: Bool = switch clip {
+            case .audio(let a): a.loop
+            case .midi(let m): m.loop
+            case .dummy: false
+            }
+            let cycle = clip.automationCycle
+            let tick = loops || clip.automationLength != nil ? Tick(local.rawValue % cycle.rawValue) : local
+            return AutomationMath.value(lane.points, at: tick)
+        }
+        if transportPlaying, let now = session.plays(of: track.id, at: sessionTick).now,
+           let (_, clip) = project.findClip(now.clip), let v = inClip(clip, at: sessionTick - now.startTick) {
+            return v
+        }
+        let tick = currentTick
+        if let clip = track.clips.first(where: { $0.start <= tick && tick < $0.start + $0.length }), let v = inClip(clip, at: tick - clip.start) {
+            return v
+        }
+        if let lane = track.automation.first(where: { $0.target == address && !$0.points.isEmpty }) {
+            return AutomationMath.value(lane.points, at: tick)
+        }
+        return nil
+    }
+
     // MARK: Clip automation
 
     /// The page of the clip inspector for a clip. A dummy clip has only automation; a MIDI clip has no gain page.

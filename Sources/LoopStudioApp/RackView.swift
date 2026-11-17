@@ -122,7 +122,7 @@ struct MacroKnob: View {
             Knob(param: param, value: driven?.value ?? (device.params[key] ?? param.def), tint: Theme.macroMap,
                  onChange: { model.setDeviceParam(track.id, device.id, key, param.clamp($0)) },
                  onReset: { model.setDeviceParam(track.id, device.id, key, nil) },
-                 automation: automation(param))
+                 automation: automation(param), automated: model.automatedValue(track, address))
             .allowsHitTesting(driven == nil)
             .overlay(alignment: .topLeading) {
                 if !mappings.isEmpty {

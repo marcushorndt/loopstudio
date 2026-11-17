@@ -36,6 +36,9 @@ struct Knob: View {
     let onReset: () -> Void
     /// Automation of this knob: nil hides the menu entries (a knob with no automation target).
     var automation: KnobAutomation? = nil
+    /// The value a curve gives the parameter at the play position: a thin red arc on the dial, apart from
+    /// the setting the knob holds. `nil` when no curve moves it now.
+    var automated: Double? = nil
     var sync: KnobSync? = nil
     /// The text under the knob, in place of `param.format`: a hosted plugin gives its own strings.
     var format: ((Double) -> String)? = nil
@@ -70,7 +73,7 @@ struct Knob: View {
                 OnOffSwitch(on: value >= 0.5, tint: tint) { onChange(value >= 0.5 ? 0 : 1) }
                     .frame(width: 44, height: 44)
             } else if rotary {
-                KnobDial(position: param.position(value), tint: tint)
+                KnobDial(position: param.position(value), tint: tint, automated: automated.map { param.position($0) })
                 .frame(width: 44, height: 44)
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: KnobEntry.dragStart)
@@ -93,7 +96,11 @@ struct Knob: View {
             }
             Text(sync == nil ? param.name : param.name.replacingOccurrences(of: " Note", with: ""))
                 .font(.system(size: 10)).foregroundStyle(Theme.dim).lineLimit(1)
-            if rotary { Text(shown(value)).font(.system(size: 10, design: .monospaced)).lineLimit(1) }
+            if rotary {
+                // The automated value stands where the setting would, in the automation colour.
+                Text(shown(automated ?? value)).font(.system(size: 10, design: .monospaced)).lineLimit(1)
+                    .foregroundStyle(automated == nil ? Color.primary : Theme.automationDot)
+            }
         }
         // One element per knob for VoiceOver: its name, its value, and up and down with the arrow keys.
         .accessibilityElement(children: param.isSwitch || rotary ? .ignore : .contain)
@@ -183,6 +190,9 @@ struct KnobDial: View {
     let position: Double
     let tint: Color
     var lineWidth: CGFloat = 4
+    /// The automated position (0...1): a thin red arc inside the main one, with a dot at its end. The
+    /// needle keeps the setting, so the two can disagree, as they do while a curve plays.
+    var automated: Double? = nil
 
     var body: some View {
         Canvas { ctx, size in
@@ -196,6 +206,14 @@ struct KnobDial: View {
             let a = Angle.degrees(135 + span * position).radians
             var needle = Path(); needle.move(to: c); needle.addLine(to: CGPoint(x: c.x + cos(a) * (r - lineWidth - 2), y: c.y + sin(a) * (r - lineWidth - 2)))
             ctx.stroke(needle, with: .color(.white), style: StrokeStyle(lineWidth: max(1.5, lineWidth / 2), lineCap: .round))
+            if let automated {
+                let ri = r - lineWidth - 0.5
+                var inner = Path(); inner.addArc(center: c, radius: ri, startAngle: from, endAngle: .degrees(135 + span * automated), clockwise: false)
+                ctx.stroke(inner, with: .color(Theme.automationDot.opacity(0.9)), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                let b = Angle.degrees(135 + span * automated).radians
+                let p = CGPoint(x: c.x + cos(b) * ri, y: c.y + sin(b) * ri)
+                ctx.fill(Path(ellipseIn: CGRect(x: p.x - 2.5, y: p.y - 2.5, width: 5, height: 5)), with: .color(Theme.automationDot))
+            }
         }
     }
 }
@@ -744,6 +762,7 @@ struct AudioUnitKnobs: View {
                     onChange: { model.setDeviceParam(track.id, device.id, k.key, param.clamp($0)) },
                     onReset: { model.setDeviceParam(track.id, device.id, k.key, nil) },
                     automation: model.knobAutomation(track, address),
+                    automated: model.automatedValue(track, address),
                     format: k.choices.isEmpty ? { unit.displayString(k.address, $0) ?? param.format($0) } : nil)
             .allowsHitTesting(driven == nil)
             .overlay(alignment: .topTrailing) { if let driven { MacroBadge(track: track, address: address, driving: driven) } }

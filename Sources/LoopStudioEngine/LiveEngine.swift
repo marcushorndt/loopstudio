@@ -685,7 +685,7 @@ public final class LiveEngine: @unchecked Sendable {
         while !playing && done < frameCount {
             var n = min(frameCount - done, renderer.maxBlock)
             if countInRemaining > 0 { n = Int(min(Int64(n), countInRemaining)) }
-            renderer.process(startFrame: position, frames: n, transport: false, outLeft: left + done, outRight: right + done)
+            renderer.process(startFrame: position, frames: n, transport: false, loop: loop, outLeft: left + done, outRight: right + done)
             addPorts(renderer, offset: done, frames: n)
             if countInRemaining > 0 {
                 if countInClick { Self.addClick(left + done, right + done, n, clock: countInDone, click, sampleRate) }
@@ -707,7 +707,7 @@ public final class LiveEngine: @unchecked Sendable {
             if let loop, position < loop.upperBound {
                 n = min(n, Int(loop.upperBound - position))
             }
-            renderer.process(startFrame: position, sessionFrame: sessionPosition, frames: n, outLeft: left + done, outRight: right + done)
+            renderer.process(startFrame: position, sessionFrame: sessionPosition, frames: n, loop: loop, outLeft: left + done, outRight: right + done)
             addPorts(renderer, offset: done, frames: n)
             if click.enabled {
                 if click.frames.isEmpty { Self.addClick(left + done, right + done, n, clock: position, click, sampleRate) }

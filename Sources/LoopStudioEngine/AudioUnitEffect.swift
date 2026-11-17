@@ -139,13 +139,16 @@ public final class AudioUnitEffect: @unchecked Sendable {
             downbeat?.pointee = song.downbeat
             return true
         }
+        // The arrangement loop is the cycle, in beats as the API asks. `changed` marks a start, a stop, a jump
+        // (a locate, a loop wrap) and a tempo change, so a plugin's own sequencer can line up again.
         unit.transportStateBlock = { flags, position, cycleStart, cycleEnd in
             var state: AUHostTransportStateFlags = song.playing ? [.moving] : []
             if song.changed { state.insert(.changed) }
+            if song.cycling { state.insert(.cycling) }
             flags?.pointee = state
             position?.pointee = song.frame
-            cycleStart?.pointee = 0
-            cycleEnd?.pointee = 0
+            cycleStart?.pointee = song.cycleStart
+            cycleEnd?.pointee = song.cycleEnd
             return true
         }
         try unit.allocateRenderResources()
@@ -188,16 +191,21 @@ public final class AudioUnitEffect: @unchecked Sendable {
     }
 
     /// Sets the song position the plugin sees in the next `process` call. Realtime safe.
+    /// `cycle` is the arrangement loop in beats, or `nil` when the loop is off.
     func setSongPosition(frame: Int64, beat: Double, bpm: Double, numerator: Int, denominator: Int,
-                         downbeat: Double, playing: Bool, toNextBeat: Int) {
-        // "Changed" only when the transport starts, stops or jumps (a locate or a loop wrap).
+                         downbeat: Double, playing: Bool, toNextBeat: Int, cycle: (start: Double, end: Double)? = nil) {
+        // "Changed" when the transport starts or stops, when the position jumps (a locate, a loop wrap, also
+        // while stopped) and when the tempo changes. A block that follows the last one is no change.
         let jumped = frame < song.lastFrame || frame > song.lastFrame + Int64(maxFrames)
-        song.changed = playing != song.playing || (playing && jumped)
+        song.changed = playing != song.playing || jumped || bpm != song.bpm
         song.lastFrame = frame
         song.frame = Double(frame); song.beat = beat; song.bpm = bpm
         song.numerator = numerator; song.denominator = denominator
         song.downbeat = downbeat; song.playing = playing; song.sampleRate = sampleRate
         song.toNextBeat = toNextBeat
+        song.cycling = cycle != nil
+        song.cycleStart = cycle?.start ?? 0
+        song.cycleEnd = cycle?.end ?? 0
     }
 
     /// Renders `frames` frames. `input` and `output` hold one pointer per channel.
@@ -376,6 +384,9 @@ private final class SongPosition: @unchecked Sendable {
     var playing = false
     var sampleRate = 48_000.0
     var changed = true
+    /// The arrangement loop as the plugin's cycle, in beats. `cycling` false: the loop is off.
+    var cycling = false
+    var cycleStart = 0.0, cycleEnd = 0.0
     /// Samples to the next beat, through the tempo map, so a tempo ramp is exact.
     var toNextBeat = 0
     var lastFrame = Int64.min / 2

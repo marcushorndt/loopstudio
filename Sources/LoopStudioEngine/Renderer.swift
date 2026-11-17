@@ -21,6 +21,10 @@ public final class Renderer {
     /// The block being rendered: its first timeline frame, and whether the transport plays.
     private var blockStart: Int64 = 0
     private var blockPlaying = false
+    /// The arrangement loop of the block, in frames, and the same in beats for the plugins' transport state.
+    /// The beats are worked out again only when the loop changes.
+    private var blockLoop: Range<Int64>?
+    private var loopBeats: (start: Double, end: Double)?
     /// Effects that run on the clock (a free LFO) go on while the transport is stopped, as in Live. The clock
     /// then counts on from where the song stopped: `idleFrame` is what the effects see as the frame.
     private var idleFrame: Int64 = 0
@@ -554,7 +558,17 @@ public final class Renderer {
         let next = plan.tempoMap.frame(at: Tick(Int64(beat.rounded(.up)) * Tick.perQuarter), sampleRate: plan.sampleRate).rawValue
         unit.setSongPosition(frame: blockStart, beat: beat, bpm: 60 / quarter, numerator: sig.numerator,
                              denominator: sig.denominator, downbeat: downbeat, playing: blockPlaying,
-                             toNextBeat: Int(max(0, next - blockStart)))
+                             toNextBeat: Int(max(0, next - blockStart)), cycle: loopBeats)
+    }
+
+    /// The loop of this block in beats, for `setSong`. Two tempo map lookups, only when the loop changed.
+    private func setLoop(_ loop: Range<Int64>?) {
+        guard loop != blockLoop else { return }
+        blockLoop = loop
+        guard let loop else { loopBeats = nil; return }
+        let map = plan.tempoMap
+        loopBeats = (map.tickAt(seconds: Double(loop.lowerBound) / plan.sampleRate) / Double(Tick.perQuarter),
+                     map.tickAt(seconds: Double(loop.upperBound) / plan.sampleRate) / Double(Tick.perQuarter))
     }
 
     private func run(_ unit: AudioUnitEffect, _ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
@@ -645,10 +659,13 @@ public final class Renderer {
     /// instruments and effects keep running. That is how a stopped project still plays live notes and rings out.
     /// `sessionFrame` is the session clock at the block start. It runs on when the arrangement loop jumps back,
     /// so session clips and their automation do not restart at the loop end. Offline it equals `startFrame`.
+    /// `loop` is the arrangement loop while it is on; hosted plugins read it as their cycle.
     public func process(startFrame: Int64, sessionFrame: Int64? = nil, frames: Int, transport: Bool = true,
+                        loop: Range<Int64>? = nil,
                         outLeft: UnsafeMutablePointer<Float>, outRight: UnsafeMutablePointer<Float>) {
         precondition(frames <= maxBlock)
         sessionOffset = (sessionFrame ?? startFrame) - startFrame
+        setLoop(loop)
         if transport {
             idleShift = 0
         } else {

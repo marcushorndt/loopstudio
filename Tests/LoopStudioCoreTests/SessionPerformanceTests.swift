@@ -41,7 +41,7 @@ private func horizon() -> Tick { bars(40) }
     }
 }
 
-@Test func resumeFromTheSamePlaceKeepsThePhase() {
+@Test func resumeFromTheSamePlaceStartsTheClipAgain() {
     let (p, a, _) = project()
     var s = SessionPerformance()
     s.add(Launch(track: a.id, slot: 0, tick: bars(2)), in: p)
@@ -50,18 +50,19 @@ private func horizon() -> Tick { bars(40) }
     let session = bars(2) + Tick(1000), timeline = Tick(1000)
     s.stop(at: session, timeline: timeline, trackOrder: [a.id])
     s.resume(at: timeline, in: p)
-    // The clip began 1000 ticks before the pause; it still does on the new clock.
-    #expect(s.launches == [Launch(track: a.id, slot: 0, tick: timeline - (session - bars(2)))])
+    // A session clip never goes on from the middle: it starts from its beginning at the play position.
+    #expect(s.launches == [Launch(track: a.id, slot: 0, tick: timeline)])
 }
 
-@Test func resumeElsewhereStartsOnTheBarBefore() {
+@Test func resumeElsewhereStartsTheClipAtThePlayPosition() {
     let (p, a, _) = project()
     var s = SessionPerformance()
     s.add(Launch(track: a.id, slot: 0, tick: 0), in: p)
     s.simulate(p, horizon: horizon())
     s.stop(at: Tick(500), timeline: Tick(500), trackOrder: [a.id])
+    // The bug: the launch sat on the bar before, so the clip began 500 ticks in, the same 500 each time.
     s.resume(at: bars(5) + Tick(500), in: p)
-    #expect(s.launches == [Launch(track: a.id, slot: 0, tick: bars(5))])
+    #expect(s.launches == [Launch(track: a.id, slot: 0, tick: bars(5) + Tick(500))])
 }
 
 @Test func aStoppedTrackStaysSilentAfterPlay() {

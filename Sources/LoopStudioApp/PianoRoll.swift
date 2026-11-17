@@ -96,7 +96,10 @@ struct PianoRoll: View {
     private static let laneHeight: CGFloat = 56
     @State private var draftLength: Tick?
     @State private var scrollY: CGFloat = 0
+    @State private var scrollX: CGFloat = 0
     @State private var visibleHeight: CGFloat = 0
+    /// Scrolls the roll from code: after an arrow key moved the marked notes out of view.
+    @State private var position = ScrollPosition()
     /// A drag in the velocity lane: the notes it changes and their velocities when it began.
     @State private var velocityDrag: (targets: [MIDINote], start: [UInt8])?
     /// The velocity line tool: a drag across the lane sets the velocities under it along a straight line.
@@ -235,6 +238,9 @@ struct PianoRoll: View {
                 .onScrollGeometryChange(for: CGFloat.self, of: \.containerSize.height) { _, h in visibleHeight = h }
                 .onScrollGeometryChange(for: CGFloat.self, of: \.containerSize.width) { _, w in visibleWidth = w }
                 .onScrollGeometryChange(for: CGFloat.self, of: \.contentOffset.y) { _, y in scrollY = max(0, y) }
+                .onScrollGeometryChange(for: CGFloat.self, of: \.contentOffset.x) { _, x in scrollX = max(0, x) }
+                .scrollPosition($position)
+                .onChange(of: model.noteNudges) { _, _ in revealMarked() }
                 // A pinch zooms in time; with Option held it zooms the row height.
                 .simultaneousGesture(MagnifyGesture()
                     .onChanged { g in
@@ -263,6 +269,26 @@ struct PianoRoll: View {
             }
             .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: Theme.radius))
         }
+    }
+
+    /// After an arrow key moved the marked notes, the view follows them: it scrolls just enough to show the
+    /// whole group, with a beat and a row of margin, between the pinned loop bar and the pinned lane.
+    private func revealMarked() {
+        let notes = marked
+        guard !notes.isEmpty, visibleWidth > 0, visibleHeight > 0 else { return }
+        let px = { (tick: Int64) in keysWidth + CGFloat(Double(tick) / Double(Tick.perQuarter)) * pxPerBeat }
+        let minX = notes.map { px($0.tick.rawValue) }.min()!
+        let maxX = notes.map { px($0.tick.rawValue + $0.length.rawValue) }.max()!
+        let minY = Self.loopBarHeight + CGFloat(highPitch - notes.map { Int($0.pitch) }.max()!) * rowHeight
+        let maxY = Self.loopBarHeight + CGFloat(highPitch - notes.map { Int($0.pitch) }.min()! + 1) * rowHeight
+        var x = scrollX, y = scrollY
+        if minX < scrollX { x = minX - pxPerBeat }
+        else if maxX > scrollX + visibleWidth { x = maxX + pxPerBeat - visibleWidth }
+        if minY < scrollY + Self.loopBarHeight { y = minY - Self.loopBarHeight - rowHeight }
+        else if maxY > scrollY + visibleHeight - Self.laneHeight { y = maxY + rowHeight + Self.laneHeight - visibleHeight }
+        x = max(0, x); y = max(0, y)
+        guard x != scrollX || y != scrollY else { return }
+        position.scrollTo(x: x, y: y)
     }
 
     /// The loop bar: a brace from the clip start to its length, with bar numbers. Drag the end to set the length.

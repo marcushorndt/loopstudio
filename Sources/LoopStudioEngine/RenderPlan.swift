@@ -441,7 +441,8 @@ public struct RenderPlan {
 
         for id in order {
             let t = project.track(id)!
-            let silent = t.mute || !audible.contains(id)
+            // Solo wins over mute: a muted track that is soloed plays. The mute button keeps its state.
+            let silent = (t.mute && !t.solo) || !audible.contains(id)
             var clips: [ClipPlan] = []
             // Monitor In: the input takes the place of the clips (a muted track monitors nothing).
             let input = t.kind == .audio && !silent && t.audioSource == .external ? inputs[id] : nil
@@ -759,7 +760,7 @@ public struct RenderPlan {
             let sub = compile(c.devices, track: track, units: units, rate: rate, auto: auto, lane: lane, allowInstrument: isMIDI, warnings: &warnings)
             var chain = ChainPlan(id: c.id, effects: sub.effects, instrument: sub.instrument, synth: sub.synth, rackSynth: sub.rackSynth,
                                   instrumentDevice: sub.instrumentDevice, instrumentAuto: sub.instrumentDevice.map(auto) ?? [:])
-            chain.gain = c.mute ? 0 : dB(c.volumeDb)
+            chain.gain = c.mute && !c.solo ? 0 : dB(c.volumeDb)
             (chain.panLeft, chain.panRight) = balance(c.pan)
             chain.volumeAuto = lane(c.id.rawValue, "volume")
             chain.panAuto = lane(c.id.rawValue, "pan")

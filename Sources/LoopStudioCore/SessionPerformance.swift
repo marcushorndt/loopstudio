@@ -162,21 +162,15 @@ public struct SessionPerformance: Sendable {
     }
 
     /// Play from `start` (timeline, which the session clock also starts from) after a stop: the kept clips
-    /// start again, nothing else. From the same place each goes on where it was; from elsewhere each starts
-    /// on the bar at or before `start`, in time with the bars. `false` when nothing was kept.
+    /// start again from their beginning, nothing else. A session clip never goes on from the middle: a
+    /// pause and a stop both restart it. `false` when nothing was kept.
     @discardableResult
     public mutating func resume(at start: Tick, in project: Project) -> Bool {
-        guard !kept.isEmpty, let at = keptAt else { return false }
-        let barBefore = project.barBoundary(atOrBefore: start)
-        let sameSpot = at.timeline == start
+        guard !kept.isEmpty, keptAt != nil else { return false }
         let list = kept
         kept = []
         keptAt = nil
-        for k in list {
-            // A stop sits on the bar before too, so a stopped track is silent from the first frame.
-            let tick = k.slot == nil || !sameSpot ? barBefore : k.start - at.session + start
-            add(Launch(track: k.track, slot: k.slot, tick: tick), in: project)
-        }
+        for k in list { add(Launch(track: k.track, slot: k.slot, tick: start), in: project) }
         return true
     }
 

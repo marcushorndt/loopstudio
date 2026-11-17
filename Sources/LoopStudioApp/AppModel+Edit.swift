@@ -336,6 +336,7 @@ extension AppModel {
         let key = "nudge\(m.id)\(dp != 0 ? "p" : "")\(dt != 0 ? "t" : "")\(length != 0 ? "l" : "")"
         setNotes(m.id, notes, key: key)
         selectedNotes = moved
+        noteNudges += 1
         if previewNotes, let note = moved.min(by: { ($0.tick, $0.pitch) < ($1.tick, $1.pitch) }), dp != 0 { auditionNote(note.pitch) }
     }
 

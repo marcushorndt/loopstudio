@@ -122,6 +122,11 @@ private func db(_ x: Float) -> Float { 20 * log10(x) }
     var muted = rig
     for i in muted.project.tracks.indices { muted.project.tracks[i].mute = true }
     #expect(muted.render(frames: 48_000).peak == 0)
+
+    // Solo wins over mute: the muted track plays when it is soloed, the mute stays set.
+    muted.project.tracks[0].solo = true // Loud, still muted
+    #expect(muted.render().left[20_000] == 0.5)
+    #expect(muted.project.tracks[0].mute)
 }
 
 @Test func volumeBelowTheFloorIsSilent() {

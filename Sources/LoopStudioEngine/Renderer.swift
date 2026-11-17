@@ -1174,7 +1174,8 @@ final class RackRuntime: MIDIReceiver {
     /// The level of a chain at the selector, with mute and solo. 0 for a chain that is silent.
     @inline(__always) func level(_ c: Int) -> Float {
         let chain = chains[c]
-        if chain.mute || (anySolo && !chain.solo) { return 0 }
+        // Solo wins over mute, as on a track.
+        if (chain.mute && !chain.solo) || (anySolo && !chain.solo) { return 0 }
         return Float(chain.zone.gain(at: selector))
     }
 

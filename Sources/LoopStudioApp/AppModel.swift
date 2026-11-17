@@ -160,6 +160,8 @@ final class AppModel {
     }
     /// Notes marked in the piano roll of the selected clip. Delete removes them instead of the clip.
     var selectedNotes: Set<MIDINote> = []
+    /// Counts the arrow-key moves of the marked notes: the piano roll scrolls after each one to keep them in view.
+    var noteNudges = 0
     /// The pen of the piano roll: a click or a drag draws notes, a click on a note deletes it.
     var drawMode = false
     /// The piano roll plays a note when it is created, moved or its key is clicked. Kept between launches.

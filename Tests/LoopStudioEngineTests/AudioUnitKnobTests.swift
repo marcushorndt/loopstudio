@@ -42,8 +42,8 @@ private func parameter(_ id: String, _ name: String, _ address: AUParameterAddre
     #expect(groups[2].knobs.map(\.name) == ["Decay"] && groups[2].knobs[0].unit == "s")
 }
 
-/// The Gaze AU (`aumu/Gaze/Mrhd`): 15 parameters, two of them choices (Amp Model, Pickup), the rest 0 to 1.
-/// Runs only where the component is installed.
+/// The Gaze AU (`aumu/Gaze/Mrhd`): the PLAY switch and 128 knob slots named after the knobs of the room it
+/// holds (the first program is THE ROOM: the knobs of its guitar come first). Runs only where the component is installed.
 @MainActor
 @Test func theGazeAUGivesItsKnobs() async throws {
     let identifier = "aumu/Gaze/Mrhd"
@@ -51,24 +51,20 @@ private func parameter(_ id: String, _ name: String, _ address: AUParameterAddre
     let unit = try await AudioUnitEffect.instantiate(identifier: identifier, sampleRate: 48_000, outOfProcess: false)
     let groups = unit.knobGroups()
     let knobs = groups.flatMap(\.knobs)
-    #expect(knobs.count == 15, "\(knobs.map(\.name))")
-    #expect(knobs.map(\.name).contains("Bass") && knobs.map(\.name).contains("Treble") && knobs.map(\.name).contains("Volume"))
-    let choices = knobs.filter { !$0.choices.isEmpty }
-    #expect(choices.map(\.name).sorted() == ["Amp Model", "Pickup"], "\(choices.map(\.name))")
-    #expect(choices.first { $0.name == "Amp Model" }?.choices.count == 5)
-    #expect(choices.first { $0.name == "Amp Model" }?.choices.first == "CLEAN")
-    #expect(choices.first { $0.name == "Pickup" }?.choices == ["NECK", "BOTH", "BRIDGE"])
+    #expect(knobs.count == 129, "\(knobs.count) knobs")
+    let play = try #require(knobs.first { $0.name == "Play" })
+    #expect(play.choices == ["Off", "On"], "\(play.choices)")
+    let named = knobs.filter { $0.name.hasPrefix("g1 ") }
+    #expect(!named.isEmpty, "the lead guitar's knobs carry its id: \(knobs.prefix(8).map(\.name))")
     for k in knobs where k.choices.isEmpty { #expect(k.min == 0 && k.max == 1, "\(k.name) runs 0 to 1") }
     // The keys are the automation keys of the same parameters.
     let automated = Set(unit.automatableParameters().map(\.key))
     for k in knobs { #expect(automated.contains(k.key), "\(k.name) is an automation target") }
 
-    // A knob write reaches the parameter, and the plugin's own text comes back for the value.
-    let volume = try #require(knobs.first { $0.name == "Volume" })
-    unit.setParameter(volume.address, 0.25)
-    #expect(unit.parameterValue(volume.address) == 0.25)
-    unit.setParameter(key: volume.key, 2)
-    #expect(unit.parameterValue(volume.address) == 1, "clamped to the range")
-    let pickup = try #require(knobs.first { $0.name == "Pickup" })
-    #expect(unit.displayString(pickup.address, 2) == "BRIDGE")
+    // A knob write reaches the parameter.
+    let tone = try #require(knobs.first { $0.name == "g1 TONE" })
+    unit.setParameter(tone.address, 0.25)
+    #expect(unit.parameterValue(tone.address) == 0.25)
+    unit.setParameter(key: tone.key, 2)
+    #expect(unit.parameterValue(tone.address) == 1, "clamped to the range")
 }

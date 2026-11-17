@@ -112,6 +112,7 @@ How we enforce it:
 - A `RealtimeSafe` code-review checklist for every renderer file, and a malloc hook in the tests (`SoakTests.swift`): libmalloc's `malloc_logger` counts every allocation on the audio thread while the live engine renders a busy project, and samples the call stacks of the first ones.
 - Soak test: 20 seconds of a busy project (eight tracks, every built-in effect, a synced LFO, sends, a group, automation, a session clip, the click, the loop) on every test run; `LOOPSTUDIO_SOAK=1` renders 10 minutes. Zero allocations, measured.
 - Debug builds: unoptimized Swift runs `for` loops over ranges and arrays through generic code that allocates (about 30,000 times per block of 512 frames in the busy project). So `Package.swift` compiles `LoopStudioCore` and `LoopStudioEngine` with `-O` in debug builds too. The app that `scripts/run-app.sh` opens therefore has a clean audio thread.
+- The installed app: `scripts/install-app.sh [-j N]` builds the release product and replaces `/Applications/LoopStudio.app` (bundle id `app.loopstudio`; the dev bundle from `run-app.sh` is `app.loopstudio.dev`, so both can sit side by side). Every work round ends with this install, so the app in the Applications folder is always the latest code. The script does not start the app.
 - Thread sanitizer runs in CI on the offline renderer.
 
 ## 8. Audio clips, loops and warping

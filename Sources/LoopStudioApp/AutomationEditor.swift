@@ -12,10 +12,15 @@ struct AutomationEditor: View {
     let width: CGFloat
     let height: CGFloat
     var tint: Color = Theme.accent
+    /// The pen (draw mode): a drag draws the curve, one point per grid step, over whatever was there.
+    var pen = false
     let onChange: ([AutomationPoint]) -> Void
 
     @State private var draft: [AutomationPoint]?
     @State private var dragging: Int?
+    /// The points the pen has drawn in this drag, by tick, and the ticks the drag has covered.
+    @State private var penPoints: [Int64: Double] = [:]
+    @State private var penRange: ClosedRange<Int64>?
     /// The segment whose slope is being dragged: its first point, the slope at the start, and the drag direction.
     @State private var bending: (index: Int, start: Double, sign: Double)?
 
@@ -77,6 +82,7 @@ struct AutomationEditor: View {
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { g in
+                if pen { draw(at: g.location); return }
                 if dragging == nil && bending == nil { begin(at: g.startLocation) }
                 if let b = bending, var working = draft, working.indices.contains(b.index) {
                     let dy = Double(g.startLocation.y - g.location.y) / 60
@@ -159,10 +165,25 @@ struct AutomationEditor: View {
         draft = working
     }
 
+    /// The pen: the value under the pointer lands on the nearest grid step. The points the drag has swept
+    /// over are replaced; the rest of the curve stays.
+    private func draw(at point: CGPoint) {
+        let tick = snap(Int64(max(0, point.x / pixelsPerTick)))
+        let value = target.value(atPosition: 1 - Double(min(max(0, point.y), height)) / Double(height))
+        penPoints[tick] = value
+        penRange = penRange.map { min($0.lowerBound, tick)...max($0.upperBound, tick) } ?? tick...tick
+        var working = points.filter { !(penRange!.contains($0.tick.rawValue)) }
+        working += penPoints.map { AutomationPoint(tick: Tick($0.key), value: $0.value) }
+        working.sort { $0.tick < $1.tick }
+        draft = working
+    }
+
     private func finish() {
         if let draft { onChange(draft) }
         draft = nil
         dragging = nil
         bending = nil
+        penPoints = [:]
+        penRange = nil
     }
 }

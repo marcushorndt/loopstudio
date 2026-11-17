@@ -28,6 +28,8 @@ enum ControlLane: Hashable {
     case velocity
     case bend
     case controller(UInt8)
+    /// A clip automation lane: a parameter of the track or one of its devices, with its short name.
+    case automation(ParameterAddress, String)
 
     private static let names: [UInt8: String] = [1: "Mod Wheel", 2: "Breath", 7: "Volume", 10: "Pan", 11: "Expression", 64: "Sustain", 71: "Resonance", 74: "Cutoff"]
 
@@ -36,6 +38,7 @@ enum ControlLane: Hashable {
         case .velocity: "Velocity"
         case .bend: "Pitch Bend"
         case .controller(let n): Self.names[n].map { "\($0) (CC \(n))" } ?? "CC \(n)"
+        case .automation(_, let name): name
         }
     }
 
@@ -47,12 +50,17 @@ enum ControlLane: Hashable {
         case .controller(64): "Sus"
         case .controller(1): "Mod"
         case .controller(let n): "CC\(n)"
+        case .automation(_, let name): String(name.prefix(5))
         }
+    }
+
+    var automationAddress: ParameterAddress? {
+        if case .automation(let a, _) = self { a } else { nil }
     }
 
     func matches(_ c: MIDIControlEvent) -> Bool {
         switch self {
-        case .velocity: false
+        case .velocity, .automation: false
         case .bend: c.isPitchBend
         case .controller(let n): c.controller == n
         }
@@ -230,6 +238,7 @@ struct PianoRoll: View {
                         Rectangle().fill(Theme.panel).frame(width: keysWidth, height: Self.laneHeight)
                             .overlay(alignment: .topLeading) { laneMenu.padding(2) }
                         if lane == .velocity { velocityLane.frame(width: width, height: Self.laneHeight) }
+                        else if let address = lane.automationAddress { automationLane(address).frame(width: width, height: Self.laneHeight) }
                         else { controlLane.frame(width: width, height: Self.laneHeight) }
                     }
                     .offset(y: laneOffset).zIndex(1)
@@ -337,21 +346,42 @@ struct PianoRoll: View {
 
     /// The lane picker at the left of the lane: velocity, pitch bend, the usual controllers, and every
     /// controller the clip holds. A lane with data can be cleared here.
+    /// The track that holds the clip, for its automation targets.
+    private var owner: Track? { model.project.findClip(clip.id).flatMap { model.project.track($0.0) } }
+
     private var laneMenu: some View {
         let kinds = clip.controlKinds
         var controllers = Set(kinds.controllers)
         controllers.insert(1); controllers.insert(64)
+        let automated = Set((clip.lanes ?? []).filter { !$0.points.isEmpty }.map(\.target))
+        let groups = owner.map { LaneGroup.groups(model.project.clipAutomationTargets(.midi(clip), owner: $0), mixer: [$0.id.rawValue, ParameterAddress.ownTrack]) } ?? []
         return Menu {
             Button("Velocity") { lane = .velocity }
             Button(ControlLane.bend.name + (kinds.pitchBend ? " •" : "")) { lane = .bend }
             ForEach(controllers.sorted(), id: \.self) { n in
                 Button(ControlLane.controller(n).name + (kinds.controllers.contains(n) ? " •" : "")) { lane = .controller(n) }
             }
+            if !groups.isEmpty {
+                Divider()
+                // Clip automation: one submenu per device and the mixer. A dot marks a parameter with points.
+                ForEach(groups) { group in
+                    let marked = group.targets.contains { automated.contains($0.address) }
+                    Menu(marked ? "● " + group.name : group.name) {
+                        ForEach(group.targets, id: \.address) { target in
+                            Button { lane = .automation(target.address, LaneGroup.shortName(target)) } label: { laneLabel(target, automated: automated) }
+                        }
+                    }
+                }
+            }
             if lane != .velocity, !laneControls.isEmpty {
                 Divider()
                 if laneControls.contains(where: { !$0.ramp }) { Button("Make Ramps") { setLaneRamps(true) } }
                 if laneControls.contains(where: \.ramp) { Button("Make Steps") { setLaneRamps(false) } }
                 Button("Clear \(lane.name)") { clearLane() }
+            }
+            if let address = lane.automationAddress, automated.contains(address) {
+                Divider()
+                Button("Clear \(lane.name)") { model.apply(.setClipAutomation(clip: clip.id, target: address, points: [])) }
             }
         } label: {
             Text(lane.short).font(.system(size: 9, weight: .semibold)).foregroundStyle(lane == .velocity ? Theme.dim : tint)
@@ -377,7 +407,7 @@ struct PianoRoll: View {
         switch lane {
         case .bend: MIDIControlEvent.pitchBend(value, tick: Tick(tick), ramp: ramp)
         case .controller(let n): MIDIControlEvent.controller(n, UInt8(min(127, max(0, value))), tick: Tick(tick), ramp: ramp)
-        case .velocity: nil
+        case .velocity, .automation: nil
         }
     }
 
@@ -400,7 +430,7 @@ struct PianoRoll: View {
     /// The controls of the shown lane, in tick order.
     private var laneControls: [MIDIControlEvent] {
         switch lane {
-        case .velocity: return []
+        case .velocity, .automation: return []
         case .bend: return clip.controls(controller: nil)
         case .controller(let n): return clip.controls(controller: n)
         }
@@ -432,6 +462,28 @@ struct PianoRoll: View {
     /// A control lane as Live's clip envelope: breakpoints joined by lines (ramps) or held values (steps).
     /// A click adds a breakpoint, a drag on a point moves it, a second click right after removes it. A drag
     /// on empty space draws steps on the grid; the drawn stretch replaces what was there.
+    /// The lane under the notes as a clip automation lane: the envelope editor for one parameter, on the
+    /// grid of the notes. The pen (B) draws; otherwise a click adds a point and a drag moves it.
+    @ViewBuilder
+    private func automationLane(_ address: ParameterAddress) -> some View {
+        if let owner, let target = model.project.clipAutomationTargets(.midi(clip), owner: owner).first(where: { $0.address == address }) {
+            let points = clip.lanes?.first { $0.target == address }?.points ?? []
+            AutomationEditor(target: target, points: points, pixelsPerTick: Double(pxPerBeat) / Double(Tick.perQuarter),
+                             width: width, height: Self.laneHeight, tint: tint, pen: model.drawMode) { pts in
+                model.apply(.setClipAutomation(clip: clip.id, target: address, points: pts))
+            }
+            .overlay(alignment: .topLeading) {
+                if points.isEmpty {
+                    Text(model.drawMode ? "Drag to draw \(target.name)" : "Click to add a \(target.name) point; B draws")
+                        .font(.system(size: 9)).foregroundStyle(Theme.dim).padding(.leading, 8).padding(.top, 4).allowsHitTesting(false)
+                }
+            }
+        } else {
+            Rectangle().fill(Theme.panel)
+                .overlay(Text("This parameter is gone").font(.system(size: 9)).foregroundStyle(Theme.dim))
+        }
+    }
+
     private var controlLane: some View {
         let laneHeight = Self.laneHeight
         return Canvas { ctx, size in

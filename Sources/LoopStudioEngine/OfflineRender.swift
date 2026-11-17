@@ -20,6 +20,9 @@ public enum OfflineRender {
         let bank = live.defersWarps ? live.exportCopy() : live
         let host = PluginHost()
         _ = await host.sync(project: project)
+        // These instances only ever render faster than real time. A plugin that is told so may trade latency for
+        // exactness, and one that runs its sound on its own thread (an emulated machine) may wait for it.
+        for unit in host.units.values { unit.setRenderingOffline(true) }
         var warnings = host.failures.sorted { $0.key.description < $1.key.description }
             .map { "plugin \($0.key) did not load: \($0.value)" }
 

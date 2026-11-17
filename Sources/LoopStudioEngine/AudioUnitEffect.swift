@@ -68,9 +68,15 @@ public final class AudioUnitEffect: @unchecked Sendable {
     /// The plugin runs outside the app process.
     public var isOutOfProcess: Bool { unit.isLoadedInProcess == false }
 
+    /// Tells the plugin whether it renders offline (a bounce) or in real time. Not on the audio thread.
+    public func setRenderingOffline(_ offline: Bool) { unit.isRenderingOffline = offline }
+
     init(unit: AUAudioUnit, sampleRate: Double, channels: Int, maxFrames: Int) throws {
         self.unit = unit
-        self.isInstrument = unit.inputBusses.count == 0
+        // The component type decides, not the bus layout: a synth with an audio input (an external-in jack,
+        // a vocoder) is still an instrument and must get the track's notes. Its input bus is enabled below
+        // and the renderer feeds it silence.
+        self.isInstrument = unit.componentDescription.componentType == kAudioUnitType_MusicDevice
         self.midiBlock = unit.scheduleMIDIEventBlock
         self.sampleRate = sampleRate
         self.channels = channels

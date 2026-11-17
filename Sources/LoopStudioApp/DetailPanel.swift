@@ -495,6 +495,9 @@ private struct ClipLanesPanel: View {
                 .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
             }
             Spacer(minLength: 0)
+            // The picker lives on the page itself: the Clip column that also holds it may be folded away.
+            PillMenu(label: "Automate") { ClipLaneToggles(clip: clip, track: track) }
+                .hint("Pick a parameter to automate in this clip: the mixer, or any device on the track and its parameters.")
         }
         .font(.system(size: 11))
     }
@@ -506,6 +509,7 @@ private struct ClipLanesPanel: View {
             VStack(spacing: 6) {
                 Text("No clip automation shown").font(.system(size: 12, weight: .medium))
                 Text(hint).font(.system(size: 11)).foregroundStyle(Theme.dim).multilineTextAlignment(.center)
+                PillMenu(label: "Automate…") { ClipLaneToggles(clip: clip, track: track) }.padding(.top, 4)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
@@ -538,8 +542,8 @@ private struct ClipLanesPanel: View {
     }
 
     private var hint: String {
-        if case .dummy = clip { return "Use Automate to pick what this clip moves.\nIt can move any track or device while it plays." }
-        return "Use Automate to pick a parameter of this track.\nWhile the clip plays, its curve overrides the track automation."
+        if case .dummy = clip { return "Pick what this clip moves: any track, or any device and its parameters.\nIt moves them while it plays." }
+        return "Pick a parameter of this track: the mixer, or a device and its parameters.\nWhile the clip plays, its curve overrides the track automation.\nA knob's right-click menu offers this clip too."
     }
 
     @ViewBuilder

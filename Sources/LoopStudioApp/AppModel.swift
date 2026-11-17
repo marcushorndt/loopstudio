@@ -1087,7 +1087,9 @@ final class AppModel {
     /// carry a lane for this parameter (a clip on this track, or a dummy clip, which moves any track).
     func knobAutomation(_ track: Track, _ address: ParameterAddress) -> KnobAutomation {
         var entry: KnobAutomation.ClipEntry?
-        if let id = selectedClip, let (ownerID, clip) = project.findClip(id), let owner = project.track(ownerID) {
+        // The selected clip; with none (a click on the track header drops it), the clip that plays on the track.
+        let candidate = selectedClip ?? (transportPlaying ? session.plays(of: track.id, at: sessionTick).now?.clip : nil)
+        if let id = candidate, let (ownerID, clip) = project.findClip(id), let owner = project.track(ownerID) {
             let name: String? = switch clip {
             case .audio(let a): a.name
             case .midi(let m): m.name

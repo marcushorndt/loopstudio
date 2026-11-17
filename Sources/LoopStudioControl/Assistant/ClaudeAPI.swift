@@ -126,6 +126,21 @@ public struct SSEParser: Sendable {
     }
 }
 
+/// The lines of a byte stream, the empty ones included. `AsyncBytes.lines` drops empty lines, and an SSE
+/// event ends with one: through `lines` the parser never saw an event end. `body` returns false to stop.
+public func sseLines<Bytes: AsyncSequence>(_ bytes: Bytes, _ body: (String) async throws -> Bool) async throws
+where Bytes.Element == UInt8 {
+    var buffer: [UInt8] = []
+    for try await byte in bytes {
+        guard byte == 10 else { buffer.append(byte); continue }
+        if buffer.last == 13 { buffer.removeLast() }
+        let line = String(decoding: buffer, as: UTF8.self)
+        buffer.removeAll(keepingCapacity: true)
+        if try await !body(line) { return }
+    }
+    if !buffer.isEmpty { _ = try await body(String(decoding: buffer, as: UTF8.self)) }
+}
+
 /// Sends one request and streams the events back. The engine does not know the network, so a test feeds it
 /// recorded events.
 public protocol ModelTransport: Sendable {
@@ -173,10 +188,11 @@ public struct URLSessionTransport: ModelTransport {
                         throw ClaudeAPIError(status: status, message: message)
                     }
                     var parser = SSEParser()
-                    for try await line in bytes.lines {
-                        guard let (_, data) = parser.feed(line: line) else { continue }
-                        guard let json = try? JSONDecoder().decode(JSONValue.self, from: Data(data.utf8)) else { continue }
+                    try await sseLines(bytes) { line in
+                        guard let (_, data) = parser.feed(line: line) else { return true }
+                        guard let json = try? JSONDecoder().decode(JSONValue.self, from: Data(data.utf8)) else { return true }
                         if let event = ClaudeEvent.parse(json) { continuation.yield(event) }
+                        return true
                     }
                     continuation.finish()
                 } catch {

@@ -214,11 +214,12 @@ public struct OpenAITransport: ModelTransport {
                     }
                     var parser = SSEParser()
                     var mapper = StreamMapper()
-                    for try await line in bytes.lines {
-                        guard let (_, data) = parser.feed(line: line) else { continue }
-                        if data.trimmingCharacters(in: .whitespaces) == "[DONE]" { continuation.yield(.messageStop); break }
-                        guard let json = try? JSONDecoder().decode(JSONValue.self, from: Data(data.utf8)) else { continue }
+                    try await sseLines(bytes) { line in
+                        guard let (_, data) = parser.feed(line: line) else { return true }
+                        if data.trimmingCharacters(in: .whitespaces) == "[DONE]" { continuation.yield(.messageStop); return false }
+                        guard let json = try? JSONDecoder().decode(JSONValue.self, from: Data(data.utf8)) else { return true }
                         for event in mapper.map(json) { continuation.yield(event) }
+                        return true
                     }
                     continuation.finish()
                 } catch {

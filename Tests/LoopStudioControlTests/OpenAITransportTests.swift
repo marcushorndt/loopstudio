@@ -126,3 +126,21 @@ import Testing
     #expect(second[1]["content"]?.stringValue == "rename the drums to Kit")
     #expect(fake.bodies[0]["reasoning_effort"]?.stringValue == "low")
 }
+
+@Test func theLineSplitterKeepsTheEmptyLinesSoTheParserSeesTheEventEnds() async throws {
+    let raw = "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\r\n\r\ndata: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+    let bytes = AsyncStream<UInt8> { c in for b in raw.utf8 { c.yield(b) }; c.finish() }
+    var lines: [String] = []
+    var parser = SSEParser()
+    var events: [String] = []
+    try await sseLines(bytes) { line in
+        lines.append(line)
+        if let (_, data) = parser.feed(line: line) { events.append(data) }
+        return true
+    }
+    #expect(lines.count == 6)
+    #expect(lines[1].isEmpty && lines[3].isEmpty)
+    #expect(events.count == 3)
+    #expect(events.last == "[DONE]")
+    #expect(events[0].hasPrefix("{\"id\""))
+}

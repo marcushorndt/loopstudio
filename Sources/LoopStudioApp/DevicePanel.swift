@@ -658,12 +658,12 @@ struct AudioUnitKnobs: View {
             } else if flat {
                 flatPage(groups[0].knobs)
             } else {
-                ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: DeviceLayout.groupGap) {
-                        ForEach(groups, id: \.name) { group in section(group) }
-                    }
+                // The groups go to the right, each as blocks of two rows: the chain scrolls sideways, and the
+                // body keeps its height like every other device.
+                HStack(alignment: .top, spacing: DeviceLayout.groupGap) {
+                    ForEach(groups, id: \.name) { group in section(group) }
                 }
-                .frame(height: DeviceLayout.bodyHeight)
+                .frame(height: DeviceLayout.bodyHeight, alignment: .topLeading)
             }
         }
     }
@@ -682,29 +682,41 @@ struct AudioUnitKnobs: View {
         }
     }
 
-    /// A group of the tree: its title with a fold chevron, then its knobs in rows of eight.
+    /// A group of the tree: its title with a fold chevron, then its knobs in blocks of two rows of eight,
+    /// side by side. A group with more than sixteen knobs gets a second block with the same title.
     private func section(_ group: AUKnobGroup) -> some View {
         let key = "\(device.id.rawValue.uuidString)|\(group.name)"
         let folded = model.foldedPluginGroups.contains(key)
-        return VStack(alignment: .leading, spacing: 0) {
+        let blocks = folded ? [] : group.knobs.chunked(Self.perPage)
+        return HStack(alignment: .top, spacing: DeviceLayout.groupGap) {
+            if folded {
+                block(group, key: key, folded: true, knobs: [], index: 0, count: 1)
+            } else {
+                ForEach(Array(blocks.enumerated()), id: \.offset) { b in
+                    block(group, key: key, folded: false, knobs: b.element, index: b.offset, count: blocks.count)
+                }
+            }
+        }
+    }
+
+    private func block(_ group: AUKnobGroup, key: String, folded: Bool, knobs: [AUKnob], index: Int, count: Int) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
             Button {
                 if folded { model.foldedPluginGroups.remove(key) } else { model.foldedPluginGroups.insert(key) }
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: folded ? "chevron.right" : "chevron.down").font(.system(size: 7, weight: .semibold))
-                    Text(group.name.uppercased()).font(.system(size: 8.5, weight: .semibold)).tracking(0.8).lineLimit(1)
+                    Text(group.name.uppercased() + (count > 1 ? " \(index + 1)/\(count)" : "")).font(.system(size: 8.5, weight: .semibold)).tracking(0.8).lineLimit(1)
                     Spacer(minLength: 0)
                 }
-                .foregroundStyle(Theme.dim).padding(.leading, 6).padding(.top, 3).padding(.bottom, folded ? 3 : 0)
+                .foregroundStyle(Theme.dim).padding(.leading, 6).padding(.trailing, 6).padding(.top, 3).padding(.bottom, folded ? 3 : 0)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .hint(folded ? "\(group.name): folded. Click to show its knobs." : "\(group.name). Click to fold.")
-            if !folded {
-                ForEach(Array(group.knobs.chunked(Self.perRow).enumerated()), id: \.offset) { row in
-                    HStack(alignment: .top, spacing: 0) { ForEach(row.element, id: \.address) { knob($0) } }
-                        .padding(.horizontal, 2).padding(.bottom, 2)
-                }
+            ForEach(Array(knobs.chunked(Self.perRow).enumerated()), id: \.offset) { row in
+                HStack(alignment: .top, spacing: 0) { ForEach(row.element, id: \.address) { knob($0) } }
+                    .padding(.horizontal, 2).padding(.bottom, 2)
             }
         }
         .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 6))

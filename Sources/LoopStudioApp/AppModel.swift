@@ -266,6 +266,9 @@ final class AppModel {
     /// Set to rename a clip; takes the place of a track rename while a clip is selected.
     var clipRenameRequest: ClipID?
     var selectedSceneRow: Int?
+    /// The track under a dragged device (an effect, an instrument, a preset): a device lands on the track,
+    /// not in a slot, so the whole column lights up instead of one slot.
+    var deviceDragTrack: TrackID?
     /// The slot a plain click chose. Shift with a click or an arrow key marks the rectangle from here.
     @ObservationIgnored var slotAnchor: (track: TrackID, row: Int)?
     /// Quantize: how far a note moves towards the grid (1: all the way). Humanize: how far the position and

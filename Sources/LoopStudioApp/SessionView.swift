@@ -163,12 +163,20 @@ private struct TrackColumn: View {
     let rows: Int
 
     var body: some View {
+        let deviceOver = model.deviceDragTrack == track.id
         VStack(spacing: gap) {
             header
             // Busses have slots too: a dummy clip there is silent but carries automation.
             ForEach(0..<rows, id: \.self) { row in SlotCell(track: track, row: row) }
         }
         .frame(width: columnWidth)
+        .overlay {
+            if deviceOver {
+                RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.accent.opacity(0.12))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private var header: some View {
@@ -190,6 +198,9 @@ private struct TrackColumn: View {
         .simultaneousGesture(TapGesture(count: 2).onEnded { model.openTrackInspector(track.id) })
         .dropDestination(for: String.self) { items, _ in
             return model.dropDevices(items, on: track.id)
+        } isTargeted: { over in
+            guard DragPasteboard.carriesDevices else { return }
+            if over { model.deviceDragTrack = track.id } else if model.deviceDragTrack == track.id { model.deviceDragTrack = nil }
         }
         .contextMenu { TrackMenuItems(track: track) }
     }
@@ -246,7 +257,15 @@ private struct SlotCell: View {
                 cell(.empty, look: SlotLook(.empty, blink: false))
             }
         }
-        .dropDestination(for: DropItem.self) { items, _ in model.dropOnSlot(items, track: track.id, row: row) } isTargeted: { targeted = $0 }
+        .dropDestination(for: DropItem.self) { items, _ in model.dropOnSlot(items, track: track.id, row: row) } isTargeted: { over in
+            // A device goes on the track, so the column lights up and the slot shows no frame.
+            if DragPasteboard.carriesDevices {
+                targeted = false
+                if over { model.deviceDragTrack = track.id } else if model.deviceDragTrack == track.id { model.deviceDragTrack = nil }
+            } else {
+                targeted = over
+            }
+        }
         .overlay { if targeted { placeholder } }
     }
 

@@ -16,6 +16,15 @@ enum DropItem: Transferable {
     }
 }
 
+/// What the running drag carries, read from the drag pasteboard while the pointer moves.
+enum DragPasteboard {
+    /// True while a device from the sidebar or a device card is dragged.
+    static var carriesDevices: Bool {
+        guard let s = NSPasteboard(name: .drag).string(forType: .string) else { return false }
+        return ["fx:", "au:", "preset:", "device:", "devicecopy:"].contains { s.hasPrefix($0) }
+    }
+}
+
 extension Array where Element == DropItem {
     var files: [URL] { compactMap { if case .file(let url) = $0 { url } else { nil } } }
     /// The strings the sidebar drags, and a device card dragged by its title ("device:<id>", or

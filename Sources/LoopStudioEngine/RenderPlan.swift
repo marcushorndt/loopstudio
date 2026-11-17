@@ -524,7 +524,8 @@ public struct RenderPlan {
             if t.kind != .midi { synth = nil; compiled.rackSynth = nil } // an instrument on an audio track stays silent
             var midi: [MIDIEvent] = [], sessionMidi: [MIDIEvent] = []
             let midiOut = t.kind == .midi ? midiOutputs[t.id] : nil
-            let plays = instrument != nil || synth != nil || compiled.rackSynth != nil
+            // A music effect (`aumf`) in the chain takes the notes too, with or without an instrument in front.
+            let plays = instrument != nil || synth != nil || compiled.rackSynth != nil || takesMIDI(chain)
             if t.kind == .midi && !silent && (plays || midiOut != nil) {
                 midi = midiEvents(of: t, session: nil, map: map, rate: rate, endFrame: &endFrame)
                 var ignored: Int64 = 0
@@ -675,6 +676,16 @@ public struct RenderPlan {
         var synth: SynthPlan? = nil
         var rackSynth: RackPlan? = nil
         var instrumentDevice: DeviceID? = nil
+    }
+
+    /// True when an effect of the chain (racks included) is a hosted music effect, which takes the track's
+    /// MIDI like an instrument. A bypassed one does not run, so it takes none.
+    static func takesMIDI(_ effects: [EffectPlan]) -> Bool {
+        effects.contains { e in
+            guard !e.bypassed else { return false }
+            if let unit = e.unit { return unit.acceptsMIDI && !unit.isInstrument }
+            return e.rack?.chains.contains { takesMIDI($0.effects) } ?? false
+        }
     }
 
     /// The frames a chain of effects delays the sound by: plugins by their reported latency, built-in devices

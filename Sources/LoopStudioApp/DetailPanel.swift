@@ -598,10 +598,21 @@ struct ClipLaneToggles: View {
             Button("Move Clip Automation to Track") { model.moveClipAutomationToTrack(clip.id) }.disabled(used.isEmpty)
         }
         Divider()
-        ForEach(model.project.clipAutomationTargets(clip, owner: track), id: \.address) { target in
-            Toggle(target.name + (used.contains(target.address) ? "  •" : ""), isOn: Binding(
-                get: { model.shownClipLanes(clip, owner: track).contains(target.address) },
-                set: { model.setClipLane(clip, owner: track, target.address, shown: $0) }))
+        // One submenu per device (and the mixer), so a plugin with a hundred parameters stays a short pick.
+        let automated = Set(used)
+        let shown = Set(model.shownClipLanes(clip, owner: track))
+        let groups = LaneGroup.groups(model.project.clipAutomationTargets(clip, owner: track), mixer: [track.id.rawValue, ParameterAddress.ownTrack])
+        ForEach(groups) { group in
+            let marked = group.targets.contains { automated.contains($0.address) }
+            Menu(marked ? "● " + group.name : group.name) {
+                ForEach(group.targets, id: \.address) { target in
+                    Toggle(isOn: Binding(
+                        get: { shown.contains(target.address) },
+                        set: { model.setClipLane(clip, owner: track, target.address, shown: $0) })) {
+                        laneLabel(target, automated: automated)
+                    }
+                }
+            }
         }
     }
 }

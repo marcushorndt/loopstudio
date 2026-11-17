@@ -37,12 +37,7 @@ struct ParamKnob: View {
     }
 
     private func automation(_ param: EffectParam) -> KnobAutomation {
-        let address = ParameterAddress(node: device.id.rawValue, parameter: param.key)
-        return KnobAutomation(
-            hasCurve: track.automation.contains { $0.target == address && !$0.points.isEmpty },
-            laneShown: model.isLaneShown(track, address),
-            toggleLane: { model.toggleLaneAndReveal(track, address) },
-            clear: { model.apply(.setAutomation(track: track.id, target: address, points: [])) })
+        model.knobAutomation(track, ParameterAddress(node: device.id.rawValue, parameter: param.key))
     }
 }
 

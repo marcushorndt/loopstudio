@@ -1083,6 +1083,33 @@ final class AppModel {
         if show { viewMode = .arrangement; selectedTrack = track.id }
     }
 
+    /// The automation hooks of a knob: the track lane in the arrangement, and the selected clip when it can
+    /// carry a lane for this parameter (a clip on this track, or a dummy clip, which moves any track).
+    func knobAutomation(_ track: Track, _ address: ParameterAddress) -> KnobAutomation {
+        var entry: KnobAutomation.ClipEntry?
+        if let id = selectedClip, let (ownerID, clip) = project.findClip(id), let owner = project.track(ownerID) {
+            let name: String? = switch clip {
+            case .audio(let a): a.name
+            case .midi(let m): m.name
+            case .dummy(let d): d.name
+            }
+            let isDummy = if case .dummy = clip { true } else { false }
+            if ownerID == track.id || isDummy {
+                let lane = clipAddress(address, in: clip, owner: owner)
+                entry = KnobAutomation.ClipEntry(
+                    name: name.flatMap { $0.isEmpty ? nil : "“\($0)”" } ?? "(selected clip)",
+                    hasCurve: clip.lanes.contains { $0.target == lane && !$0.points.isEmpty },
+                    open: { [self] in openClipAutomation(id, address: lane) })
+            }
+        }
+        return KnobAutomation(
+            hasCurve: track.automation.contains { $0.target == address && !$0.points.isEmpty },
+            laneShown: isLaneShown(track, address),
+            toggleLane: { [self] in toggleLaneAndReveal(track, address) },
+            clear: { [self] in apply(.setAutomation(track: track.id, target: address, points: [])) },
+            clip: entry)
+    }
+
     // MARK: Clip automation
 
     /// The page of the clip inspector for a clip. A dummy clip has only automation; a MIDI clip has no gain page.

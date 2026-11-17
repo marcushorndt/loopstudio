@@ -334,13 +334,25 @@ struct LaneGroup: Identifiable {
     let targets: [AutomationTarget]
 
     @MainActor static func groups(of track: Track, in project: Project) -> [LaneGroup] {
-        let all = project.automationTargets(of: track)
-        var groups = [LaneGroup(id: track.id.rawValue, name: "Mixer", targets: all.filter { $0.node == track.id.rawValue })]
-        for device in track.devices {
-            let mine = all.filter { $0.node == device.id.rawValue }
-            if !mine.isEmpty { groups.append(LaneGroup(id: device.id.rawValue, name: device.name, targets: mine)) }
+        groups(project.automationTargets(of: track), mixer: [track.id.rawValue])
+    }
+
+    /// The targets grouped by the node they belong to, in the order of the list: the mixer of a track, then
+    /// one group per device (a device inside a rack too), named after the part of the names before the
+    /// parameter ("Rack › Chain 1 › Auto Filter").
+    static func groups(_ targets: [AutomationTarget], mixer: Set<UUID>) -> [LaneGroup] {
+        var order: [UUID] = []
+        var byNode: [UUID: [AutomationTarget]] = [:]
+        for t in targets {
+            if byNode[t.node] == nil { order.append(t.node) }
+            byNode[t.node, default: []].append(t)
         }
-        return groups.filter { !$0.targets.isEmpty }
+        return order.map { node in
+            let mine = byNode[node]!
+            let prefix = mine[0].name.components(separatedBy: " › ").dropLast().joined(separator: " › ")
+            let name = mixer.contains(node) ? (prefix.isEmpty ? "Mixer" : prefix + " › Mixer") : (prefix.isEmpty ? "Mixer" : prefix)
+            return LaneGroup(id: node, name: name, targets: mine)
+        }
     }
 
     /// The parameter name without the "Device › " prefix, for use under the device's own heading.
@@ -354,7 +366,7 @@ private extension AutomationTarget {
 }
 
 /// A row of the lane menus: the parameter name, with a dot in front when it holds automation points.
-private func laneLabel(_ target: AutomationTarget, automated: Set<ParameterAddress>) -> Text {
+func laneLabel(_ target: AutomationTarget, automated: Set<ParameterAddress>) -> Text {
     automated.contains(target.address) ? Text("● ") + Text(LaneGroup.shortName(target)) : Text(LaneGroup.shortName(target))
 }
 

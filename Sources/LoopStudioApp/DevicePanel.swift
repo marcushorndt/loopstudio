@@ -9,6 +9,15 @@ struct KnobAutomation {
     var laneShown: Bool
     var toggleLane: () -> Void
     var clear: () -> Void
+    /// The selected clip, when it can carry a lane for this parameter: its name, whether that lane holds
+    /// points, and the way to open it in the clip inspector.
+    var clip: ClipEntry?
+
+    struct ClipEntry {
+        var name: String
+        var hasCurve: Bool
+        var open: () -> Void
+    }
 }
 
 /// A knob that can follow the tempo: free (ms or Hz) or a note value.
@@ -111,6 +120,9 @@ struct Knob: View {
             if let automation {
                 Button(automation.laneShown ? "Hide Automation Curve" : "Show Automation Curve", action: automation.toggleLane)
                 Button("Clear Automation", action: automation.clear).disabled(!automation.hasCurve)
+                if let clip = automation.clip {
+                    Button(clip.hasCurve ? "Show Clip Automation (\(clip.name))" : "Automate in Clip \(clip.name)", action: clip.open)
+                }
                 Divider()
             }
             if param.rotary {
@@ -731,11 +743,7 @@ struct AudioUnitKnobs: View {
         return Knob(param: param, value: value, tint: Theme.accent,
                     onChange: { model.setDeviceParam(track.id, device.id, k.key, param.clamp($0)) },
                     onReset: { model.setDeviceParam(track.id, device.id, k.key, nil) },
-                    automation: KnobAutomation(
-                        hasCurve: track.automation.contains { $0.target == address && !$0.points.isEmpty },
-                        laneShown: model.isLaneShown(track, address),
-                        toggleLane: { model.toggleLaneAndReveal(track, address) },
-                        clear: { model.apply(.setAutomation(track: track.id, target: address, points: [])) }),
+                    automation: model.knobAutomation(track, address),
                     format: k.choices.isEmpty ? { unit.displayString(k.address, $0) ?? param.format($0) } : nil)
             .allowsHitTesting(driven == nil)
             .overlay(alignment: .topTrailing) { if let driven { MacroBadge(track: track, address: address, driving: driven) } }

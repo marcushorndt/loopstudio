@@ -91,6 +91,13 @@ The test keeps real-time pace on purpose, which found the next item.
 
 ### P2-1. Host sync of the machines' own sequencers
 
+**Host side done 2026-11-17.** The transport state block now carries the arrangement loop as `cycleStart`
+and `cycleEnd` in beats with the `cycling` flag (`Renderer.setLoop`, `AudioUnitEffect.setSongPosition`),
+and `changed` marks a start, a stop, a locate (also while stopped), a loop wrap and a tempo change, each
+once. Test `theTransportBlockCarriesTheLoopAndMarksTheJumps`
+(`Tests/LoopStudioEngineTests/TransportStateTests.swift`, Apple's delay in process). **Still open:** the live
+SYNC test with the plugin window (SYNC on, play, stop, jump to bar 2, tempo change, loop). Original text follows.
+
 - The 303, 808, 909 and (with a good ROM) the 101 have their own sequencers. The SYNC pill on the
   plugin's bar makes the firmware follow the host transport: MIDI clock, start or song position and
   continue, and stop (see the TR-909 README, "Sync").
@@ -221,12 +228,31 @@ Original text follows the findings.
 
 ### P3-2. Knobs for AU parameters, and MIDI map
 
+**Done 2026-11-17.** An Audio Unit card shows its parameters as knobs (`AudioUnitKnobs` in
+`Sources/LoopStudioApp/DevicePanel.swift`): foldable rows per parameter group, or pages of 16 when the
+tree is flat, with the plugin's own value strings. A knob writes `AUParameter.value` with the host as
+originator (`AudioUnitEffect.setParameter`); `AppModel.setDeviceParam` routes every `au.` key there, so a
+mapped CC moves the parameter. Hidden: no display name, not writable, a meter. The AU API has no hidden
+flag, so a slot the plugin names ("Slot 20") still shows; an empty name hides it. The reset goes to the
+value at load (the AU v3 API has no default value). No undo for a plugin knob: the plugin state carries it.
+Tests `hiddenAndGroupedParametersMakeTheRightKnobs` and `theGazeAUGivesItsKnobs`
+(`Tests/LoopStudioEngineTests/AudioUnitKnobTests.swift`). Not checked by hand: the panel in the running app.
+Original text follows.
+
 - Open since 2026-11-02: AU parameters have no knobs in LoopStudio's UI, so MIDI map mode cannot
   reach them. Automation lanes already list them (`automatableParameters`, up to 256).
 - Lemus helps here: its 128 slots keep their addresses across updates, and unused slots probably
   have no machine name. Hide those slots.
 
 ### P3-3. MIDI for an AU effect (the QuadraVerb GT)
+
+**Done 2026-11-17.** The renderer sends every `aumf` of a MIDI track (racks included) the track's MIDI next
+to the instrument's: notes, controls and program changes from clips and from live input, in the live engine
+and in a bounce (`MIDIFanout` in `Renderer.swift`, `RenderPlan.takesMIDI`). A stop, a loop wrap and a plan
+swap release its notes like an instrument's. A music effect counts as a note target, so a MIDI track with
+only the QuadraVerb GT gets no "has no instrument" warning. Tests `aMusicEffectGetsTheNotesOfItsTrack` and
+`aMusicEffectTakesLiveNotesWhileStopped` (`Tests/LoopStudioEngineTests/MusicEffectMIDITests.swift`, a
+registered in-process `aumf`). Not done: the QuadraVerb GT itself was not played. Original text follows.
 
 - An `aumf` is an effect that also takes MIDI. LoopStudio's `EffectPlan` sends it none. Only needed if
   you want program changes or CCs into the QuadraVerb GT from a clip.

@@ -112,6 +112,37 @@ This is the same method Lemus uses against unit recordings, with a better oracle
 Milestones 1 to 3 are the sound and can be checked without any UI through `gaze-render`.
 Order of value for drones: 1, 3, 2, then 4.
 
+### Status, 2026-11-17
+
+Repo `~/Documents/repos/gaze`, 13 test programs, all green under `ctest`. Every port was checked
+against the original JavaScript under node (the oracle in `tools/jsref`), record for record or
+sample for sample:
+
+| Part | State | Check |
+|---|---|---|
+| core, filters, the ten core pedals | done | bit exact, pedals within 1.3e-3 |
+| amp (five models), guitar and bass | done | 6e-8, 1e-9 |
+| the eight Gaze pedals (WALL .. SUSTAIN) | done | 35 vectors at float precision |
+| GRAINS (Clouds), HALL (Cloud Seed), the md-device runtime | done, vendored with licences | 11 vectors, 6e-8 and 1.6e-6 |
+| drums: six voices, four kits, rooms, bus | done | 39 vectors at float precision |
+| tape loop and the seven cassettes | done | 26 vectors at float precision |
+| room graph, cables, loops, air, OUT with Blink's compressor | done | 3 rooms, 3e-8 (the air room 4.5e-3 after 1.2 s: a feedback system) |
+| harmony engine, tunings, patterns | done | 11,000 records exact |
+| transport, song, gear schedulers | done | 8,938 records of the fourteen rooms exact |
+| the fourteen presets, room JSON round trip | done | all load and render |
+| plugin: programs, state, 128 knob slots, host sync, MIDI | done | auval passes; a LoopStudio bounce through THE ROOM gives -3.9 dBFS |
+| the desk UI (milestone 5) | open | the generic editor with a room picker and PLAY stands in |
+| multi-out buses, separate effect plugins (milestone 6) | open | |
+
+Milestones 0 to 4 and the presets of 6 are in. Decisions on the way: `gaze_dsp` builds without
+fast-math (it flipped one comparison in the RADIO cassette); the room runs GRAINS and HALL bare and
+keeps the page's dry, send and wet gains itself; JUCE's copy step did not refresh the installed AU,
+so the install is `rm -rf` plus `cp -R` of `build/gaze_artefacts/Release/AU/Gaze.component` into
+`~/Library/Audio/Plug-Ins/Components`, then `killall AudioComponentRegistrar` and `auval -v aumu Gaze Mrhd`.
+MIDI in the plugin: C2 to G2 strum the eight pads of the leading guitar, notes above pick a string
+with the lowest fret, CC 1 is the arm, CC 64 is MUTE, a program change picks a room. PLAY follows the
+host transport (bar and beat from the ppq position) or the PLAY switch in the standalone.
+
 ## 7. What LoopStudio needs for it
 
 From `docs/lemus-handover.md`, now also for Gaze:

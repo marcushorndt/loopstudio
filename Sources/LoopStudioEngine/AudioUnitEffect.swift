@@ -57,7 +57,6 @@ public final class AudioUnitEffect: @unchecked Sendable {
     private var cachedKnobGroups: [AUKnobGroup]?
     private let parameterBlock: AUScheduleParameterBlock
     /// Parameters that accept a ramp. Others ignore an event with a ramp, so they get a step.
-    private let rampable: Set<AUParameterAddress>
     public let channels: Int
     public let maxFrames: Int
 
@@ -156,7 +155,6 @@ public final class AudioUnitEffect: @unchecked Sendable {
         renderBlock = unit.renderBlock
         // Valid only once render resources exist.
         parameterBlock = unit.scheduleParameterBlock
-        rampable = Set(unit.parameterTree?.allParameters.filter { $0.flags.contains(.flag_CanRamp) }.map(\.address) ?? [])
         outputList = AudioBufferList.allocate(maximumBuffers: channels)
         inputPointers = .allocate(capacity: channels)
         inputPointers.initialize(repeating: nil, count: channels)
@@ -249,10 +247,14 @@ public final class AudioUnitEffect: @unchecked Sendable {
         }
     }
 
-    /// Moves a parameter to `value`, starting `sampleOffset` frames into the next `process` call,
-    /// over `ramp` frames. Realtime safe.
+    /// Moves a parameter to `value`, starting `sampleOffset` frames into the next `process` call.
+    /// Realtime safe. `ramp` is the length of the step the caller walks (the renderer's 32-frame grid): the
+    /// event is sent as an immediate one, never as a ramped one. A version 2 plugin built with JUCE (the
+    /// Lemus machines among them) drops ramped events and takes immediate ones; a step of 32 frames is
+    /// smooth enough that nothing is lost.
     public func scheduleParameter(_ address: AUParameterAddress, _ value: Float, sampleOffset: Int, ramp: Int) {
-        parameterBlock(AUEventSampleTime(sampleTime) + AUEventSampleTime(sampleOffset), AUAudioFrameCount(rampable.contains(address) ? max(0, ramp) : 0), address, value)
+        _ = ramp
+        parameterBlock(AUEventSampleTime(sampleTime) + AUEventSampleTime(sampleOffset), 0, address, value)
     }
 
     /// The parameters automation can move: writable ones with a usable range.

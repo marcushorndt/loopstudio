@@ -435,6 +435,7 @@ struct SlotLook {
 private struct NewTrackColumn: View {
     @Environment(AppModel.self) private var model
     let rows: Int
+    @State private var targeted = false
 
     var body: some View {
         VStack(spacing: gap) {
@@ -445,12 +446,20 @@ private struct NewTrackColumn: View {
                 Image(systemName: "plus").frame(maxWidth: .infinity, minHeight: 30)
             }
             .menuStyle(.borderlessButton).foregroundStyle(Theme.dim)
-            Text("Drop audio here\nfor a new track").font(.caption).foregroundStyle(Theme.dim.opacity(0.6)).multilineTextAlignment(.center)
+            Text("Drop audio or a device\nhere for a new track").font(.caption).foregroundStyle(Theme.dim.opacity(0.6)).multilineTextAlignment(.center)
                 .padding(.top, 20)
             Spacer()
         }
         .frame(width: columnWidth * 0.6, height: CGFloat(rows) * (slotHeight + gap) + 30)
-        .dropDestination(for: DropItem.self) { items, _ in model.dropOnNewTrack(items) }
+        .overlay {
+            // The drag over it says where the new track comes: the whole column lights up.
+            if targeted {
+                RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.accent.opacity(0.12))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
+                    .allowsHitTesting(false)
+            }
+        }
+        .dropDestination(for: DropItem.self) { items, _ in model.dropOnNewTrack(items) } isTargeted: { targeted = $0 }
     }
 }
 

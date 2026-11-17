@@ -67,12 +67,39 @@ extension AppModel {
         return used
     }
 
-    /// On empty space: a file makes a new audio track, an instrument a new MIDI track, an effect goes on the selected track.
+    /// On empty space: a file makes a new audio track, an instrument a new MIDI track, an effect a new audio track.
     @discardableResult
     func dropOnNewTrack(_ items: [DropItem]) -> Bool {
         var used = false
         if !items.files.isEmpty { used = dropOnNewTrack(items.files) || used }
-        if !items.devices.isEmpty { used = dropDevices(items.devices, on: nil) || used }
+        if !items.devices.isEmpty { used = dropDevicesOnNewTrack(items.devices) || used }
+        return used
+    }
+
+    /// Every dragged device gets a track of its own: a MIDI track named after an instrument, an audio track
+    /// for an effect, a preset or a moved device card.
+    @discardableResult
+    func dropDevicesOnNewTrack(_ items: [String]) -> Bool {
+        var used = false
+        for item in items {
+            if item.hasPrefix("au:") {
+                let parts = item.dropFirst(3).split(separator: "|", maxSplits: 1).map(String.init)
+                guard parts.count == 2 else { continue }
+                if parts[0].hasPrefix("aumu") {
+                    placeInstrument(DeviceSlot(format: "audiounit", identifier: parts[0], name: parts[1]), on: nil)
+                    used = true
+                    continue
+                }
+            } else if item.hasPrefix("fx:"), let spec = BuiltInEffects.spec(String(item.dropFirst(3))), spec.isInstrument,
+                      let slot = BuiltInEffects.makeSlot(spec.id) {
+                placeInstrument(slot, on: nil)
+                used = true
+                continue
+            }
+            addTrack(kind: .audio)
+            guard let track = project.tracks.last?.id else { continue }
+            used = dropDevices([item], on: track) || used
+        }
         return used
     }
 }

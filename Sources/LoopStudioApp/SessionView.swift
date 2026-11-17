@@ -170,13 +170,7 @@ private struct TrackColumn: View {
             ForEach(0..<rows, id: \.self) { row in SlotCell(track: track, row: row) }
         }
         .frame(width: columnWidth)
-        .overlay {
-            if deviceOver {
-                RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.accent.opacity(0.12))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
-                    .allowsHitTesting(false)
-            }
-        }
+        .overlay(alignment: .top) { if deviceOver { TrackOutline(rows: rows) } }
     }
 
     private var header: some View {
@@ -453,15 +447,28 @@ private struct NewTrackColumn: View {
             Spacer()
         }
         .frame(width: columnWidth * 0.6, height: CGFloat(rows) * (slotHeight + gap) + 30)
-        .overlay {
-            // The drag over it says where the new track comes: the whole column lights up.
-            if targeted {
-                RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.accent.opacity(0.12))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
-                    .allowsHitTesting(false)
-            }
-        }
+        // The drag over it shows the track that the drop makes: its header and its slots, as an outline.
+        .overlay(alignment: .top) { if targeted { TrackOutline(rows: rows) } }
         .dropDestination(for: DropItem.self) { items, _ in model.dropOnNewTrack(items) } isTargeted: { targeted = $0 }
+    }
+}
+
+/// The outline of a track column, the header and one box per slot, drawn in the accent over the place a
+/// drop would go. It takes no clicks.
+private struct TrackOutline: View {
+    let rows: Int
+
+    var body: some View {
+        VStack(spacing: gap) {
+            box.frame(height: 30)
+            ForEach(0..<rows, id: \.self) { _ in box.frame(height: slotHeight) }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private var box: some View {
+        RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.accent.opacity(0.1))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
     }
 }
 

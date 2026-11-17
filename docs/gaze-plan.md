@@ -131,7 +131,10 @@ sample for sample:
 | transport, song, gear schedulers | done | 8,938 records of the fourteen rooms exact |
 | the fourteen presets, room JSON round trip | done | all load and render |
 | plugin: programs, state, 128 knob slots, host sync, MIDI | done | auval passes; a LoopStudio bounce through THE ROOM gives -3.9 dBFS |
-| the desk UI (milestone 5) | open | the generic editor with a room picker and PLAY stands in |
+| the desk UI, phases A and B (milestone 5) | done | pixel layer, scene, gear, cables, tidy, gestures, top bar with rooms, SAVE and DELETE ROOM, PLAY, TEMPO, FIT; 18 tests |
+| the desk UI, phase C | in work | gear picker and removal, selection and sheets (pads, neck, drum steps, tape file), song composer |
+| OUT pans, WIDTH, PLACE | done | a pan per channel, bit exact at centre; the desk places by position |
+| user rooms | done | JSON files in Application Support/Gaze/Rooms |
 | multi-out buses, separate effect plugins (milestone 6) | open | |
 
 Milestones 0 to 4 and the presets of 6 are in. Decisions on the way: `gaze_dsp` builds without

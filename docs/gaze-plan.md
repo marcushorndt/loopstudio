@@ -132,7 +132,7 @@ sample for sample:
 | the fourteen presets, room JSON round trip | done | all load and render |
 | plugin: programs, state, 128 knob slots, host sync, MIDI | done | auval passes; a LoopStudio bounce through THE ROOM gives -3.9 dBFS |
 | the desk UI, phases A and B (milestone 5) | done | pixel layer, scene, gear, cables, tidy, gestures, top bar with rooms, SAVE and DELETE ROOM, PLAY, TEMPO, FIT; 18 tests |
-| the desk UI, phase C | in work | gear picker and removal, selection and sheets (pads, neck, drum steps, tape file), song composer |
+| the desk UI, phase C | done | + GEAR picker and REMOVE, selection and sheets (pads, neck, tune, sound; drum steps; tape cassettes and YOURS file; amp and pedal), SONG composer, amp air arcs, CAPTURE flash; 20 tests. Open: a real pointer pass on the drags, the desk does not re-fit when a sheet opens |
 | OUT pans, WIDTH, PLACE | done | a pan per channel, bit exact at centre; the desk places by position |
 | user rooms | done | JSON files in Application Support/Gaze/Rooms |
 | multi-out buses, separate effect plugins (milestone 6) | open | |

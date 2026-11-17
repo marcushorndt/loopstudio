@@ -102,6 +102,40 @@ The test keeps real-time pace on purpose, which found the next item.
 
 ### P2-2. Project state: patterns and big states
 
+**Done 2026-11-17, for the parts that need no plugin window.** Tests `the303StateRoundTripKeepsAKnob`
+and `theLemusStateSizes` (`Tests/LoopStudioEngineTests/LemusTests.swift`, run with `LOOPSTUDIO_LEMUS=1`).
+Original text follows the findings.
+
+- The 303 round trip works. The test moves CUT OFF (slot `p002`, AU address 3384258) to 0.25, reads
+  `fullState`, restores it into a fresh instance, and gets the value back. The 303 gives 128 writable
+  parameters. The first 19 carry the machine's names: Tuning, Cut Off Freq, Resonance, Env Mod, Decay,
+  Accent, Volume, Waveform, Tempo, Mode, Track / Patt. Group, Sync to Host, TM1 to TM6, Full Cut Off.
+  The rest are named `Slot 20` to `Slot 128` and can be hidden (see P3-2). A pattern travels in the
+  same state: the `machine` property of the JUCE value tree holds the battery-backed RAM as base64
+  (`machines/tb303/plugin/PluginProcessor.cpp:534`). The panel part of the test stays manual.
+- State sizes, as `savedState()` writes them (binary property list):
+
+  | Machine | At load | After 1 s (Virus C: 6 s) of rendering |
+  |---|---|---|
+  | 303 | 6,442 bytes | 6,442 bytes |
+  | 808 | 8,573 bytes | 8,573 bytes |
+  | 909 | 13,555 bytes | 13,555 bytes |
+  | Virus C | 2,491 bytes | 221,021 bytes (0.21 MB) |
+
+- The Virus C is far below 2 MB. Its state is small until the firmware has booted (about four seconds
+  in the live engine), then it is 216 KB. A save in those first seconds stores the small state. Open
+  question: what the Virus C restores from the small state; probably its factory state.
+- Autosave: `save()` calls `captureStates()`, which reads `fullState` of every hosted plugin on the main
+  thread (`PluginHost.states()`). `ProjectPackage.write` then encodes each track as JSON, with the state
+  as base64 (4/3 of its size: 295 KB for one Virus C), and writes a track file only when its bytes
+  changed. 1.5 s after an edit that is one 221 KB read and one JSON encode per Virus C: no problem.
+  Ten Virus C instances give about 3 MB of track files; still fine.
+- Journal: a plugin state never enters the journal through `captureStates`, because it writes into
+  `project` directly, not as a command. A state goes into a journal line only when a command carries a
+  `DeviceSlot` with one: a paste from the device clipboard (`snapshot` in `AppModel+DeviceClipboard.swift`)
+  or a preset load (`setDevices` in `AppModel+Presets.swift`). One Virus C paste is one 295 KB line with
+  an fsync. No problem at these sizes.
+
 - Each machine keeps its patterns in emulated RAM, and `savedState()` stores `fullState` in the
   project (`AudioUnitEffect.swift:231`).
 - Test: write a 303 pattern on the panel, save, quit, reopen. The pattern must be there.
@@ -118,6 +152,58 @@ The test keeps real-time pace on purpose, which found the next item.
   process and out of process.
 
 ### P2-4. MIDI channels
+
+**Done 2026-11-17.** Test `theLemusMachinesAnswerOnTheseMIDIChannels`
+(`Tests/LoopStudioEngineTests/LemusTests.swift`, `LOOPSTUDIO_LEMUS=1`, about 50 s at real-time pace).
+Original text follows the findings.
+
+- The 303 and the 909 answer on channel 1 (status 0x90), channel 10 (0x99) and channel 2 (0x91). A
+  clip on channel 1 reaches both. No change in LoopStudio is needed.
+- Peaks, note-on velocity 100 (303: note 48; 909: note 36): 303 0.125 / 0.129 / 0.127 on channels
+  1 / 10 / 2; 909 0.606 / 0.608 / 0.596. The 909 snare, note 38 on channel 1: 0.773.
+- Why: the 303 plays its voice from MIDI with no channel setting. The 909 firmware is omni at power-on
+  with basic channel 10 (`machines/tr909/docs/firmware.md`, "MIDI"). SHUFFLE/FLAM + a step key n in
+  track play mode sets the receive channel to n and omni off. That setting lives in the 909's RAM, so
+  a state from another host can be on one channel only. The 808 plays its voices from MIDI like the
+  303; not measured.
+- Drum map of the TR-909 (`machines/tr909/docs/firmware.md`, "The voice board latches"; also in its
+  README). Velocity sets the accent code: 50 is the sequencer's normal level, 80 its accent.
+
+  | Note | Voice |
+  |---|---|
+  | 35, 36 | BD, bass drum |
+  | 38, 40 | SD, snare drum |
+  | 41, 43 | LT, low tom |
+  | 45, 47 | MT, mid tom |
+  | 48, 50 | HT, hi tom |
+  | 37 | RS, rim shot |
+  | 39 | HC, hand clap |
+  | 42, 44 | CH, closed hi-hat |
+  | 46 | OH, open hi-hat |
+  | 49 | Crash cymbal |
+  | 51 | Ride cymbal |
+
+  Other notes are ignored. Note-off and velocity 0 are ignored.
+
+- Drum map of the TR-808 (`machines/tr808/plugin/PluginProcessor.cpp`, `noteVoice`; General MIDI
+  numbers, as Roland's TR-08). Velocity 100 or more is an accent. The conga, claves and maracas notes
+  play the shared rows; the panel's voice switch picks the sound.
+
+  | Note | Voice |
+  |---|---|
+  | 35, 36 | BD, bass drum |
+  | 38, 40 | SD, snare drum |
+  | 37, 75 | RS, rim shot (75: claves, same row) |
+  | 39, 70 | CP, hand clap (70: maracas, same row) |
+  | 41, 43, 64 | LT, low tom (64: low conga, same row) |
+  | 45, 47, 63 | MT, mid tom (63: mid conga, same row) |
+  | 48, 50, 62 | HT, hi tom (62: hi conga, same row) |
+  | 42, 44 | CH, closed hi-hat |
+  | 46 | OH, open hi-hat |
+  | 49, 57 | CY, cymbal |
+  | 56 | CB, cowbell |
+
+  Other notes are ignored.
 
 - Clip notes keep their channel in the status byte. Check which channel each machine listens on
   (the TR-909 firmware has its own MIDI channel settings) and whether a clip on channel 1 reaches it.
@@ -146,6 +232,14 @@ The test keeps real-time pace on purpose, which found the next item.
   you want program changes or CCs into the QuadraVerb GT from a clip.
 
 ### P3-4. MCP
+
+**Done 2026-11-17.** Test `anAssistantCanBounceA303Line`
+(`Tests/LoopStudioControlTests/LemusControlTests.swift`, `LOOPSTUDIO_LEMUS=1`). The calls: `track_add`
+(midi), `command_apply` with `insertDevice` for `aumu/R303/Lmus`, `clip_create`, `notes_set` with four
+notes, `render_bounce`. Result: 2.25 s, peak -18.1 dBFS, RMS -35.9 dBFS, no warnings. The bounce
+loads the 303 in its own offline instance, out of process. Note: `device_add` takes built-in devices
+only; an Audio Unit goes in through `command_apply` with `insertDevice`, as the tool's description says.
+A `device_add` that also accepts an AU identifier would make this one call. Original text follows.
 
 - `device_add` with the identifiers in the table above loads a machine, which lets the assistant build
   a 303 and 909 set. A test: load `aumu/R303/Lmus` on a MIDI track, write a clip, render a bounce and

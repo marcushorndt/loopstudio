@@ -1,0 +1,32 @@
+LOOPSTUDIO, a private build
+
+What you need
+  A Mac with Apple Silicon and macOS 26.
+
+Install
+  1. Double-click Install.command. If macOS refuses it: right-click it, choose Open.
+     On macOS 15 and later go to System Settings > Privacy & Security and click
+     "Open Anyway" after the first refusal.
+  2. The installer copies LoopStudio.app to /Applications and the plugins to
+     ~/Library/Audio/Plug-Ins/Components. It removes the download mark from
+     these files, because this build is signed with a development certificate
+     and not notarized by Apple.
+  3. Start LoopStudio from /Applications. The first start asks for the
+     microphone (audio input) and for the local network (Ableton Link).
+
+Plugins in this image
+  Gaze.component            a shoegaze room: guitars, amps, pedals, tapes, drums
+  remote-midi.component     MIDI over the network
+  ro-mono-303, ro-mono-101, ro-drums-808, ro-drums-909, ac-digital-vc,
+  al-fx-quadgt              the Lemus machines (AGPL v3, source:
+                            https://github.com/lemus-dev/lemus)
+
+ROMs for the Lemus machines
+  The Lemus machines run the firmware of the original instruments. The ROM
+  dumps are copyrighted and are NOT in this image. Put your own dumps here:
+    ~/Library/Application Support/Lemus/ROMs
+  Lemus lists the expected file names, sizes and checksums in each machine's
+  picker. A machine without its ROMs does not load; everything else works.
+
+Licences
+  See the Licenses folder. LoopStudio itself is GPL v3.

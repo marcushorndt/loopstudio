@@ -113,7 +113,7 @@ public enum ReadBack {
         switch command {
         case .batch(let commands):
             for c in commands { out += changes(for: c, before: before, after: after) }
-        case .insertTrack, .removeTrack:
+        case .insertTrack, .removeTrack, .moveTrack:
             pair("tracks", b.trackList, a.trackList)
         case .setTrackName(let id, _):
             pair("\(b.trackName(id)) › name", b.trackName(id), a.trackName(id))

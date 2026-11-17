@@ -46,6 +46,8 @@ public enum Command: Codable, Sendable {
 
     case insertTrack(track: Track, index: Int)
     case removeTrack(id: TrackID)
+    /// Moves a track to `index` in the track list; the master stays where it is.
+    case moveTrack(id: TrackID, index: Int)
     case setTrackName(id: TrackID, name: String)
     case setTrackColor(id: TrackID, colorIndex: Int)
     case setVolume(id: TrackID, db: Double)
@@ -205,6 +207,14 @@ extension Project {
             tracks.insert(track, at: index)
             try checkRouting()
             return .removeTrack(id: track.id)
+
+        case .moveTrack(let id, let index):
+            guard id != master.id else { throw CommandError.cannotChangeMaster }
+            guard let from = tracks.firstIndex(where: { $0.id == id }) else { throw CommandError.trackNotFound(id) }
+            guard tracks.indices.contains(index) else { throw CommandError.invalidValue("track index \(index)") }
+            let moved = tracks.remove(at: from)
+            tracks.insert(moved, at: index)
+            return .moveTrack(id: id, index: from)
 
         case .removeTrack(let id):
             guard id != master.id else { throw CommandError.cannotChangeMaster }

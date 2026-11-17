@@ -34,6 +34,8 @@ extension Array where Element == DropItem {
             if case .device(let s) = $0, ["fx:", "au:", "preset:", "device:", "devicecopy:"].contains(where: { s.hasPrefix($0) }) { s } else { nil }
         }
     }
+    /// Tracks dragged by their header: "track:<id>".
+    var tracks: [TrackID] { compactMap { if case .device(let s) = $0 { AppModel.draggedTrack(s) } else { nil } } }
     /// Session slots dragged by their name: "slot:<track>:<row>".
     var slots: [(track: TrackID, row: Int)] {
         compactMap {
@@ -46,6 +48,35 @@ extension Array where Element == DropItem {
 }
 
 extension AppModel {
+    /// The string a track header drags.
+    nonisolated static func trackDrag(_ id: TrackID) -> String { "track:\(id.rawValue.uuidString)" }
+
+    nonisolated static func draggedTrack(_ s: String) -> TrackID? {
+        guard s.hasPrefix("track:"), let uuid = UUID(uuidString: String(s.dropFirst(6))) else { return nil }
+        return TrackID(uuid)
+    }
+
+    /// A track header took a drop: a dragged track lands in front of it, a device lands on it.
+    @discardableResult
+    func dropOnTrackHeader(_ items: [String], track: TrackID) -> Bool {
+        let moved = items.compactMap(Self.draggedTrack)
+        if !moved.isEmpty {
+            for id in moved { moveTrack(id, before: track) }
+            return true
+        }
+        return dropDevices(items, on: track)
+    }
+
+    /// Moves a track in front of `target`, or to the end with `nil`. The master never moves.
+    func moveTrack(_ id: TrackID, before target: TrackID?) {
+        guard id != target, let from = project.tracks.firstIndex(where: { $0.id == id }) else { return }
+        let to = target.flatMap { t in project.tracks.firstIndex { $0.id == t } } ?? project.tracks.count
+        let index = from < to ? to - 1 : to
+        guard index != from else { return }
+        apply(.moveTrack(id: id, index: index))
+        selectedTrack = id
+    }
+
     /// Files make clips in the slot, devices go on the track.
     @discardableResult
     func dropOnSlot(_ items: [DropItem], track: TrackID, row: Int) -> Bool {
@@ -73,6 +104,7 @@ extension AppModel {
         var used = false
         if !items.files.isEmpty { used = dropOnNewTrack(items.files) || used }
         if !items.devices.isEmpty { used = dropDevicesOnNewTrack(items.devices) || used }
+        for id in items.tracks { moveTrack(id, before: nil); used = true }
         return used
     }
 

@@ -186,8 +186,11 @@ private struct ArrangementHeader: View {
         .contextMenu {
             if track.kind == .master { AutomationLanesMenu(track: track) } else { TrackMenuItems(track: track, showsAutomation: true) }
         }
+        // The header drags the track: dropped on another header it moves in front of that track.
+        .draggable(track.kind == .master ? "" : AppModel.trackDrag(track.id))
         .dropDestination(for: String.self) { items, _ in
-            return model.dropDevices(items, on: track.id)
+            if track.kind == .master { return model.dropOnNewTrack(items.map(DropItem.device)) }
+            return model.dropOnTrackHeader(items, track: track.id)
         }
     }
 

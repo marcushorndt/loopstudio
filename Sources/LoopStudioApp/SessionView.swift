@@ -196,8 +196,10 @@ private struct TrackColumn: View {
         // The single click acts at once; a double-click also opens the inspector.
         .onTapGesture { model.focusTrack(track.id) }
         .simultaneousGesture(TapGesture(count: 2).onEnded { model.openTrackInspector(track.id) })
+        // The header drags the track: dropped on another header it moves in front of that track.
+        .draggable(AppModel.trackDrag(track.id))
         .dropDestination(for: String.self) { items, _ in
-            return model.dropDevices(items, on: track.id)
+            return model.dropOnTrackHeader(items, track: track.id)
         } isTargeted: { over in
             guard DragPasteboard.carriesDevices else { return }
             if over { model.deviceDragTrack = track.id } else if model.deviceDragTrack == track.id { model.deviceDragTrack = nil }

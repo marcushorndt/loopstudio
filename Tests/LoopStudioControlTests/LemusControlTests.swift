@@ -64,3 +64,36 @@ private struct Client {
     #expect(peak > -40, "the bounce is not silent (peak \(peak) dBFS)")
     #expect(FileManager.default.fileExists(atPath: out))
 }
+
+/// The Gaze plugin (repo `gaze`, an AU built from JUCE like the Lemus machines) plays a guitar into an amp from
+/// clip notes, through the same tools. It renders offline without a boot wait. Skipped where it is not installed.
+@Test func anAssistantCanBounceAGazeGuitar() async throws {
+    guard AudioUnitCatalog.list().contains(where: { $0.identifier == "aumu/Gaze/Mrhd" }) else { return }
+    var client = Client()
+    let path = FileManager.default.temporaryDirectory.appendingPathComponent("gaze-\(UUID().uuidString).loopstudio").path
+    _ = try await client.call("project_new", ["path": .string(path)])
+    let added = try await client.call("track_add", ["name": .string("Gaze"), "kind": .string("midi")])
+    #expect(!added.isError, Comment(rawValue: added.text))
+    let trackText = try #require(added.data["track"]?.stringValue)
+    let track = TrackID(try #require(UUID(uuidString: trackText)))
+    let insert = Command.insertDevice(track: track, device: DeviceSlot(format: "audiounit", identifier: "aumu/Gaze/Mrhd", name: "Gaze"), index: 0)
+    let device = try await client.call("command_apply", ["command": try JSONValue(encoding: insert)])
+    #expect(!device.isError, Comment(rawValue: device.text))
+    let clip = try await client.call("clip_create", ["track": .string("Gaze"), "kind": .string("midi"), "length": .number(3840)])
+    #expect(!clip.isError, Comment(rawValue: clip.text))
+    let clipID = try #require(clip.data["clip"]?.stringValue)
+    // An E minor shape, strummed as four notes, held to the end of the bar.
+    let notes: [JSONValue] = [40, 47, 52, 55].enumerated().map { i, pitch in
+        .object(["tick": .number(Double(i * 60)), "length": .number(3600), "pitch": .number(Double(pitch)), "velocity": .number(100)])
+    }
+    let written = try await client.call("notes_set", ["clip": .string(clipID), "notes": .array(notes)])
+    #expect(!written.isError, Comment(rawValue: written.text))
+    let out = FileManager.default.temporaryDirectory.appendingPathComponent("gaze-\(UUID().uuidString).wav").path
+    let bounce = try await client.call("render_bounce", ["path": .string(out), "tailSeconds": .number(1)])
+    #expect(!bounce.isError, Comment(rawValue: bounce.text))
+    let peak = try #require(bounce.data["peakDb"]?.doubleValue)
+    let warnings = bounce.data["warnings"]?.arrayValue ?? []
+    print("Gaze bounce: \(bounce.data["seconds"]?.doubleValue ?? 0) s, peak \(peak) dBFS, rms \(bounce.data["rmsDb"]?.doubleValue ?? 0) dBFS, warnings \(warnings)")
+    #expect(warnings.isEmpty, "Gaze loaded for the bounce: \(warnings)")
+    #expect(peak > -30, "the guitar came through the amp (peak \(peak) dBFS)")
+}

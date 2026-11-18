@@ -430,8 +430,11 @@ private struct Lane: View {
         .contentShape(Rectangle())
         // A click on empty space picks the track and puts the playhead there, snapped: play goes on from
         // there, or starts there later while stopped. Simultaneous, so the double click of a MIDI track and
-        // the marquee of the view above do not hold it back.
+        // the marquee of the view above do not hold it back; a click on a clip is the clip's and is skipped here.
         .simultaneousGesture(SpatialTapGesture().onEnded { v in
+            let onClip = v.location.y < model.laneHeight(track)
+                && track.clips.contains { tickX($0.start, model) <= v.location.x && v.location.x < tickX($0.start + $0.length, model) }
+            guard !onClip else { return }
             model.selectedTrack = track.id
             model.clearSelection()
             if v.location.y < model.laneHeight(track) {
@@ -491,6 +494,9 @@ private struct ArrangementClip: View {
         let selected = model.selectedClips.contains(clip.id) || model.selectedClip == clip.id
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.clipBody(clip.colorIndex ?? track.colorIndex))
+            // The header strip in the clip colour, like Live's: it is the grip of the clip.
+            UnevenRoundedRectangle(topLeadingRadius: Theme.radius, topTrailingRadius: Theme.radius)
+                .fill(tint.opacity(selected ? 0.95 : 0.7)).frame(height: Self.headerHeight)
             if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                 let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
                 // A looping clip dragged out past the file start shows the end of the file there.

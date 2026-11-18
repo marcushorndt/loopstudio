@@ -671,16 +671,17 @@ struct AudioUnitKnobs: View {
     static let perRow = 8
     static let perPage = 16
 
-    /// Pages of a flat list; 1 for a grouped tree, which scrolls instead.
+    /// Pages of a flat list; 1 for a grouped tree, which scrolls instead. A plugin that puts every parameter
+    /// into one group (the Lemus machines: "GLOBAL") is a flat list too: paged, not a row of blocks.
     static func pageCount(_ unit: AudioUnitEffect) -> Int {
         let groups = unit.knobGroups()
-        guard groups.count == 1, groups[0].name.isEmpty else { return 1 }
+        guard groups.count == 1 else { return 1 }
         return max(1, (groups[0].knobs.count + perPage - 1) / perPage)
     }
 
     var body: some View {
         let groups = unit.knobGroups()
-        let flat = groups.count == 1 && groups[0].name.isEmpty
+        let flat = groups.count == 1
         let _ = model.pluginParamRevision
         TimelineView(.animation(minimumInterval: 0.1, paused: !model.transportPlaying)) { _ in
             if groups.isEmpty {
@@ -703,9 +704,10 @@ struct AudioUnitKnobs: View {
         let pages = max(1, (knobs.count + Self.perPage - 1) / Self.perPage)
         let p = min(max(page, 0), pages - 1)
         let shown = Array(knobs[(p * Self.perPage)..<min(knobs.count, (p + 1) * Self.perPage)])
+        let name = unit.knobGroups().first.map { $0.name.isEmpty ? device.name : $0.name } ?? device.name
         return VStack(alignment: .leading, spacing: DeviceLayout.groupGap) {
             ForEach(Array(shown.chunked(Self.perRow).enumerated()), id: \.offset) { row in
-                KnobSection(title: row.offset == 0 ? (pages > 1 ? "\(device.name) \(p + 1)/\(pages)" : device.name) : " ") {
+                KnobSection(title: row.offset == 0 ? (pages > 1 ? "\(name) \(p + 1)/\(pages)" : name) : " ") {
                     ForEach(row.element, id: \.address) { knob($0) }
                 }
             }

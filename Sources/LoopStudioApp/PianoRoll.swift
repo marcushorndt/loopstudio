@@ -655,7 +655,7 @@ struct PianoRoll: View {
                 applyVelocity(model, clip, targets: d.targets, start: d.start, delta: delta)
             }
             .onEnded { _ in velocityDrag = nil; lineDrag = nil })
-        .hint("Velocity lane. Drag a marker up or down; marked notes change together. Control and drag on a note does the same. Option and drag: a velocity line.")
+        .hint("Velocity lane. Drag a marker up or down; marked notes change together. Command (or Control) and a drag on a note does the same. Option and drag: a velocity line.")
     }
 
     /// The velocities under a line from `a` to `b`: each note between them (the marked notes, or all) takes the
@@ -1050,9 +1050,10 @@ private struct NoteView: View {
                     .onChanged { g in
                         if dragMode == nil {
                             let flags = NSEvent.modifierFlags
-                            invert = flags.contains(.command)
-                            if flags.contains(.control) {
-                                // Control: the note stays, the drag up or down changes the velocity.
+                            invert = false
+                            if flags.contains(.control) || flags.contains(.command) {
+                                // Command (as in Live) or Control at the start: the note stays, the drag up or
+                                // down changes the velocity. Command pressed later, during a move, switches the grid.
                                 let group = selected && model.selectedNotes.count > 1 ? clip.notes.filter { model.selectedNotes.contains($0) } : [note]
                                 dragMode = .velocity(targets: group, start: group.map(\.velocity))
                             } else {
@@ -1105,7 +1106,7 @@ private struct NoteView: View {
             Menu("Velocity") { ForEach([32, 64, 96, 127], id: \.self) { v in Button("\(v)") { replace { $0.velocity = UInt8(v) } } } }
             Button(note.muted ? "Activate" : "Deactivate") { replace { $0.muted.toggle() } }
             Divider()
-            Text("Drag: move · Option drag: copy · Control drag up/down: velocity · Command: the other grid · 0: deactivate").font(.caption)
+            Text("Drag: move · Option drag: copy · Command (or Control) drag up/down: velocity · Command during a move: the other grid · 0: deactivate").font(.caption)
         }
     }
 

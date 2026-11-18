@@ -434,7 +434,9 @@ private struct Lane: View {
         .simultaneousGesture(SpatialTapGesture().onEnded { v in
             model.selectedTrack = track.id
             model.clearSelection()
-            if v.location.y < model.laneHeight(track) { model.seek(to: model.snap(xTick(v.location.x, model))) }
+            if v.location.y < model.laneHeight(track) {
+                model.seek(to: model.snap(xTick(v.location.x, model), alt: NSEvent.modifierFlags.contains(.option)))
+            }
         })
         .contextMenu { LaneMenu(track: track) }
         .gesture(SpatialTapGesture(count: 2).onEnded { v in
@@ -456,6 +458,8 @@ private struct ArrangementClip: View {
     @State private var trimStart: Tick?
     /// While the right edge is dragged: the new end, snapped.
     @State private var resizeEnd: Tick?
+    /// A drag in the body marks a range; a plain click there places the playhead instead.
+    @State private var marking = false
 
     /// The earliest start of the left edge: the first sample of an audio file, else the timeline start.
     /// A looping audio clip goes round its file, so it can start anywhere.
@@ -507,6 +511,53 @@ private struct ArrangementClip: View {
         }
         .frame(width: w, height: model.laneHeight(track) - 6)
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : tint.opacity(0.55), lineWidth: selected ? 1.5 : 1))
+        // The header: a click marks the clip, a drag moves it. The body: a click places the playhead, a drag
+        // marks a time range in the clip. Both honour the grid; Option does the opposite.
+        .overlay(alignment: .top) {
+            Rectangle().fill(.clear).frame(height: Self.headerHeight).contentShape(Rectangle())
+                .onTapGesture {
+                    model.select(clip: clip.id, extend: NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command))
+                    model.selectedTrack = track.id
+                }
+                .gesture(DragGesture(minimumDistance: 4)
+                    .onChanged { g in
+                        if !model.selectedClips.contains(clip.id) { model.select(clip: clip.id, extend: false) }
+                        drag = g.translation
+                        model.groupDrag = g.translation
+                    }
+                    .onEnded { g in
+                        drag = .zero
+                        model.groupDrag = .zero
+                        let alt = NSEvent.modifierFlags.contains(.option)
+                        let start = model.snap(xTick(x + g.translation.width, model), alt: alt)
+                        let shift = model.rowIndex(atY: model.rowTop(trackIndex) + model.laneHeight(track) / 2 + g.translation.height) - trackIndex
+                        model.moveClips(Array(model.selectedClips.union([clip.id])), deltaTicks: start.rawValue - clip.start.rawValue, trackShift: shift)
+                    })
+                .hint("Header: click to mark the clip, drag to move it. Option skips the grid.")
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(.clear).frame(height: max(0, model.laneHeight(track) - 6 - Self.headerHeight)).contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        guard abs(g.translation.width) > 3 else { return }
+                        let alt = NSEvent.modifierFlags.contains(.option)
+                        marking = true
+                        model.selectRange(from: model.snap(bodyTick(g.startLocation.x), alt: alt),
+                                          to: model.snap(bodyTick(g.location.x), alt: alt), tracks: [track.id])
+                    }
+                    .onEnded { g in
+                        let alt = NSEvent.modifierFlags.contains(.option)
+                        if marking {
+                            model.selectRange(from: model.snap(bodyTick(g.startLocation.x), alt: alt),
+                                              to: model.snap(bodyTick(g.location.x), alt: alt), tracks: [track.id])
+                        } else {
+                            model.selectedTrack = track.id
+                            model.seek(to: model.snap(bodyTick(g.location.x), alt: alt))
+                        }
+                        marking = false
+                    })
+                .hint("Body: click to place the playhead, drag to mark a range. ⌘E splits the clip at its ends, Delete takes it out and leaves a gap, ⇧⌘Delete takes the time out of the arrangement. Option skips the grid.")
+        }
         // A clip narrower than its two grips has no body to grab: the grips go, the clip can still be moved.
         .overlay(alignment: .leading) {
             if w >= 24 { Rectangle().fill(.clear).frame(width: 8).contentShape(Rectangle())
@@ -543,24 +594,15 @@ private struct ArrangementClip: View {
         }
         .offset(x: x + trim + shown.width, y: 3 + shown.height)
         .zIndex(shown == .zero ? 0 : 10)
-        .onTapGesture {
-            model.select(clip: clip.id, extend: NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command))
-            model.selectedTrack = track.id
-        }
-        .gesture(DragGesture(minimumDistance: 4)
-            .onChanged { g in
-                if !model.selectedClips.contains(clip.id) { model.select(clip: clip.id, extend: false) }
-                drag = g.translation
-                model.groupDrag = g.translation
-            }
-            .onEnded { g in
-                drag = .zero
-                model.groupDrag = .zero
-                let start = model.snap(xTick(x + g.translation.width, model))
-                let shift = model.rowIndex(atY: model.rowTop(trackIndex) + model.laneHeight(track) / 2 + g.translation.height) - trackIndex
-                model.moveClips(Array(model.selectedClips.union([clip.id])), deltaTicks: start.rawValue - clip.start.rawValue, trackShift: shift)
-            })
         .contextMenu { ArrangementClipMenu(clip: clip, track: track) }
+    }
+
+    /// The height of the header strip with the name; the body is the rest.
+    static let headerHeight: CGFloat = 16
+
+    /// The tick under an x in the clip body; a drag may leave the clip to the left or the right.
+    private func bodyTick(_ x: CGFloat) -> Tick {
+        Tick(max(0, clip.start.rawValue + Int64(Double(x) / model.pixelsPerBar * Double(model.barTicks))))
     }
 }
 

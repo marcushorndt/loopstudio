@@ -1613,6 +1613,7 @@ final class AppModel {
         }
         if trackFocused { deleteFocusedTracks(); return }
         if let scene = selectedScene { deleteScene(scene); return }
+        if let r = rangeSelection, r.end > r.start { deleteRange(r); return }
         var commands: [Command] = []
         for id in selectedClips.isEmpty ? Set(selectedClip.map { [$0] } ?? []) : selectedClips {
             guard let (track, clip) = project.findClip(id) else { continue }
@@ -2212,9 +2213,10 @@ final class AppModel {
         return true
     }
 
-    /// A tick on the arrangement grid while the grid switch (⌘4) is on, else the exact tick.
-    func snap(_ tick: Tick) -> Tick {
-        guard snapNotes else { return Tick(max(0, tick.rawValue)) }
+    /// A tick on the arrangement grid while the grid switch (⌘4) is on, else the exact tick. `alt` (the Option
+    /// key during a click or drag) does the opposite of the switch.
+    func snap(_ tick: Tick, alt: Bool = false) -> Tick {
+        guard snapNotes != alt else { return Tick(max(0, tick.rawValue)) }
         let grid = arrangementGrid
         return Tick(max(0, (tick.rawValue + grid / 2) / grid * grid))
     }

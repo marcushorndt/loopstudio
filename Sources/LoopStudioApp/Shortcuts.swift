@@ -5,7 +5,7 @@ import SwiftUI
 /// shortcut sheet all read this one table, so they cannot disagree.
 enum AppAction: String, CaseIterable, Identifiable {
     case newProject, newDemo, save, saveAs, exportAudio
-    case undo, redo, cut, copy, paste, duplicate, deleteSelection, splitAtPlayhead, deactivateClip, drawMode
+    case undo, redo, cut, copy, paste, duplicate, deleteSelection, deleteTime, splitAtPlayhead, deactivateClip, drawMode
     case record, toggleMetronome, play, pause, stopRewind, stopAllClips, loopSelection, loopToggle, backToArrangement, captureSession
     case insertAudioTrack, insertMIDITrack, insertReturnTrack, insertGroupTrack, groupTracks, ungroup, renameTrack, duplicateTrack
     case insertScene, deleteScene, duplicateScene
@@ -22,7 +22,7 @@ enum AppAction: String, CaseIterable, Identifiable {
     var category: Category {
         switch self {
         case .newProject, .newDemo, .save, .saveAs, .exportAudio: .file
-        case .undo, .redo, .cut, .copy, .paste, .duplicate, .deleteSelection, .splitAtPlayhead, .deactivateClip, .drawMode: .edit
+        case .undo, .redo, .cut, .copy, .paste, .duplicate, .deleteSelection, .deleteTime, .splitAtPlayhead, .deactivateClip, .drawMode: .edit
         case .record, .toggleMetronome, .play, .pause, .stopRewind, .stopAllClips, .loopSelection, .loopToggle, .backToArrangement, .captureSession: .transport
         case .insertAudioTrack, .insertMIDITrack, .insertReturnTrack, .insertGroupTrack, .groupTracks, .ungroup, .renameTrack, .duplicateTrack: .track
         case .insertScene, .deleteScene, .duplicateScene: .scene
@@ -47,8 +47,9 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .copy: "Copy"
         case .paste: "Paste"
         case .duplicate: "Duplicate"
-        case .deleteSelection: "Delete"
-        case .splitAtPlayhead: "Split at Playhead"
+        case .deleteSelection: "Delete (a marked range leaves a gap)"
+        case .deleteTime: "Delete Time (the arrangement closes up)"
+        case .splitAtPlayhead: "Split at Playhead or at the Marked Range"
         case .deactivateClip: "Activate / Deactivate Clip or Marked Notes"
         case .selectAll: "Select All (notes of the open clip, else the clips)"
         case .drawMode: "Draw Mode (Pen)"
@@ -117,6 +118,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .paste: KeyBinding("v", .command)
         case .duplicate: KeyBinding("d", .command)
         case .deleteSelection: KeyBinding("\u{7F}", [])
+        case .deleteTime: KeyBinding("\u{7F}", [.command, .shift])
         case .splitAtPlayhead: KeyBinding("e", .command)
         case .deactivateClip: KeyBinding("0", [])
         case .drawMode: KeyBinding("b", [])

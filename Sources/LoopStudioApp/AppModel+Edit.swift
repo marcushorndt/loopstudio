@@ -28,7 +28,8 @@ extension AppModel {
         switch action {
         case .undo: canUndo
         case .redo: canRedo
-        case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil) || !selectedNotes.isEmpty
+        case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil) || !selectedNotes.isEmpty || rangeSelection != nil
+        case .deleteTime: rangeSelection != nil
             || selectedScene != nil || selectedDevice != nil
         case .cut, .copy: !selectedClips.isEmpty || selectedClip != nil || deviceFocused
         case .duplicate: !selectedClips.isEmpty || selectedClip != nil || !selectedNotes.isEmpty || selectedScene != nil || (trackFocused && selectedTrack != nil) || deviceFocused
@@ -67,6 +68,7 @@ extension AppModel {
             else if trackFocused, selectedClips.isEmpty, selectedClip == nil, selectedScene == nil, let t = selectedTrack { duplicateTrack(t) }
             else { duplicateSelection() }
         case .deleteSelection: deleteSelected()
+        case .deleteTime: deleteTime()
         case .drawMode:
             // The pen belongs to the piano roll: without an open MIDI clip the key does nothing.
             guard drawMode || (detailTab == .clip && selectedClip.flatMap { project.findClip($0) }.map { if case .midi = $0.1 { true } else { false } } == true) else {
@@ -556,28 +558,110 @@ extension AppModel {
 
     // MARK: Clip tools
 
-    /// Cuts every marked clip (or every clip under the cursor on the selected track) in two at the cursor.
+    /// Cuts every marked clip (or every clip under the cursor on the selected track) at the cursor. With a time
+    /// range marked, the cuts are at both ends of the range instead, so the range becomes clips of its own.
     func splitAtPlayhead() {
-        let at = currentTick
+        let cuts = rangeSelection.map { [$0.start, $0.end] } ?? [currentTick]
         var commands: [Command] = []
         for t in project.tracks {
             let marked = t.clips.filter { selectedClips.contains($0.id) }
             let targets = marked.isEmpty && t.id == selectedTrack && selectedClips.isEmpty ? t.clips : marked
-            for c in targets where c.start < at && at < c.start + c.length {
-                let head = at - c.start
-                guard let second = c.tail(from: head) else { continue }
-                // The first half keeps its notes, envelopes and automation; it only gets shorter.
+            for c in targets {
+                let inside = cuts.filter { c.start < $0 && $0 < c.start + c.length }.sorted()
+                guard let first = inside.first else { continue }
+                // The first piece keeps its notes, envelopes and automation; it only gets shorter.
+                let head = first - c.start
                 commands.append(.setClipRange(clip: c.id, start: c.start, length: head))
-                if case .midi(let m) = c {
-                    let first = m.notes.filter { $0.tick < head }.map { n -> MIDINote in
-                        var n = n; n.length = Tick(min(n.length.rawValue, head.rawValue - n.tick.rawValue)); return n
-                    }
-                    commands.append(.setMIDINotes(clip: m.id, notes: first))
+                if case .midi(let m) = c { commands.append(.setMIDINotes(clip: m.id, notes: notes(m, before: head))) }
+                for (i, cut) in inside.enumerated() {
+                    guard var piece = c.tail(from: cut - c.start) else { continue }
+                    if i + 1 < inside.count { piece = shortened(piece, to: inside[i + 1] - cut) }
+                    commands.append(.insertClip(track: t.id, clip: fresh(piece, start: piece.start)))
                 }
-                commands.append(.insertClip(track: t.id, clip: fresh(second, start: second.start)))
             }
         }
         if !commands.isEmpty { apply(.batch(commands: commands)) }
+    }
+
+    /// The notes of a MIDI clip that start before `head`, cut off there.
+    private func notes(_ m: MIDIClip, before head: Tick) -> [MIDINote] {
+        m.notes.filter { $0.tick < head }.map { n -> MIDINote in
+            var n = n; n.length = Tick(min(n.length.rawValue, head.rawValue - n.tick.rawValue)); return n
+        }
+    }
+
+    /// A clip cut off at `length`: the notes past it go.
+    private func shortened(_ clip: Clip, to length: Tick) -> Clip {
+        switch clip {
+        case .audio(var a): a.length = length; return .audio(a)
+        case .midi(var m): m.length = length; m.notes = notes(m, before: length); return .midi(m)
+        case .dummy(var d): d.length = length; return .dummy(d)
+        }
+    }
+
+    /// The commands that take the time `start..<end` out of one clip on `track`: the part before stays as
+    /// the clip, the part after comes back as a new clip, moved left by `shift`.
+    private func removing(from start: Tick, to end: Tick, in c: Clip, track: TrackID, shift: Tick = 0) -> [Command] {
+        let clipEnd = c.start + c.length
+        guard start < clipEnd, end > c.start else { return [] }
+        if start <= c.start, end >= clipEnd { return [.removeClip(clip: c.id)] }
+        var commands: [Command] = []
+        if start > c.start {
+            let head = start - c.start
+            commands.append(.setClipRange(clip: c.id, start: c.start, length: head))
+            if case .midi(let m) = c { commands.append(.setMIDINotes(clip: m.id, notes: notes(m, before: head))) }
+        } else {
+            commands.append(.removeClip(clip: c.id))
+        }
+        if end < clipEnd, let rest = c.tail(from: end - c.start) {
+            commands.append(.insertClip(track: track, clip: fresh(rest, start: rest.start - shift)))
+        }
+        return commands
+    }
+
+    /// Delete with a time range marked: the range goes out of the clips on the marked tracks and leaves a gap.
+    func deleteRange(_ r: RangeSelection) {
+        var commands: [Command] = []
+        for t in project.allTracks where r.tracks.contains(t.id) {
+            for c in t.clips { commands += removing(from: r.start, to: r.end, in: c, track: t.id) }
+        }
+        rangeSelection = nil
+        selectedClips = []
+        selectedClip = nil
+        guard !commands.isEmpty else { status = "Nothing in the marked range"; return }
+        apply(.batch(commands: commands))
+        status = "Removed the marked range; the time stays"
+    }
+
+    /// ⇧⌘Delete: the marked time goes out of the whole arrangement. Clips, automation and the loop brace after
+    /// it move left, as in Live.
+    func deleteTime() {
+        guard let r = rangeSelection, r.end > r.start else { status = "Mark a time range first"; return }
+        let shift = r.end - r.start
+        var commands: [Command] = []
+        for t in project.allTracks {
+            for c in t.clips {
+                if c.start >= r.end { commands.append(.moveClip(clip: c.id, toTrack: t.id, start: c.start - shift)) }
+                else { commands += removing(from: r.start, to: r.end, in: c, track: t.id, shift: shift) }
+            }
+            for lane in t.automation {
+                let points = lane.points.compactMap { p -> AutomationPoint? in
+                    if p.tick < r.start { return p }
+                    if p.tick < r.end { return nil }
+                    var p = p; p.tick = p.tick - shift; return p
+                }
+                if points.count != lane.points.count { commands.append(.setAutomation(track: t.id, target: lane.target, points: points)) }
+            }
+        }
+        if let loop = project.loop, loop.start >= r.end {
+            commands.append(.setLoop(loop: LoopRegion(start: loop.start - shift, end: loop.end - shift, enabled: loop.enabled)))
+        }
+        rangeSelection = nil
+        selectedClips = []
+        selectedClip = nil
+        if !commands.isEmpty { apply(.batch(commands: commands)) }
+        if currentTick >= r.end { seek(to: currentTick - shift) } else if currentTick > r.start { seek(to: r.start) }
+        status = "Deleted \(gridName(shift.rawValue, bar: barTicks)) of time"
     }
 
     /// Sets the loop brace to the span of the marked clips.

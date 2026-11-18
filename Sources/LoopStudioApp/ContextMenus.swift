@@ -112,6 +112,12 @@ struct ArrangementClipMenu: View {
     }
 
     var body: some View {
+        if model.rangeSelection != nil {
+            AppAction.splitAtPlayhead.button(model, run: act(.splitAtPlayhead))
+            AppAction.deleteSelection.button(model, run: act(.deleteSelection))
+            AppAction.deleteTime.button(model, run: act(.deleteTime))
+            Divider()
+        }
         AppAction.cut.button(model, run: act(.cut))
         AppAction.copy.button(model, run: act(.copy))
         AppAction.paste.button(model)

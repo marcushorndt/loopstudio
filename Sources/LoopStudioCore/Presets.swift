@@ -18,6 +18,7 @@ public struct DevicePreset: Codable, Sendable, Equatable {
         self.name = name
         var d = device
         d.sidechain = nil
+        d.sidechainTap = nil
         d.folded = nil
         d.bypassed = false
         self.device = d
@@ -38,6 +39,7 @@ public struct DevicePreset: Codable, Sendable, Equatable {
         slot.id = existing.id
         slot.bypassed = existing.bypassed
         slot.sidechain = existing.sidechain
+        slot.sidechainTap = existing.sidechainTap
         slot.folded = existing.folded
         return slot
     }

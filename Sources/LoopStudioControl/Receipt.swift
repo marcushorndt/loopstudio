@@ -145,7 +145,7 @@ public enum ReadBack {
             pair("\(a.trackName(t)) › \(a.deviceName(t, d)) › \(name)", b.paramValue(t, d, key), a.paramValue(t, d, key))
         case .setDeviceBypass(let t, let d, _):
             pair("\(a.trackName(t)) › \(a.deviceName(t, d)) › bypass", b.bypass(t, d), a.bypass(t, d))
-        case .setDeviceSidechain(let t, let d, _):
+        case .setDeviceSidechain(let t, let d, _), .setDeviceSidechainTap(let t, let d, _):
             pair("\(a.trackName(t)) › \(a.deviceName(t, d)) › sidechain", b.sidechain(t, d), a.sidechain(t, d))
         case .setDeviceSource(let t, let d, _, _):
             pair("\(a.trackName(t)) › \(a.deviceName(t, d)) › patch", b.patchSummary(t, d), a.patchSummary(t, d))
@@ -265,7 +265,9 @@ public enum ReadBack {
             return dev.params[key].map { String(format: "%.3f", $0) } ?? "default"
         }
         func bypass(_ t: TrackID, _ d: DeviceID) -> String? { device(t, d).map { ReadBack.onOff($0.bypassed) } }
-        func sidechain(_ t: TrackID, _ d: DeviceID) -> String? { device(t, d).map { $0.sidechain.map(trackName) ?? "own input" } }
+        func sidechain(_ t: TrackID, _ d: DeviceID) -> String? {
+            device(t, d).map { slot in slot.sidechain.map { "\(trackName($0)) (\(slot.tap.name.lowercased()))" } ?? "own input" }
+        }
         /// A patch in one line: its name, its knobs, its length; or its compile error.
         func patchSummary(_ t: TrackID, _ d: DeviceID) -> String? {
             guard let dev = device(t, d) else { return nil }

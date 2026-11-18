@@ -13,6 +13,8 @@ public final class Renderer {
     private let nodes: UnsafeMutablePointer<NodePlan>
     private let nodeCount: Int
     private let buffers: UnsafeMutablePointer<Float> // per node: left block, right block
+    /// Per node: its sound before its effects and after them (left, right each), kept for a sidechain that taps there.
+    private let tapBuffers: UnsafeMutablePointer<Float>
     private let peaks: UnsafeMutablePointer<Float>   // per node: largest left and right sample since the last `takePeak`
     /// Session clock minus timeline clock for the block being rendered.
     private var sessionOffset: Int64 = 0
@@ -71,6 +73,7 @@ public final class Renderer {
         let unitAuto: [(address: AUParameterAddress, lane: AutoLane)]
         /// The node this effect listens to (a sidechain), rendered before this one.
         let sidechain: Int?
+        let sidechainTap: SidechainTap
         /// Delay compensation for the sidechain: the source's sound waits here until this effect's input, which
         /// went through more latency, catches up. `nil` when both arrive together.
         let sidechainLine: DelayLine?
@@ -80,8 +83,10 @@ public final class Renderer {
         /// and its tempo clock read that much earlier.
         let shift: Int64
         init(effect: DSPEffect?, unit: AudioUnitEffect?, bypassed: Bool, auto: [String: AutoLane], params: [String: Double], sidechain: Int? = nil,
-             sidechainLine: DelayLine? = nil, rack: RackRuntime? = nil, mapped: Set<String> = [], spec: EffectSpec? = nil, shift: Int = 0) {
+             sidechainTap: SidechainTap = .postMixer, sidechainLine: DelayLine? = nil, rack: RackRuntime? = nil, mapped: Set<String> = [],
+             spec: EffectSpec? = nil, shift: Int = 0) {
             self.effect = effect; self.unit = unit; self.bypassed = bypassed; self.sidechain = sidechain; self.rack = rack
+            self.sidechainTap = sidechainTap
             self.sidechainLine = sidechainLine; self.shift = Int64(shift)
             let sorted = auto.map { ($0.key, $0.value) }.sorted { $0.0 < $1.0 }
             self.auto = sorted
@@ -200,7 +205,7 @@ public final class Renderer {
                 made[e.device] = found.0
                 let scLine = e.sidechain == nil ? nil : line(e.sidechainDelay, "sc|\(e.device.rawValue.uuidString)")
                 let slot = Slot(effect: found.0, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params, sidechain: e.sidechain,
-                                sidechainLine: scLine, mapped: e.mappedKeys, shift: e.shift)
+                                sidechainTap: e.sidechainTap, sidechainLine: scLine, mapped: e.mappedKeys, shift: e.shift)
                 slot.needsConfigure = found.running
                 slotIndex[e.device.rawValue] = (slot, found.0.spec)
                 chain.append(slot)
@@ -288,6 +293,8 @@ public final class Renderer {
         for i in 0..<nodeCount { nodes[i].synthUnit = synthUnits[i] }
         buffers = .allocate(capacity: nodeCount * 2 * maxBlock)
         buffers.initialize(repeating: 0, count: nodeCount * 2 * maxBlock)
+        tapBuffers = .allocate(capacity: nodeCount * 4 * maxBlock)
+        tapBuffers.initialize(repeating: 0, count: nodeCount * 4 * maxBlock)
         scratchIn = .allocate(capacity: 2 * maxBlock); scratchIn.initialize(repeating: 0, count: 2 * maxBlock)
         scratchOut = .allocate(capacity: 2 * maxBlock); scratchOut.initialize(repeating: 0, count: 2 * maxBlock)
         inPointers = .allocate(capacity: 2)
@@ -315,6 +322,7 @@ public final class Renderer {
         nodes.deinitialize(count: nodeCount)
         nodes.deallocate()
         buffers.deallocate()
+        tapBuffers.deallocate()
         peaks.deallocate()
         held.deallocate()
         sessionHeld.deallocate()
@@ -653,6 +661,10 @@ public final class Renderer {
 
     @inline(__always) private func left(_ node: Int) -> UnsafeMutablePointer<Float> { buffers + node * 2 * maxBlock }
     @inline(__always) private func right(_ node: Int) -> UnsafeMutablePointer<Float> { buffers + (node * 2 + 1) * maxBlock }
+    @inline(__always) private func preLeft(_ node: Int) -> UnsafeMutablePointer<Float> { tapBuffers + node * 4 * maxBlock }
+    @inline(__always) private func preRight(_ node: Int) -> UnsafeMutablePointer<Float> { tapBuffers + (node * 4 + 1) * maxBlock }
+    @inline(__always) private func postLeft(_ node: Int) -> UnsafeMutablePointer<Float> { tapBuffers + (node * 4 + 2) * maxBlock }
+    @inline(__always) private func postRight(_ node: Int) -> UnsafeMutablePointer<Float> { tapBuffers + (node * 4 + 3) * maxBlock }
 
     /// Renders `frames` frames that start at project frame `startFrame` into `outLeft` and `outRight`.
     /// With `transport` false the arrangement and session clips and the MIDI clips stay silent, but hosted
@@ -730,7 +742,10 @@ public final class Renderer {
             }
             // Each effect reads its automation as late as the sound reaches it; the fader and the sends, as
             // late as the sound leaves the node.
+            // A sidechain elsewhere taps this node before its effects, or after them: keep that copy.
+            if node.tapPreFX { preLeft(i).update(from: l, count: frames); preRight(i).update(from: r, count: frames) }
             for slot in chains[i] where !slot.bypassed { runSlot(slot, l, r, startFrame: startFrame - slot.shift, frames: frames) }
+            if node.tapPostFX { postLeft(i).update(from: l, count: frames); postRight(i).update(from: r, count: frames) }
             let leaves = startFrame - Int64(node.outputShift)
 
             for (k, send) in node.sends.enumerated() where send.preFader { sendOut(send, sendLines[i][k], l, r, startFrame: leaves, frames: frames) }
@@ -856,7 +871,14 @@ public final class Renderer {
         if slot.needsConfigure || slot.dirty { effect.configure(slot.live); slot.needsConfigure = false; slot.dirty = false }
         // A sidechain reads the output of a node that rendered before this one in this block. When this
         // effect's own input went through more latency, the source waits in a line by the difference.
-        var scL = slot.sidechain.map { UnsafePointer(left($0)) }, scR = slot.sidechain.map { UnsafePointer(right($0)) }
+        var scL: UnsafePointer<Float>?, scR: UnsafePointer<Float>?
+        if let s = slot.sidechain {
+            switch slot.sidechainTap {
+            case .preFX: scL = UnsafePointer(preLeft(s)); scR = UnsafePointer(preRight(s))
+            case .postFX: scL = UnsafePointer(postLeft(s)); scR = UnsafePointer(postRight(s))
+            case .postMixer: scL = UnsafePointer(left(s)); scR = UnsafePointer(right(s))
+            }
+        }
         if let line = slot.sidechainLine, let sl = scL, let sr = scR {
             line.process(sl, sr, frames: frames)
             scL = UnsafePointer(line.outLeft); scR = UnsafePointer(line.outRight)

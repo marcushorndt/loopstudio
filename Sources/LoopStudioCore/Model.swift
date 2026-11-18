@@ -579,6 +579,9 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
     public var pluginParams: [PluginParam]?
     /// The track a sidechain effect (a compressor) listens to instead of its own input. `nil`: its own input.
     public var sidechain: TrackID?
+    /// Where on that track the sidechain taps the sound. `nil`: after the mixer, the oldest behaviour.
+    public var sidechainTap: SidechainTap?
+    public var tap: SidechainTap { sidechainTap ?? .postMixer }
     /// View state: the card is folded to its title. Saved with the project, like the arm state; no undo.
     public var folded: Bool?
     /// The chains and macros of a rack ("audiorack", "midirack"). `nil` for every other device. See `Rack`.
@@ -601,7 +604,7 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
         self.source = source
     }
 
-    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params, pluginParams, sidechain, folded, rack, source }
+    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params, pluginParams, sidechain, sidechainTap, folded, rack, source }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -614,11 +617,26 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
         params = try c.decodeIfPresent([String: Double].self, forKey: .params) ?? [:]
         pluginParams = try c.decodeIfPresent([PluginParam].self, forKey: .pluginParams)
         sidechain = try c.decodeIfPresent(TrackID.self, forKey: .sidechain)
+        sidechainTap = try c.decodeIfPresent(SidechainTap.self, forKey: .sidechainTap)
         folded = try c.decodeIfPresent(Bool.self, forKey: .folded)
         rack = try c.decodeIfPresent(Rack.self, forKey: .rack)
         source = try c.decodeIfPresent(String.self, forKey: .source)
         // A rack by identifier always has its chains, even from a file that left them out.
         if rack == nil, format == "builtin", identifier == "audiorack" || identifier == "midirack" { rack = Rack() }
+    }
+}
+
+/// Where a sidechain taps its source track, as in Live: before the track's devices, after them, or after
+/// its fader and pan (the track's output).
+public enum SidechainTap: String, Codable, Sendable, CaseIterable, Hashable {
+    case preFX, postFX, postMixer
+
+    public var name: String {
+        switch self {
+        case .preFX: "Pre FX"
+        case .postFX: "Post FX"
+        case .postMixer: "Post Mixer"
+        }
     }
 }
 

@@ -142,6 +142,8 @@ public enum Command: Codable, Sendable {
     case setDeviceSource(track: TrackID, device: DeviceID, source: String?, name: String?)
     /// The track a sidechain effect listens to. `nil`: its own input.
     case setDeviceSidechain(track: TrackID, device: DeviceID, source: TrackID?)
+    /// Where the sidechain taps that track: before its devices, after them, or after its mixer.
+    case setDeviceSidechainTap(track: TrackID, device: DeviceID, tap: SidechainTap)
 
     /// Racks. `rack` is the rack device (any depth on the track).
     case addChain(track: TrackID, rack: DeviceID, chain: RackChain, index: Int?)
@@ -789,6 +791,19 @@ extension Project {
                     device.sidechain = source
                 }
                 return .setDeviceSidechain(track: trackID, device: id, source: old)
+            }
+
+        case .setDeviceSidechainTap(let trackID, let id, let tap):
+            return try withTrack(trackID) { t in
+                var old: SidechainTap = .postMixer
+                try t.withDevice(id) { device in
+                    guard device.format == "builtin", BuiltInEffects.spec(device.identifier)?.sidechain == true else {
+                        throw CommandError.invalidValue("\(device.name) has no sidechain input")
+                    }
+                    old = device.tap
+                    device.sidechainTap = tap
+                }
+                return .setDeviceSidechainTap(track: trackID, device: id, tap: old)
             }
 
         case .addChain(let trackID, let rackID, let chain, let index):

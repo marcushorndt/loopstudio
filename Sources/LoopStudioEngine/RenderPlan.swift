@@ -73,6 +73,8 @@ struct EffectPlan {
     var unit: AudioUnitEffect? = nil
     /// The node whose output the effect listens to (a sidechain). It renders before this node.
     var sidechain: Int? = nil
+    /// Where on that node the sidechain taps: before its effects, after them, or after its fader.
+    var sidechainTap: SidechainTap = .postMixer
     /// Frames the sidechain signal waits so it lines up with this effect's input, from delay compensation.
     var sidechainDelay = 0
     /// How late the sound at this effect's input is against the song clock: the node's `inputShift` plus the
@@ -200,6 +202,8 @@ struct NodePlan {
     var effects: [EffectPlan] = []
     /// Muted, or silenced by solo. The fader automation does not bring it back.
     var silenced = false
+    /// A sidechain somewhere taps this node before its effects, or after them: the renderer keeps that copy.
+    var tapPreFX = false, tapPostFX = false
     var volumeAuto: AutoLane? = nil
     var panAuto: AutoLane? = nil
     /// A hosted instrument and the notes it plays, sorted by frame (note-off before note-on on the same frame).
@@ -443,12 +447,16 @@ public struct RenderPlan {
             let t = project.track(id)!
             // Solo wins over mute: a muted track that is soloed plays. The mute button keeps its state.
             let silent = (t.mute && !t.solo) || !audible.contains(id)
+            // A sidechain source still feeds its listeners while muted or not soloed, as in Live: it renders
+            // in full, and only its output and its sends are cut. So a kick ducks a soloed bass.
+            let tapped = silent && sidechainsOrdered && listeners[id] != nil
+            let renders = !silent || tapped
             var clips: [ClipPlan] = []
             // Monitor In: the input takes the place of the clips (a muted track monitors nothing).
-            let input = t.kind == .audio && !silent && t.audioSource == .external ? inputs[id] : nil
+            let input = t.kind == .audio && renders && t.audioSource == .external ? inputs[id] : nil
             let clipsSilent = input?.mutesClips ?? false
 
-            if t.kind == .audio && !silent && !clipsSilent {
+            if t.kind == .audio && renders && !clipsSilent {
                 for case .audio(let c) in t.clips where !c.muted {
                     guard let raw = bank.buffer(for: c.asset), raw.frames > 0 else {
                         warnings.append("clip on \"\(t.name)\" has no audio (missing or unreadable file)")
@@ -483,7 +491,7 @@ public struct RenderPlan {
                     endFrame = max(endFrame, end)
                 }
             }
-            if t.kind == .audio && !silent && !clipsSilent, let session {
+            if t.kind == .audio && renders && !clipsSilent, let session {
                 for e in session.events where e.track == id {
                     guard case .audio(let c)? = project.findClip(e.clip)?.clip, !c.muted,
                           let raw = bank.buffer(for: c.asset), raw.frames > 0 else { continue }
@@ -527,7 +535,7 @@ public struct RenderPlan {
             let midiOut = t.kind == .midi ? midiOutputs[t.id] : nil
             // A music effect (`aumf`) in the chain takes the notes too, with or without an instrument in front.
             let plays = instrument != nil || synth != nil || compiled.rackSynth != nil || takesMIDI(chain)
-            if t.kind == .midi && !silent && (plays || midiOut != nil) {
+            if t.kind == .midi && renders && (plays || midiOut != nil) {
                 midi = midiEvents(of: t, session: nil, map: map, rate: rate, endFrame: &endFrame)
                 var ignored: Int64 = 0
                 sessionMidi = midiEvents(of: t, session: session, map: map, rate: rate, endFrame: &ignored, arrangement: false)
@@ -544,12 +552,12 @@ public struct RenderPlan {
             let outputTarget = t.output ?? project.master.id
             let outputHeard = project.track(outputTarget).map { $0.kind != .audio || $0.monitorMode != .off } ?? true
             nodes.append(NodePlan(
-                isMaster: false, clips: clips, gain: silent ? 0 : dB(t.volumeDb), panLeft: pl, panRight: pr,
-                output: t.isSendsOnly || !outputHeard || !keeps(t.id, outputTarget) ? nil : (t.output.flatMap { index[$0] } ?? masterIndex),
-                sends: t.sends.filter { keeps(t.id, $0.target) }.compactMap { s in index[s.target].map {
+                isMaster: false, clips: clips, gain: silent && !tapped ? 0 : dB(t.volumeDb), panLeft: pl, panRight: pr,
+                output: tapped || t.isSendsOnly || !outputHeard || !keeps(t.id, outputTarget) ? nil : (t.output.flatMap { index[$0] } ?? masterIndex),
+                sends: t.sends.filter { !tapped && keeps(t.id, $0.target) }.compactMap { s in index[s.target].map {
                     SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader,
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
-                effects: chain, silenced: silent, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, instrumentAuto: instrumentAuto, synth: synth,
+                effects: chain, silenced: silent && !tapped, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, instrumentAuto: instrumentAuto, synth: synth,
                 rackSynth: compiled.rackSynth, instrumentDevice: instrumentDevice, midi: midi, sessionMidi: sessionMidi,
                 midiOut: midiOut, arrangementEnd: arrangementEnds[t.id]))
             nodes[nodes.count - 1].noteIndex = NoteIndex(midi)
@@ -577,6 +585,17 @@ public struct RenderPlan {
                               panLeft: ml, panRight: mr, output: nil, sends: [],
                               effects: masterEffects, silenced: project.master.mute,
                               volumeAuto: lane(project.master.id.rawValue, "volume"), panAuto: lane(project.master.id.rawValue, "pan")))
+        // A sidechain that taps a node before or after its effects: the renderer keeps that copy of the node.
+        func markTaps(_ chain: [EffectPlan]) {
+            for e in chain {
+                if let s = e.sidechain {
+                    if e.sidechainTap == .preFX { nodes[s].tapPreFX = true }
+                    if e.sidechainTap == .postFX { nodes[s].tapPostFX = true }
+                }
+                if let rack = e.rack { for c in rack.chains { markTaps(c.effects) } }
+            }
+        }
+        for n in nodes { markTaps(n.effects) }
         // Input taps: a track that takes another track as input gets that track's sound, unless its monitor is off.
         for t in tracks {
             guard case .track(let source) = t.audioSource, t.monitorMode != .off, keeps(source, t.id),
@@ -800,8 +819,9 @@ public struct RenderPlan {
                 for c in rack.chains.indices { rack.chains[c].effects = sidechained(rack.chains[c].effects, of: track, index: index, before: before) }
                 e.rack = rack
             }
-            guard let source = track.device(e.device)?.sidechain, let i = index[source], i < before else { return e }
+            guard let device = track.device(e.device), let source = device.sidechain, let i = index[source], i < before else { return e }
             e.sidechain = i
+            e.sidechainTap = device.tap
             return e
         }
     }

@@ -640,10 +640,19 @@ struct DeviceCard: View {
                     model.apply(.setDeviceSidechain(track: track.id, device: device.id, source: source.id))
                 }
             }
+            if current != nil {
+                // Where the sidechain taps the source, as in Live: raw, after its devices, or after its fader.
+                Divider()
+                ForEach(SidechainTap.allCases, id: \.self) { tap in
+                    Button(tap.name + (device.tap == tap ? "  ✓" : "")) {
+                        model.apply(.setDeviceSidechainTap(track: track.id, device: device.id, tap: tap))
+                    }
+                }
+            }
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 9))
-                Text(current?.name ?? "Own Input").font(.system(size: 10)).lineLimit(1)
+                Text(current.map { "\($0.name) · \(device.tap.name)" } ?? "Own Input").font(.system(size: 10)).lineLimit(1)
             }
             .foregroundStyle(current == nil ? Theme.dim : Theme.track(current!.colorIndex))
             .padding(.horizontal, 5).frame(height: 18)
@@ -651,7 +660,7 @@ struct DeviceCard: View {
             .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-        .hint("Sidechain: the signal the detector listens to. Own input, or another track.")
+        .hint("Sidechain: the signal the detector listens to. Own input, or another track: raw (Pre FX), after its devices (Post FX) or after its fader (Post Mixer). A muted or unsoloed source still feeds the sidechain.")
     }
 }
 

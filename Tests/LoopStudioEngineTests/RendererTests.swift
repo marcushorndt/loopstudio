@@ -193,6 +193,47 @@ private func db(_ x: Float) -> Float { 20 * log10(x) }
     #expect(rig.render().left[10_000] == 0.5, "the send reaches the return, the dry path to the master stays off")
 }
 
+/// A kick with a compressor on the bass listening to it. The kick is loud, the bass soft and heavily
+/// compressed, so the bass level at the master says whether the sidechain carried the kick.
+private func sidechainRig(kickVolume: Double = 0) -> (rig: Rig, kick: TrackID, bass: TrackID, comp: DeviceID) {
+    var rig = Rig()
+    let loud = rig.asset(seconds: 1) { _ in 0.9 }, soft = rig.asset(seconds: 1) { _ in 0.1 }
+    let kick = rig.track("Kick", volume: kickVolume), bass = rig.track("Bass")
+    rig.clip(loud, on: kick); rig.clip(soft, on: bass)
+    var comp = BuiltInEffects.makeSlot("compressor")!
+    comp.params = ["threshold": -30, "ratio": 20, "knee": 0, "attack": 0.1, "release": 50]
+    try! Command.insertDevice(track: bass, device: comp, index: nil).apply(to: &rig.project)
+    try! Command.setDeviceSidechain(track: bass, device: comp.id, source: kick).apply(to: &rig.project)
+    return (rig, kick, bass, comp.id)
+}
+
+@Test func aSidechainSourceStillFeedsASoloedListener() {
+    var (rig, kick, bass, _) = sidechainRig()
+    try! Command.setSolo(id: bass, solo: true).apply(to: &rig.project)
+    let soloed = rig.render().left[20_000]
+    #expect(soloed < 0.02, "the kick ducks the soloed bass, and the kick itself stays silent: \(soloed)")
+    try! Command.setSolo(id: bass, solo: false).apply(to: &rig.project)
+    try! Command.setMute(id: kick, mute: true).apply(to: &rig.project)
+    let muted = rig.render().left[20_000]
+    #expect(muted < 0.02, "a muted kick still ducks the bass and stays silent itself: \(muted)")
+}
+
+@Test func theSidechainTapsBeforeTheEffectsAfterThemOrAfterTheFader() {
+    // The kick's fader is all the way down: Post Mixer hears nothing, Post FX and Pre FX hear the kick.
+    var (rig, kick, bass, comp) = sidechainRig(kickVolume: -100)
+    try! Command.setDeviceSidechainTap(track: bass, device: comp, tap: .postMixer).apply(to: &rig.project)
+    #expect(abs(rig.render().left[20_000] - 0.1) < 0.005, "post mixer: the kick's fader is down, nothing ducks")
+    try! Command.setDeviceSidechainTap(track: bass, device: comp, tap: .postFX).apply(to: &rig.project)
+    #expect(rig.render().left[20_000] < 0.02, "post FX: the kick before its fader ducks the bass")
+    // A utility on the kick with its gain down: Post FX hears nothing, Pre FX still hears the raw kick.
+    var util = BuiltInEffects.makeSlot("utility")!
+    util.params["gain"] = -96
+    try! Command.insertDevice(track: kick, device: util, index: nil).apply(to: &rig.project)
+    #expect(abs(rig.render().left[20_000] - 0.1) < 0.005, "post FX: the utility killed the kick, nothing ducks")
+    try! Command.setDeviceSidechainTap(track: bass, device: comp, tap: .preFX).apply(to: &rig.project)
+    #expect(rig.render().left[20_000] < 0.02, "pre FX: the raw kick ducks the bass")
+}
+
 @Test func monoSourcesPlayOnBothSides() {
     var rig = Rig()
     let a = rig.asset(seconds: 1, stereo: false) { _ in 0.4 }

@@ -957,7 +957,12 @@ final class AppModel {
     func seek(to tick: Tick) {
         engine.seek(to: frame(max(0, tick)))
         if !transportPlaying { playStart = max(0, tick) }
+        seekRevision &+= 1
     }
+
+    /// Counts the seeks. The playhead redraws on it while the transport stands still; while it runs, the
+    /// playhead follows the clock on its own.
+    private(set) var seekRevision = 0
 
     var arrangementOverridden: Bool { !session.isEmpty || !session.kept.isEmpty }
 

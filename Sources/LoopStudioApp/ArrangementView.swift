@@ -373,8 +373,9 @@ private struct Lane: View {
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .contentShape(Rectangle())
         // A click on empty space picks the track and puts the playhead there, snapped: play goes on from
-        // there, or starts there later while stopped.
-        .gesture(SpatialTapGesture().onEnded { v in
+        // there, or starts there later while stopped. Simultaneous, so the double click of a MIDI track and
+        // the marquee of the view above do not hold it back.
+        .simultaneousGesture(SpatialTapGesture().onEnded { v in
             model.selectedTrack = track.id
             model.clearSelection()
             if v.location.y < laneHeight { model.seek(to: model.snap(xTick(v.location.x, model))) }
@@ -512,6 +513,9 @@ private struct Playhead: View {
     let height: CGFloat
 
     var body: some View {
+        // A seek while stopped moves the playhead too: the timeline is paused then, so the view reads the
+        // seek count and redraws on it.
+        let _ = model.seekRevision
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !model.transportPlaying)) { _ in
             Rectangle().fill(.white).frame(width: 1.5, height: height)
                 .offset(x: tickX(model.currentTick, model))

@@ -705,11 +705,20 @@ struct AudioUnitKnobs: View {
         let p = min(max(page, 0), pages - 1)
         let shown = Array(knobs[(p * Self.perPage)..<min(knobs.count, (p + 1) * Self.perPage)])
         let name = unit.knobGroups().first.map { $0.name.isEmpty ? device.name : $0.name } ?? device.name
+        // The knobs sit inline, as in the blocks of a grouped tree: through a section's stored content
+        // closure they neither took a drag nor followed the automation.
         return VStack(alignment: .leading, spacing: DeviceLayout.groupGap) {
             ForEach(Array(shown.chunked(Self.perRow).enumerated()), id: \.offset) { row in
-                KnobSection(title: row.offset == 0 ? (pages > 1 ? "\(name) \(p + 1)/\(pages)" : name) : " ") {
-                    ForEach(row.element, id: \.address) { knob($0) }
+                VStack(alignment: .leading, spacing: 0) {
+                    Text((row.offset == 0 ? (pages > 1 ? "\(name) \(p + 1)/\(pages)" : name) : " ").uppercased())
+                        .font(.system(size: 8.5, weight: .semibold)).tracking(0.8).foregroundStyle(Theme.dim)
+                        .lineLimit(1).padding(.leading, 6).padding(.top, 3)
+                    HStack(alignment: .top, spacing: 0) { ForEach(row.element, id: \.address) { knob($0) } }
+                        .padding(.horizontal, 2).padding(.bottom, 2)
                 }
+                .frame(height: DeviceLayout.sectionHeight, alignment: .top)
+                .background(Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line.opacity(0.7), lineWidth: 1))
             }
         }
     }

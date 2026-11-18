@@ -14,6 +14,8 @@ struct ArrangementView: View {
     @State private var pinnedScroll = ScrollPosition(x: 0)
     @State private var tracksX: CGFloat = 0
     @State private var pinnedX: CGFloat = 0
+    /// A pinch in progress: the zoom at its start, the content x under the fingers, and the scroll then.
+    @State private var pinch: (pixelsPerBar: Double, x: CGFloat, scroll: CGFloat)?
 
     var body: some View {
         let tracks = model.arrangementTracks
@@ -81,6 +83,17 @@ struct ArrangementView: View {
                                 let a = model.snap(xTick(m.minX, model)), b = model.snap(xTick(m.maxX, model))
                                 model.selectRange(from: a, to: b > a ? b : a + Tick(Tick.perQuarter), tracks: ids)
                             })
+                        // A pinch zooms in time; the bar under the fingers stays under them.
+                        .simultaneousGesture(MagnifyGesture()
+                            .onChanged { g in
+                                if pinch == nil { pinch = (model.pixelsPerBar, g.startLocation.x, tracksX) }
+                                guard let p = pinch else { return }
+                                let zoom = min(420, max(24, p.pixelsPerBar * g.magnification))
+                                model.pixelsPerBar = zoom
+                                let x = p.x * zoom / p.pixelsPerBar
+                                tracksScroll.scrollTo(x: max(0, x - (p.x - p.scroll)))
+                            }
+                            .onEnded { _ in pinch = nil })
                     }
                     .scrollPosition($tracksScroll)
                     .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.x }) { _, x in
@@ -249,12 +262,78 @@ private struct Ruler: View {
     }
 }
 
+/// Where a dragged file would land on a lane: the snapped start, the file's length and its name.
+struct DropMark: Equatable {
+    var tick: Tick
+    var length: Tick
+    var name: String
+}
+
+/// The lane's drop: a file makes a clip at the pointer, a device lands on the track. While the drag hovers,
+/// the lane shows the mark; the drop itself loads the items and hands them to the model.
+@MainActor private struct LaneDrop: DropDelegate {
+    let model: AppModel
+    let track: TrackID
+    let mark: Binding<DropMark?>
+
+    private func update(_ info: DropInfo) {
+        if DragPasteboard.carriesDevices { mark.wrappedValue = nil; return }
+        let tick = model.snap(xTick(info.location.x, model))
+        guard let file = DragPasteboard.files.first else { mark.wrappedValue = DropMark(tick: tick, length: Tick(model.barTicks), name: ""); return }
+        let seconds = DragPasteboard.audioSeconds(file) ?? 2
+        let map = model.project.tempoMap
+        let length = Tick(max(1, (map.tick(atSeconds: map.seconds(at: tick) + seconds) - tick).rawValue))
+        let next = DropMark(tick: tick, length: length, name: file.deletingPathExtension().lastPathComponent)
+        if mark.wrappedValue != next { mark.wrappedValue = next }
+    }
+
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.fileURL, .text]) }
+    func dropEntered(info: DropInfo) { update(info) }
+    func dropUpdated(info: DropInfo) -> DropProposal? { update(info); return DropProposal(operation: .copy) }
+    func dropExited(info: DropInfo) { mark.wrappedValue = nil }
+
+    func performDrop(info: DropInfo) -> Bool {
+        mark.wrappedValue = nil
+        let tick = xTick(info.location.x, model)
+        nonisolated(unsafe) let providers = info.itemProviders(for: [.fileURL, .text])
+        guard !providers.isEmpty else { return false }
+        let model = model, track = track
+        Task { @MainActor in
+            let items = await loadDropItems(providers)
+            model.dropOnTimeline(items, track: track, at: tick)
+        }
+        return true
+    }
+}
+
 private struct Lane: View {
     @Environment(AppModel.self) private var model
     let track: Track
     let index: Int
     let count: Int
     let width: CGFloat
+    /// A file hovers over the lane: where it would land.
+    @State private var dropMark: DropMark?
+
+    /// The placeholder under a dragged file: a dashed clip of the file's length at the snapped start, a line
+    /// down the lane, and the name with the position.
+    private func dropPlaceholder(_ m: DropMark) -> some View {
+        let x = tickX(m.tick, model)
+        let w = max(24, tickX(m.tick + m.length, model) - x)
+        let bar = m.tick.rawValue / model.barTicks + 1, beat = (m.tick.rawValue % model.barTicks) / Int64(Tick.perQuarter) + 1
+        return ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.accent.opacity(0.18))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
+                .frame(width: w, height: laneHeight - 4).offset(x: x, y: 2)
+            Rectangle().fill(Theme.accent).frame(width: 1.5, height: model.rowHeight(track)).offset(x: x)
+            Text((m.name.isEmpty ? "" : m.name + "  ") + "\(bar).\(beat)")
+                .font(.system(size: 10, weight: .semibold)).lineLimit(1).foregroundStyle(Theme.text)
+                .padding(.horizontal, 4).padding(.vertical, 1)
+                .background(Theme.background.opacity(0.8), in: RoundedRectangle(cornerRadius: 3))
+                .offset(x: x + 4, y: 5)
+        }
+        .allowsHitTesting(false)
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -293,14 +372,19 @@ private struct Lane: View {
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
         .contentShape(Rectangle())
-        .onTapGesture { model.selectedTrack = track.id; model.clearSelection() }
+        // A click on empty space picks the track and puts the playhead there, snapped: play goes on from
+        // there, or starts there later while stopped.
+        .gesture(SpatialTapGesture().onEnded { v in
+            model.selectedTrack = track.id
+            model.clearSelection()
+            if v.location.y < laneHeight { model.seek(to: model.snap(xTick(v.location.x, model))) }
+        })
         .contextMenu { LaneMenu(track: track) }
         .gesture(SpatialTapGesture(count: 2).onEnded { v in
             if track.kind == .midi { model.createMIDIClip(track: track.id, at: xTick(v.location.x, model)) }
         })
-        .dropDestination(for: DropItem.self) { items, location in
-            model.dropOnTimeline(items, track: track.id, at: xTick(location.x, model))
-        }
+        .onDrop(of: [.fileURL, .text], delegate: LaneDrop(model: model, track: track.id, mark: $dropMark))
+        .overlay(alignment: .topLeading) { if let m = dropMark { dropPlaceholder(m) } }
     }
 }
 

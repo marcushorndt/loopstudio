@@ -1,7 +1,9 @@
 import AppKit
+import AVFoundation
 import CoreTransferable
 import LoopStudioCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// What a track takes from a drag: an audio file (a clip) or a device from the sidebar (an effect or an
 /// instrument or a preset, as the "fx:", "au:" and "preset:" strings the sidebar drags). One drop target takes both, so an effect
@@ -23,6 +25,43 @@ enum DragPasteboard {
         guard let s = NSPasteboard(name: .drag).string(forType: .string) else { return false }
         return ["fx:", "au:", "preset:", "device:", "devicecopy:"].contains { s.hasPrefix($0) }
     }
+
+    /// The files of the running drag, in their order.
+    static var files: [URL] {
+        (NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    }
+
+    /// The length of an audio file in seconds, read once per file while it is dragged; nil for a file
+    /// that is not audio. The placeholder under the pointer takes its width from it.
+    static func audioSeconds(_ url: URL) -> Double? {
+        if let known = secondsCache[url] { return known }
+        let seconds: Double? = (try? AVAudioFile(forReading: url)).map { Double($0.length) / max(1, $0.fileFormat.sampleRate) }
+        secondsCache[url] = seconds
+        if secondsCache.count > 64 { secondsCache.removeAll() }
+        return seconds
+    }
+    nonisolated(unsafe) private static var secondsCache: [URL: Double?] = [:]
+}
+
+/// The items of a drop, loaded from its providers: files as files, text as a device string. The drop
+/// delegates of the arrangement use it; a `dropDestination` loads the same through `DropItem`.
+@MainActor func loadDropItems(_ providers: [NSItemProvider]) async -> [DropItem] {
+    var items: [DropItem] = []
+    for provider in providers {
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            let url: URL? = await withCheckedContinuation { c in
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in c.resume(returning: url) }
+            }
+            if let url { items.append(.file(url)); continue }
+        }
+        if provider.canLoadObject(ofClass: NSString.self) {
+            let text: String? = await withCheckedContinuation { c in
+                _ = provider.loadObject(ofClass: NSString.self) { object, _ in c.resume(returning: (object as? NSString).map { String($0) }) }
+            }
+            if let text { items.append(.device(text)) }
+        }
+    }
+    return items
 }
 
 extension Array where Element == DropItem {

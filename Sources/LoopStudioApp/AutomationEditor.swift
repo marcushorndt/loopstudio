@@ -36,6 +36,9 @@ struct AutomationEditor: View {
     @State private var penLast: Int64?
     /// The segment whose slope is being dragged: its first point, the slope at the start, and the drag direction.
     @State private var bending: (index: Int, start: Double, sign: Double)?
+    /// The last click that did not move, by the tick of the point or the handle it hit and when: a second
+    /// click on the same point within a moment is a double click, which removes the point (or flattens the slope).
+    @State private var lastClick: (tick: Tick, handle: Bool, at: Date)?
 
     private var shown: [AutomationPoint] { draft ?? points }
     private let grid = Int64(Tick.perQuarter / 4)
@@ -129,8 +132,13 @@ struct AutomationEditor: View {
                 }
                 guard let i = dragging, var working = draft, working.indices.contains(i) else { return }
                 if let starts = groupStart {
-                    // The group keeps its shape: every point moves by the same snapped ticks and the same position.
-                    let delta = snap(Int64(dx / pixelsPerTick))
+                    // The group keeps its shape: every point moves by the same snapped ticks and the same position,
+                    // and never past the points outside the group on either side.
+                    var delta = snap(Int64(dx / pixelsPerTick))
+                    let lo = starts.values.map(\.tick.rawValue).min() ?? 0, hi = starts.values.map(\.tick.rawValue).max() ?? 0
+                    let others = points.indices.filter { !starts.keys.contains($0) }.map { points[$0].tick.rawValue }
+                    if let prev = others.filter({ $0 < lo }).max() { delta = max(delta, prev + 1 - lo) }
+                    if let next = others.filter({ $0 > hi }).min() { delta = min(delta, next - 1 - hi) }
                     for (j, p0) in starts where working.indices.contains(j) {
                         working[j].tick = Tick(max(0, p0.tick.rawValue + delta))
                         working[j].value = target.value(atPosition: target.position(p0.value) + dPos)
@@ -138,20 +146,28 @@ struct AutomationEditor: View {
                     draft = working
                     return
                 }
-                let tick = snap(Int64(max(0, g.location.x / pixelsPerTick)))
+                // A point stays between its neighbours: the order of the curve never changes in a drag.
+                var tick = snap(Int64(max(0, g.location.x / pixelsPerTick)))
+                if i > 0 { tick = max(tick, points[i - 1].tick.rawValue + 1) }
+                if i + 1 < points.count { tick = min(tick, points[i + 1].tick.rawValue - 1) }
+                if i > 0, i + 1 < points.count, points[i - 1].tick.rawValue + 1 > points[i + 1].tick.rawValue - 1 { tick = points[i].tick.rawValue }
                 working[i].tick = Tick(tick)
                 working[i].value = target.value(atPosition: 1 - Double(min(max(0, g.location.y), height)) / Double(height))
                 draft = working
             }
             .onEnded { g in finish(at: g.startLocation) })
-        .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { v in
-            if let i = nearestHandle(to: v.location, in: points) {
-                var next = points; next[i].bend = nil; onChange(next)
-            } else if let i = nearest(to: v.location, in: points) {
-                var next = points; next.remove(at: i); onChange(next)
-                marked = []
-            }
-        })
+    }
+
+    /// A press that did not move on a point or a slope handle: the second one within a moment is a double
+    /// click. On a point it removes the point; on a handle it flattens the slope. True when it was one.
+    private func doubleClick(tick: Tick, handle: Bool) -> Bool {
+        let now = Date()
+        if let last = lastClick, last.tick == tick, last.handle == handle, now.timeIntervalSince(last.at) < 0.4 {
+            lastClick = nil
+            return true
+        }
+        lastClick = (tick, handle, now)
+        return false
     }
 
     private func x(_ t: Tick) -> CGFloat { CGFloat(Double(t.rawValue) * pixelsPerTick) }
@@ -278,10 +294,14 @@ struct AutomationEditor: View {
         guard let lo = penPoints.keys.min(), let hi = penPoints.keys.max() else { return }
         let end = hi + penGrid
         var working = points.filter { $0.tick.rawValue < lo || $0.tick.rawValue >= end }
+        // The painted stretch gets its own boundaries: before it and after it the curve keeps the value it
+        // had there (the default when the lane was empty), so the pen never moves the open ends of the lane.
+        if lo > 0, !working.contains(where: { $0.tick.rawValue < lo }) {
+            working.append(AutomationPoint(tick: 0, value: AutomationMath.value(points, at: Tick(lo)) ?? target.def, curve: .hold))
+        }
         working += penPoints.map { AutomationPoint(tick: Tick($0.key), value: $0.value, curve: .hold) }
-        if points.contains(where: { $0.tick.rawValue >= end }), !working.contains(where: { $0.tick.rawValue == end }),
-           let after = AutomationMath.value(points, at: Tick(end)) {
-            working.append(AutomationPoint(tick: Tick(end), value: after))
+        if !working.contains(where: { $0.tick.rawValue == end }) {
+            working.append(AutomationPoint(tick: Tick(end), value: AutomationMath.value(points, at: Tick(end)) ?? target.def))
         }
         working.sort { $0.tick < $1.tick }
         draft = working
@@ -307,6 +327,14 @@ struct AutomationEditor: View {
         }
         if segment != nil, !moved { addPoint(at: press); return }
         guard var draft else { return }
+        if !moved, let b = bending, points.indices.contains(b.index) {
+            if doubleClick(tick: points[b.index].tick, handle: true) { var next = points; next[b.index].bend = nil; onChange(next) }
+            return
+        }
+        if !moved, groupStart == nil, let i = dragging, points.indices.contains(i), draft[i].curve == points[i].curve {
+            if doubleClick(tick: points[i].tick, handle: false) { var next = points; next.remove(at: i); onChange(next); marked = [] }
+            return
+        }
         if let starts = groupStart {
             // The group keeps its marks after the sort: the moved points are found again by their place.
             let movedPoints = starts.keys.compactMap { draft.indices.contains($0) ? draft[$0] : nil }

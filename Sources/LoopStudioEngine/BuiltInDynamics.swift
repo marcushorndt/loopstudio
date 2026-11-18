@@ -39,6 +39,8 @@ final class CompressorDSP: DSPEffect, @unchecked Sendable {
     /// The sidechain filters: a low cut and a high cut, each off at the end of its range. Listen puts the
     /// filtered sidechain on the output instead of the compressed sound.
     private var scCut = false, scHigh = false, listen = false
+    /// Gain on the sidechain before the detector: a quiet source can still drive the compressor.
+    private var scGain: Float = 1
     private var scL = Biquad(), scR = Biquad()
     private var hiL = Biquad(), hiR = Biquad()
 
@@ -48,6 +50,7 @@ final class CompressorDSP: DSPEffect, @unchecked Sendable {
         makeup = dbToLinear(value(p, "makeup"))
         mix = value(p, "mix")
         listen = value(p, "scListen") >= 0.5
+        scGain = dbToLinear(value(p, "scGain"))
         let cut = Double(value(p, "scLowCut"))
         scCut = cut > 25
         if scCut {
@@ -74,10 +77,10 @@ final class CompressorDSP: DSPEffect, @unchecked Sendable {
 
     override func process(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
                           sidechainL: UnsafePointer<Float>?, sidechainR: UnsafePointer<Float>?, frames: Int) {
-        let m = mix, mk = makeup, cut = scCut, high = scHigh, hear = listen
+        let m = mix, mk = makeup, cut = scCut, high = scHigh, hear = listen, g = scGain
         var worst: Float = 0
         for i in 0..<frames {
-            var a = sidechainL?[i] ?? l[i], b = sidechainR?[i] ?? r[i]
+            var a = (sidechainL?[i] ?? l[i]) * g, b = (sidechainR?[i] ?? r[i]) * g
             if cut { a = scL.tick(a); b = scR.tick(b) }
             if high { a = hiL.tick(a); b = hiR.tick(b) }
             let reduction = computer.reductionDb(level: max(abs(a), abs(b)))

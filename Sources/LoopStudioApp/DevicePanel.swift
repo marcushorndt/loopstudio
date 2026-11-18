@@ -831,7 +831,9 @@ private struct GainReductionMeter: View {
     let bands: Int
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0 / 30)) { _ in
+        // An animation schedule with the date read: a periodic one left the bars standing still between knob moves.
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+            let _ = context.date
             let dsp = model.engine.builtInEffect(device.id)
             HStack(spacing: 2) {
                 ForEach(0..<bands, id: \.self) { i in

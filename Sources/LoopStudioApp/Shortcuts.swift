@@ -87,7 +87,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .noteOctaveDown: "Marked Notes an Octave Down"
         case .noteLonger: "Marked Notes a Grid Step Longer"
         case .noteShorter: "Marked Notes a Grid Step Shorter"
-        case .snapNotes: "Snap Notes to Grid"
+        case .snapNotes: "Snap to Grid"
         case .launchSelected: "Launch Selected Clip or Scene"
         case .sessionView: "Session View"
         case .arrangementView: "Arrangement View"

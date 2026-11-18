@@ -80,7 +80,7 @@ struct PianoRoll: View {
     /// The height of one pitch row: the vertical zoom.
     @State private var rowHeight: CGFloat = 13
     /// The zoom values when a pinch began.
-    @State private var pinchStart: (zoom: Double, row: CGFloat)?
+    @State private var pinchStart: (zoom: Double, row: CGFloat, x: CGFloat, scroll: CGFloat)?
     /// Option plus a two-finger scroll zooms the rows; Command plus a scroll zooms in time.
     @State private var wheel = WheelZoom()
     @State private var visibleWidth: CGFloat = 0
@@ -253,12 +253,15 @@ struct PianoRoll: View {
                 // A pinch zooms in time; with Option held it zooms the row height.
                 .simultaneousGesture(MagnifyGesture()
                     .onChanged { g in
-                        if pinchStart == nil { pinchStart = (zoom, rowHeight) }
+                        if pinchStart == nil { pinchStart = (zoom, rowHeight, g.startLocation.x, scrollX) }
                         guard let start = pinchStart else { return }
                         if NSEvent.modifierFlags.contains(.option) {
                             rowHeight = min(28, max(6, start.row * g.magnification))
                         } else {
                             zoom = min(8, max(1, start.zoom * g.magnification))
+                            // the beat under the fingers stays under them
+                            let content = keysWidth + (start.scroll + start.x - keysWidth) * CGFloat(zoom / start.zoom)
+                            position.scrollTo(x: max(0, content - start.x), y: scrollY)
                         }
                     }
                     .onEnded { _ in pinchStart = nil })

@@ -976,7 +976,12 @@ final class AppModel {
     static let clipRow: CGFloat = 74
     static let automationRow: CGFloat = 76
 
-    func rowHeight(_ track: Track) -> CGFloat { Self.clipRow + CGFloat(shownLanes(track).count) * Self.automationRow }
+    /// The clip rows the user made taller or shorter at the bottom edge of a track header; the rest keep `clipRow`.
+    var laneHeights: [TrackID: CGFloat] = [:]
+    func laneHeight(_ track: Track) -> CGFloat { laneHeights[track.id] ?? Self.clipRow }
+    func setLaneHeight(_ track: TrackID, _ height: CGFloat) { laneHeights[track] = min(320, max(44, height.rounded())) }
+
+    func rowHeight(_ track: Track) -> CGFloat { laneHeight(track) + CGFloat(shownLanes(track).count) * Self.automationRow }
     /// Tracks in the order the views show them: normal and group tracks, then the busses (returns).
     /// The session keeps busses at the right edge, the arrangement keeps them at the bottom.
     var orderedTracks: [Track] {
@@ -2207,7 +2212,9 @@ final class AppModel {
         return true
     }
 
+    /// A tick on the arrangement grid: the nearest quarter while the grid switch (⌘4) is on, else the exact tick.
     func snap(_ tick: Tick) -> Tick {
+        guard snapNotes else { return Tick(max(0, tick.rawValue)) }
         let grid = Tick.perQuarter
         return Tick(max(0, (tick.rawValue + grid / 2) / grid * grid))
     }

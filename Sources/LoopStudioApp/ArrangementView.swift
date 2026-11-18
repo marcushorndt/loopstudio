@@ -1,7 +1,6 @@
 import LoopStudioCore
 import SwiftUI
 
-private let laneHeight: CGFloat = 74
 private let headerWidth: CGFloat = 176
 private let rulerHeight: CGFloat = 28
 
@@ -31,6 +30,15 @@ struct ArrangementView: View {
                         HStack {
                             Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(Theme.dim)
                             Slider(value: Bindable(model).pixelsPerBar, in: 24...420).controlSize(.mini)
+                            Button { model.perform(.snapNotes) } label: {
+                                Image(systemName: "grid").font(.system(size: 11))
+                                    .foregroundStyle(model.snapNotes ? Theme.accent : Theme.dim)
+                                    .frame(width: 22, height: 18)
+                                    .overlay(RoundedRectangle(cornerRadius: Theme.radius)
+                                        .stroke(model.snapNotes ? Theme.accent.opacity(0.55) : Theme.line, lineWidth: 1))
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).hint("Snap to grid (⌘4): clips, the selection and a click that places the playhead land on the quarter. Off, they land on the exact tick.")
                             Button { model.toggleAutomationView() } label: {
                                 Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 11))
                                     .foregroundStyle(model.anyLanesShown ? Theme.accent : Theme.dim)
@@ -164,6 +172,21 @@ struct ArrangementView: View {
 private struct ArrangementHeader: View {
     @Environment(AppModel.self) private var model
     let track: Track
+    /// The clip row's height when a drag of the bottom edge began.
+    @State private var heightStart: CGFloat?
+
+    /// The bottom edge of the header: drag it to make the track taller or shorter.
+    private var heightHandle: some View {
+        Rectangle().fill(Color.clear).frame(height: 7).contentShape(Rectangle())
+            .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
+            .gesture(DragGesture(minimumDistance: 1)
+                .onChanged { g in
+                    if heightStart == nil { heightStart = model.laneHeight(track) }
+                    model.setLaneHeight(track.id, (heightStart ?? AppModel.clipRow) + g.translation.height)
+                }
+                .onEnded { _ in heightStart = nil })
+            .hint("Drag to change the height of the track.")
+    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -187,12 +210,13 @@ private struct ArrangementHeader: View {
             }
             Spacer()
         }
-        .padding(6).frame(height: laneHeight, alignment: .top)
+        .padding(6).frame(height: model.laneHeight(track), alignment: .top)
         .overlay(alignment: .bottomTrailing) { automationDisclosure.padding(.trailing, 4).padding(.bottom, 3) }
         .frame(height: model.rowHeight(track), alignment: .top)
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel)
         .overlay(alignment: .bottom) { AutomationLabels(track: track) }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.line).frame(height: 1) }
+        .overlay(alignment: .bottom) { heightHandle }
         // The single click acts at once; a double-click also opens the inspector. A double-click handler that
         // runs first would hold every single click back until the double-click time has passed.
         .onTapGesture { model.focusTrack(track.id) }
@@ -324,7 +348,7 @@ private struct Lane: View {
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: Theme.radius).fill(Theme.accent.opacity(0.18))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
-                .frame(width: w, height: laneHeight - 4).offset(x: x, y: 2)
+                .frame(width: w, height: model.laneHeight(track) - 4).offset(x: x, y: 2)
             Rectangle().fill(Theme.accent).frame(width: 1.5, height: model.rowHeight(track)).offset(x: x)
             Text((m.name.isEmpty ? "" : m.name + "  ") + "\(bar).\(beat)")
                 .font(.system(size: 10, weight: .semibold)).lineLimit(1).foregroundStyle(Theme.text)
@@ -363,7 +387,7 @@ private struct Lane: View {
                     }
                     .overlay(alignment: .topLeading) { ClipOverrideSpans(address: address) }
                     .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
-                    .offset(y: laneHeight + CGFloat(i) * AppModel.automationRow)
+                    .offset(y: model.laneHeight(track) + CGFloat(i) * AppModel.automationRow)
                 }
             }
         }
@@ -378,7 +402,7 @@ private struct Lane: View {
         .simultaneousGesture(SpatialTapGesture().onEnded { v in
             model.selectedTrack = track.id
             model.clearSelection()
-            if v.location.y < laneHeight { model.seek(to: model.snap(xTick(v.location.x, model))) }
+            if v.location.y < model.laneHeight(track) { model.seek(to: model.snap(xTick(v.location.x, model))) }
         })
         .contextMenu { LaneMenu(track: track) }
         .gesture(SpatialTapGesture(count: 2).onEnded { v in
@@ -449,7 +473,7 @@ private struct ArrangementClip: View {
             Text(model.clipName(clip)).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.onTint)
                 .padding(.horizontal, 6).padding(.top, 3).lineLimit(1)
         }
-        .frame(width: w, height: laneHeight - 6)
+        .frame(width: w, height: model.laneHeight(track) - 6)
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : tint.opacity(0.55), lineWidth: selected ? 1.5 : 1))
         // A clip narrower than its two grips has no body to grab: the grips go, the clip can still be moved.
         .overlay(alignment: .leading) {
@@ -501,7 +525,7 @@ private struct ArrangementClip: View {
                 drag = .zero
                 model.groupDrag = .zero
                 let start = model.snap(xTick(x + g.translation.width, model))
-                let shift = model.rowIndex(atY: model.rowTop(trackIndex) + laneHeight / 2 + g.translation.height) - trackIndex
+                let shift = model.rowIndex(atY: model.rowTop(trackIndex) + model.laneHeight(track) / 2 + g.translation.height) - trackIndex
                 model.moveClips(Array(model.selectedClips.union([clip.id])), deltaTicks: start.rawValue - clip.start.rawValue, trackShift: shift)
             })
         .contextMenu { ArrangementClipMenu(clip: clip, track: track) }

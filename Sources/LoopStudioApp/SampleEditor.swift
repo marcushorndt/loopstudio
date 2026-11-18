@@ -15,7 +15,10 @@ struct SampleEditor: View {
     let tint: Color
 
     @State private var zoom: Double = 1
-    @State private var pinchStart: Double?
+    /// A pinch in progress: the zoom at its start, the x under the fingers and the scroll then.
+    @State private var pinchStart: (zoom: Double, x: CGFloat, scroll: CGFloat)?
+    @State private var scroll = ScrollPosition(x: 0)
+    @State private var scrollX: CGFloat = 0
     @State private var wheel = WheelZoom()
     /// A loop being marked or changed, before it is committed.
     @State private var draft: (offset: Tick, length: Tick)?
@@ -54,12 +57,18 @@ struct SampleEditor: View {
                     .frame(height: geo.size.height)
                 }
                 .scrollIndicators(.automatic)
+                .scrollPosition($scroll)
+                .onScrollGeometryChange(for: CGFloat.self, of: \.contentOffset.x) { _, x in scrollX = max(0, x) }
                 zoomButtons
             }
+            // A pinch zooms around the fingers: the beat under them stays under them.
             .gesture(MagnifyGesture()
                 .onChanged { v in
-                    if pinchStart == nil { pinchStart = zoom }
-                    setZoom((pinchStart ?? 1) * v.magnification)
+                    if pinchStart == nil { pinchStart = (zoom, v.startLocation.x, scrollX) }
+                    guard let start = pinchStart else { return }
+                    setZoom(start.zoom * v.magnification)
+                    let content = (start.scroll + start.x) * CGFloat(zoom / start.zoom)
+                    scroll.scrollTo(x: max(0, content - start.x))
                 }
                 .onEnded { _ in pinchStart = nil })
         }

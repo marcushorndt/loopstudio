@@ -906,16 +906,16 @@ struct PianoRoll: View {
 /// Sets the velocity of `targets` (found by their place, since a changed note is a new value) to their value at
 /// the start of the drag plus `delta`. The marking follows the notes; one drag is one undo step.
 @MainActor
-/// A velocity drag: one note moves by `delta`. Several notes scale together, in proportion to their velocities
-/// when the drag began, so a soft note stays softer than a loud one. Up, the loudest note reaches 127 at the top
-/// of the drag; down, every note reaches 1 at the bottom.
+/// A velocity drag: one note moves by `delta`. Several notes each move from their own starting velocity: up,
+/// each closes the gap to 127 by the drag's share of the full range, so all reach 127 at the top; down, each
+/// closes the gap to 1, so all reach 1 at the bottom. The differences between them shrink on the way.
 private func applyVelocity(_ model: AppModel, _ clip: MIDIClip, targets: [MIDINote], start: [UInt8], delta: Int) {
     var changed: Set<MIDINote> = []
-    let loudest = Double(start.max() ?? 127)
     func scaled(_ v: UInt8) -> UInt8 {
         guard targets.count > 1 else { return UInt8(min(127, max(1, Int(v) + delta))) }
-        let factor = delta >= 0 ? 1 + Double(delta) / 127 * (127 / loudest - 1) : 1 + Double(delta) / 127
-        return UInt8(min(127, max(1, Int((Double(v) * max(0, factor)).rounded()))))
+        let f = min(1, Double(abs(delta)) / 127)
+        let target: Double = delta >= 0 ? 127 : 1
+        return UInt8(min(127, max(1, Int((Double(v) + (target - Double(v)) * f).rounded()))))
     }
     let notes = clip.notes.map { n -> MIDINote in
         guard let i = targets.firstIndex(where: { $0.tick == n.tick && $0.pitch == n.pitch && $0.length == n.length }) else { return n }

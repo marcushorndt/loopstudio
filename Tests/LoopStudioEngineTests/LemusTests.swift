@@ -158,3 +158,34 @@ private func megabytes(_ bytes: Int) -> String { String(format: "%.2f MB", Doubl
         }
     }
 }
+
+// MARK: - P1-3: the Virus C plays in a bounce
+
+/// Lemus handover P1-3. The Virus C boots its firmware on a thread of its own and clears every block until it is
+/// ready. A bounce renders faster than real time from the first frame, so a fresh instance gave silence for the
+/// whole render of a short clip. In non-realtime mode (`isRenderingOffline`, as `OfflineRender.prepare` sets it)
+/// the plugin now waits for the boot inside the first block. Two seconds rendered as fast as the machine can,
+/// with a note from the start, must hold sound.
+@MainActor
+@Test func theVirusCPlaysInABounce() async throws {
+    guard lemusEnabled(), installed("aumu/Avrc/Lmus") else { return }
+    let unit = try await AudioUnitEffect.instantiate(identifier: "aumu/Avrc/Lmus", sampleRate: rate, outOfProcess: true)
+    unit.setRenderingOffline(true)
+    let frames = 512
+    let zero = [Float](repeating: 0, count: frames)
+    let o0 = UnsafeMutablePointer<Float>.allocate(capacity: frames), o1 = UnsafeMutablePointer<Float>.allocate(capacity: frames)
+    defer { o0.deallocate(); o1.deallocate() }
+    var peak: Float = 0
+    let started = Date()
+    for block in 0..<Int(2 * rate) / frames {
+        if block % 16 == 0 { unit.sendMIDI(0x90, 60, 110) }
+        _ = zero.withUnsafeBufferPointer { z in
+            let ins: [UnsafePointer<Float>] = [z.baseAddress!, z.baseAddress!]
+            let outs: [UnsafeMutablePointer<Float>] = [o0, o1]
+            return ins.withUnsafeBufferPointer { i in outs.withUnsafeBufferPointer { o in unit.process(frames: frames, input: i.baseAddress!, output: o.baseAddress!) } }
+        }
+        for k in 0..<frames { peak = max(peak, abs(o0[k]), abs(o1[k])) }
+    }
+    let seconds = Date().timeIntervalSince(started)
+    #expect(peak > 0.01, "the Virus C sounds in a two-second offline render: peak \(peak), \(String(format: "%.1f", seconds)) s")
+}

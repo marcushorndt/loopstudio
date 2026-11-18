@@ -75,10 +75,11 @@ The test keeps real-time pace on purpose, which found the next item.
   frame, so a fresh offline instance gives silence for the first seconds, or for the whole bounce of a
   short clip. In the live engine it plays after about four seconds.
 - LoopStudio side, done: `OfflineRender.prepare` sets `isRenderingOffline` on every hosted unit.
-- Lemus side, open: in non-realtime mode `processBlock` should wait for the boot (`waitForBoot()` when
-  `isNonRealtime()`), so a bounce holds until the machine is ready. One line in
-  `machines/virusc/plugin/PluginProcessor.cpp`, then rebuild.
-- Test idea for later: bounce a Virus C clip after the Lemus change and expect sound.
+- Lemus side, done 2026-11-18 (ac-digital-vc 0.1.2, local commit in `3rd-party/lemus`): in non-realtime
+  mode `processBlock` waits for the boot (`waitForBoot()` under a join lock) before the first block, so
+  a bounce holds until the machine is ready. Live, a block during the boot is still cleared.
+- Test: `theVirusCPlaysInABounce` (`LemusTests.swift`, `LOOPSTUDIO_LEMUS=1`): two seconds rendered as fast
+  as possible with a note from the start hold sound; about 4 s wall clock, the boot.
 
 - LoopStudio loads plugins out of process by default (`Sources/LoopStudioEngine/PluginHost.swift:41`,
   `.loadOutOfProcess`).

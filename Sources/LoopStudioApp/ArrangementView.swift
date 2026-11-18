@@ -279,7 +279,7 @@ private struct Lane: View {
                 if let target = model.project.automationTarget(address) {
                     AutomationEditor(target: target, points: model.automationPoints(track, address),
                                      pixelsPerTick: model.pixelsPerBar / Double(model.barTicks),
-                                     width: width, height: AppModel.automationRow, tint: Theme.track(track.colorIndex), pen: model.drawMode) { pts in
+                                     width: width, height: AppModel.automationRow, tint: Theme.track(track.colorIndex), pen: model.drawMode, penGrid: Tick.perQuarter) { pts in
                         model.apply(.setAutomation(track: track.id, target: address, points: pts))
                     }
                     .overlay(alignment: .topLeading) { ClipOverrideSpans(address: address) }

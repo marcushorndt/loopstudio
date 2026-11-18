@@ -757,12 +757,16 @@ struct AudioUnitKnobs: View {
         let param = EffectParam(k.key, k.name, k.min, k.max, k.def, unit: k.unit, choices: k.choices, log: k.logarithmic)
         let address = ParameterAddress(node: device.id.rawValue, parameter: k.key)
         let driven = model.macroDriving(address, on: track)
-        let value = driven?.value ?? unit.parameterValue(k.address) ?? k.def
+        let automated = model.automatedValue(track, address)
+        // The plugin reports the automated value as its current one. While a curve plays, the knob shows
+        // the setting the project holds instead, so the blue arc is the setting and the red arc the curve.
+        let live = unit.parameterValue(k.address) ?? k.def
+        let value = driven?.value ?? (automated != nil ? device.params[k.key] ?? live : live)
         return Knob(param: param, value: value, tint: Theme.accent,
                     onChange: { model.setDeviceParam(track.id, device.id, k.key, param.clamp($0)) },
                     onReset: { model.setDeviceParam(track.id, device.id, k.key, nil) },
                     automation: model.knobAutomation(track, address),
-                    automated: model.automatedValue(track, address),
+                    automated: automated,
                     format: k.choices.isEmpty ? { unit.displayString(k.address, $0) ?? param.format($0) } : nil)
             .allowsHitTesting(driven == nil)
             .overlay(alignment: .topTrailing) { if let driven { MacroBadge(track: track, address: address, driving: driven) } }

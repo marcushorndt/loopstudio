@@ -469,12 +469,12 @@ struct PianoRoll: View {
         if let owner, let target = model.project.clipAutomationTargets(.midi(clip), owner: owner).first(where: { $0.address == address }) {
             let points = clip.lanes?.first { $0.target == address }?.points ?? []
             AutomationEditor(target: target, points: points, pixelsPerTick: Double(pxPerBeat) / Double(Tick.perQuarter),
-                             width: width, height: Self.laneHeight, tint: tint, pen: model.drawMode) { pts in
+                             width: width, height: Self.laneHeight, tint: tint, pen: model.drawMode, penGrid: model.noteGrid) { pts in
                 model.apply(.setClipAutomation(clip: clip.id, target: address, points: pts))
             }
             .overlay(alignment: .topLeading) {
                 if points.isEmpty {
-                    Text(model.drawMode ? "Drag to draw \(target.name)" : "Click to add a \(target.name) point; B draws")
+                    Text(model.drawMode ? "Drag to draw \(target.name) steps on the grid" : "Click adds a \(target.name) point; drag a segment or a band of points; B draws steps")
                         .font(.system(size: 9)).foregroundStyle(Theme.dim).padding(.leading, 8).padding(.top, 4).allowsHitTesting(false)
                 }
             }

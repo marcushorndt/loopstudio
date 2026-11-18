@@ -552,7 +552,7 @@ private struct ClipLanesPanel: View {
             let points = clip.lanes.first { $0.target == address }?.points ?? []
             let ppt = Double(width) / Double(max(1, cycle.rawValue))
             AutomationEditor(target: target, points: points, pixelsPerTick: ppt,
-                             width: width, height: height - 2, tint: tint, pen: model.drawMode) { pts in
+                             width: width, height: height - 2, tint: tint, pen: model.drawMode, penGrid: model.noteGrid) { pts in
                 model.apply(.setClipAutomation(clip: clip.id, target: address, points: pts))
             }
             .overlay { loopMarks(ppt: ppt).allowsHitTesting(false) }

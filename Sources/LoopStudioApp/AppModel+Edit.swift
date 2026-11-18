@@ -117,6 +117,10 @@ extension AppModel {
         case .noteOtherGridLeft: nudgeNotes(time: -otherNoteStep, toGrid: !snapNotes)
         case .noteOtherGridRight: nudgeNotes(time: otherNoteStep, toGrid: !snapNotes)
         case .snapNotes: snapNotes.toggle(); status = snapNotes ? "Snap to the grid is on" : "Snap off: notes, clips and the playhead land on the exact tick"
+        case .gridNarrower: stepGrid(by: -1)
+        case .gridWider: stepGrid(by: 1)
+        case .gridTriplet: toggleGridTriplet()
+        case .gridFixed: toggleGridFixed()
         case .selectAll: selectAll()
         case .launchSelected: launchSelection()
         case .sessionView: viewMode = .session

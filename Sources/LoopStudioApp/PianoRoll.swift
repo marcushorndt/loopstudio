@@ -95,7 +95,7 @@ struct PianoRoll: View {
     @State private var heldPitch: Int?
 
     /// The grid step at this zoom. Snap off still shows it, but notes land on single ticks.
-    private var division: Int64 { adaptiveGrid(pxPerBeat: pxPerBeat, bar: model.barTicks) }
+    private var division: Int64 { model.gridStep(pxPerBeat: pxPerBeat) }
     private var grid: Int64 { model.snapNotes ? division : 1 }
 
     /// The loop bar above the notes, like Live's: its end is the clip length and can be dragged.
@@ -153,11 +153,13 @@ struct PianoRoll: View {
                 toolButton("line.diagonal", on: velocityLineTool, help: "Velocity line: drag across the velocity lane to set the velocities under the line, for ramps. Option and a drag in the lane does the same.") {
                     velocityLineTool.toggle()
                 }
-                toolButton("grid", on: model.snapNotes, help: "Snap to grid (⌘4). The grid follows the zoom: now \(gridName(division, bar: model.barTicks)). Off, notes land on the exact tick. Command during a drag, or Command with an arrow key, does the opposite of this switch.") {
+                toolButton("grid", on: model.snapNotes, help: "Snap to grid (⌘4): now \(model.gridLabel(division)). Off, notes land on the exact tick. Command during a drag, or Command with an arrow key, does the opposite of this switch.") {
                     model.perform(.snapNotes)
                 }
-                Text(gridName(division, bar: model.barTicks)).font(.system(size: 9, design: .monospaced)).foregroundStyle(model.snapNotes ? tint : Theme.dim)
-                    .frame(width: 30, alignment: .leading)
+                Text(model.gridLabel(division)).font(.system(size: 9, design: .monospaced)).foregroundStyle(model.snapNotes ? tint : Theme.dim)
+                    .frame(width: 34, alignment: .leading)
+                    .hint(model.gridFixed ? "Fixed grid. ⌘1 narrower, ⌘2 wider, ⌘3 triplets, ⌘5 back to the adaptive grid that follows the zoom."
+                          : "Adaptive grid: it follows the zoom. ⌘1 narrower, ⌘2 wider, ⌘3 triplets, ⌘5 fixes it.")
                 toolButton("pencil", on: model.drawMode, help: "Draw mode (B): click or drag to draw notes, click a note to delete it") {
                     model.drawMode.toggle()
                 }
@@ -272,8 +274,10 @@ struct PianoRoll: View {
                         else { zoom = min(8, max(1, zoom * (1 + Double(dy) * 0.01))) }
                     }
                 }
-                .onDisappear { wheel.remove() }
+                .onDisappear { wheel.remove(); model.editorPxPerBeat = nil }
                 .onChange(of: division, initial: true) { _, step in model.noteGrid = step }
+                // The grid keys (⌘1, ⌘2, ⌘5) act on this editor's zoom while it is open.
+                .onChange(of: pxPerBeat, initial: true) { _, px in model.editorPxPerBeat = px }
                 .onAppear {
                     let mid = clip.notes.isEmpty ? 60 : Int(clip.notes.map { Int($0.pitch) }.reduce(0, +)) / clip.notes.count
                     proxy.scrollTo("roll", anchor: UnitPoint(x: 0, y: 1 - Double(mid - lowPitch) / Double(highPitch - lowPitch)))

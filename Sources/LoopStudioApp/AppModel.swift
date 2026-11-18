@@ -2212,11 +2212,67 @@ final class AppModel {
         return true
     }
 
-    /// A tick on the arrangement grid: the nearest quarter while the grid switch (⌘4) is on, else the exact tick.
+    /// A tick on the arrangement grid while the grid switch (⌘4) is on, else the exact tick.
     func snap(_ tick: Tick) -> Tick {
         guard snapNotes else { return Tick(max(0, tick.rawValue)) }
-        let grid = Tick.perQuarter
+        let grid = arrangementGrid
         return Tick(max(0, (tick.rawValue + grid / 2) / grid * grid))
+    }
+
+    // MARK: Grid
+
+    /// The grid is adaptive (it follows the zoom, like Live's) until a step is chosen with ⌘1 or ⌘2, or ⌘5
+    /// fixes it. ⌘3 makes it triplets. ⌘4 is the snap switch, `snapNotes`.
+    var gridFixed = false
+    var gridFixedStep: Int64 = Tick.perQuarter
+    var gridTriplet = false
+    /// The pixels per beat of the open piano roll, while one is open. The grid keys act on that editor then.
+    var editorPxPerBeat: CGFloat?
+
+    /// The steps a fixed grid can take: 1/128 up to a bar.
+    var gridSteps: [Int64] {
+        let q = Tick.perQuarter
+        return [q / 32, q / 16, q / 8, q / 4, q / 2, q, q * 2, max(q * 2, barTicks)]
+    }
+
+    /// The grid step at a zoom. Adaptive: the finest step whose cells are still readable. Fixed: the chosen step.
+    /// Triplets take two thirds of the step.
+    func gridStep(pxPerBeat: CGFloat) -> Int64 {
+        let base = gridFixed ? gridFixedStep : adaptiveGrid(pxPerBeat: pxPerBeat, bar: barTicks)
+        return gridTriplet ? max(1, base * 2 / 3) : base
+    }
+
+    var arrangementPxPerBeat: CGFloat { CGFloat(pixelsPerBar) / CGFloat(max(1, barTicks / Tick.perQuarter)) }
+    var arrangementGrid: Int64 { gridStep(pxPerBeat: arrangementPxPerBeat) }
+
+    /// The step the grid keys start from: the open editor's, else the arrangement's.
+    private var gridKeyPxPerBeat: CGFloat { editorPxPerBeat ?? arrangementPxPerBeat }
+
+    /// ⌘1 and ⌘2: one step narrower or wider than the grid shown now. The grid is fixed from then on.
+    func stepGrid(by delta: Int) {
+        let base = gridFixed ? gridFixedStep : adaptiveGrid(pxPerBeat: gridKeyPxPerBeat, bar: barTicks)
+        let steps = gridSteps
+        let i = steps.firstIndex { $0 >= base } ?? steps.count - 1
+        gridFixedStep = steps[min(steps.count - 1, max(0, i + delta))]
+        gridFixed = true
+        status = "Grid: \(gridLabel(gridStep(pxPerBeat: gridKeyPxPerBeat)))"
+    }
+
+    /// ⌘5: fixed holds the step shown now; adaptive follows the zoom again.
+    func toggleGridFixed() {
+        if !gridFixed { gridFixedStep = adaptiveGrid(pxPerBeat: gridKeyPxPerBeat, bar: barTicks) }
+        gridFixed.toggle()
+        status = gridFixed ? "Fixed grid: \(gridLabel(gridStep(pxPerBeat: gridKeyPxPerBeat)))" : "Adaptive grid: it follows the zoom"
+    }
+
+    func toggleGridTriplet() {
+        gridTriplet.toggle()
+        status = "Grid: \(gridLabel(gridStep(pxPerBeat: gridKeyPxPerBeat)))"
+    }
+
+    /// "1/16", "1/16T" for triplets, "1 bar".
+    func gridLabel(_ step: Int64) -> String {
+        gridTriplet ? gridName(step * 3 / 2, bar: barTicks) + "T" : gridName(step, bar: barTicks)
     }
 
     // MARK: Lookup

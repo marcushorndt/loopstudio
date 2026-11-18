@@ -12,6 +12,7 @@ enum AppAction: String, CaseIterable, Identifiable {
     case toggleKeyboardMIDI, midiLearn
     case moveUp, moveDown, moveLeft, moveRight, extendUp, extendDown, extendLeft, extendRight, launchSelected
     case noteOctaveUp, noteOctaveDown, noteLonger, noteShorter, noteOtherGridLeft, noteOtherGridRight, snapNotes, selectAll
+    case gridNarrower, gridWider, gridTriplet, gridFixed
     case sessionView, arrangementView, switchView, toggleDetail, toggleAutomation, showShortcuts
 
     var id: String { rawValue }
@@ -28,6 +29,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .toggleKeyboardMIDI, .midiLearn: .transport
         case .moveUp, .moveDown, .moveLeft, .moveRight, .extendUp, .extendDown, .extendLeft, .extendRight, .launchSelected: .navigate
         case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .noteOtherGridLeft, .noteOtherGridRight, .snapNotes, .selectAll: .edit
+        case .gridNarrower, .gridWider, .gridTriplet, .gridFixed: .edit
         case .sessionView, .arrangementView, .switchView, .toggleDetail, .toggleAutomation, .showShortcuts: .view
         }
     }
@@ -88,6 +90,10 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .noteLonger: "Marked Notes a Grid Step Longer"
         case .noteShorter: "Marked Notes a Grid Step Shorter"
         case .snapNotes: "Snap to Grid"
+        case .gridNarrower: "Narrower Grid"
+        case .gridWider: "Wider Grid"
+        case .gridTriplet: "Triplet Grid"
+        case .gridFixed: "Fixed Grid"
         case .launchSelected: "Launch Selected Clip or Scene"
         case .sessionView: "Session View"
         case .arrangementView: "Arrangement View"
@@ -147,10 +153,15 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .noteOtherGridLeft: KeyBinding("\u{F702}", .command)
         case .noteOtherGridRight: KeyBinding("\u{F703}", .command)
         case .snapNotes: KeyBinding("4", .command)
+        // The grid keys as in Live: ⌘1 narrower, ⌘2 wider, ⌘3 triplets, ⌘4 snap, ⌘5 fixed.
+        case .gridNarrower: KeyBinding("1", .command)
+        case .gridWider: KeyBinding("2", .command)
+        case .gridTriplet: KeyBinding("3", .command)
+        case .gridFixed: KeyBinding("5", .command)
         case .selectAll: KeyBinding("a", .command)
         case .launchSelected: KeyBinding("\r", [])
-        case .sessionView: KeyBinding("1", .command)
-        case .arrangementView: KeyBinding("2", .command)
+        case .sessionView: KeyBinding("1", [.command, .option])
+        case .arrangementView: KeyBinding("2", [.command, .option])
         case .switchView: KeyBinding("\t", [])
         case .toggleDetail: KeyBinding("d", [.command, .option])
         case .toggleAutomation: KeyBinding("a", [])

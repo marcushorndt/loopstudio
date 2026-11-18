@@ -15,6 +15,8 @@ struct ArrangementView: View {
     @State private var pinnedX: CGFloat = 0
     /// A pinch in progress: the zoom at its start, the content x under the fingers, and the scroll then.
     @State private var pinch: (pixelsPerBar: Double, x: CGFloat, scroll: CGFloat)?
+    @State private var rulerScroll = ScrollPosition(x: 0)
+    @State private var rulerX: CGFloat = 0
 
     var body: some View {
         let tracks = model.arrangementTracks
@@ -24,9 +26,8 @@ struct ArrangementView: View {
         let pinnedHeight = model.pinnedRowsHeight
 
         VStack(spacing: 0) {
-            ScrollView(.vertical) {
-                HStack(alignment: .top, spacing: 0) {
-                    VStack(spacing: 0) {
+            // The ruler row stays at the top while the tracks scroll under it; it scrolls in time with them.
+            HStack(alignment: .top, spacing: 0) {
                         HStack {
                             Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(Theme.dim)
                             Slider(value: Bindable(model).pixelsPerBar, in: 24...420).controlSize(.mini)
@@ -38,7 +39,11 @@ struct ArrangementView: View {
                                         .stroke(model.snapNotes ? Theme.accent.opacity(0.55) : Theme.line, lineWidth: 1))
                                     .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain).hint("Snap to grid (⌘4): clips, the selection and a click that places the playhead land on the quarter. Off, they land on the exact tick.")
+                            .buttonStyle(.plain).hint("Snap to grid (⌘4): clips, the selection and a click that places the playhead land on the grid. Off, they land on the exact tick.")
+                            Text(model.gridLabel(model.arrangementGrid)).font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(model.snapNotes ? Theme.accent : Theme.dim).lineLimit(1).frame(width: 34, alignment: .leading)
+                                .hint(model.gridFixed ? "Fixed grid. ⌘1 narrower, ⌘2 wider, ⌘3 triplets, ⌘5 back to the adaptive grid that follows the zoom."
+                                      : "Adaptive grid: it follows the zoom. ⌘1 narrower, ⌘2 wider, ⌘3 triplets, ⌘5 fixes it.")
                             Button { model.toggleAutomationView() } label: {
                                 Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 11))
                                     .foregroundStyle(model.anyLanesShown ? Theme.accent : Theme.dim)
@@ -49,7 +54,27 @@ struct ArrangementView: View {
                             }
                             .buttonStyle(.plain).hint("Show or hide automation lanes on all tracks (A)")
                         }
-                        .padding(.horizontal, 8).frame(height: rulerHeight)
+                        .padding(.horizontal, 8).frame(width: headerWidth, height: rulerHeight)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    ZStack(alignment: .topLeading) {
+                        Ruler(bars: bars).frame(width: width, height: rulerHeight)
+                        LoopBrace(width: width)
+                        Playhead(height: rulerHeight)
+                    }
+                    .frame(width: width, height: rulerHeight, alignment: .topLeading)
+                }
+                .scrollPosition($rulerScroll)
+                .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.x }) { _, x in
+                    rulerX = x
+                    if abs(x - tracksX) > 0.5 { tracksScroll.scrollTo(x: x) }
+                }
+            }
+            .frame(height: rulerHeight)
+            Rectangle().fill(Theme.line).frame(height: 1)
+
+            ScrollView(.vertical) {
+                HStack(alignment: .top, spacing: 0) {
+                    VStack(spacing: 0) {
                         ForEach(tracks, id: \.id) { ArrangementHeader(track: $0) }
                         Button { model.addTrack() } label: {
                             Label("Add track", systemImage: "plus").font(.caption).frame(maxWidth: .infinity).frame(height: 36).contentShape(Rectangle())
@@ -61,31 +86,33 @@ struct ArrangementView: View {
                     ScrollView(.horizontal) {
                         ZStack(alignment: .topLeading) {
                             VStack(spacing: 0) {
-                                Ruler(bars: bars).frame(width: width, height: rulerHeight)
                                 ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                                     Lane(track: track, index: index, count: tracks.count, width: width)
                                 }
+                            }
+                            if let loop = model.project.loop, loop.enabled {
+                                Rectangle().fill(Theme.accent.opacity(0.07))
+                                    .frame(width: max(1, tickX(loop.end, model) - tickX(loop.start, model)), height: model.rowsHeight)
+                                    .offset(x: tickX(loop.start, model)).allowsHitTesting(false)
                             }
                             SelectionOverlay(tracks: tracks)
                             if let m = marquee {
                                 Rectangle().fill(Theme.accent.opacity(0.15)).overlay(Rectangle().stroke(Theme.accent, lineWidth: 1))
                                     .frame(width: m.width, height: m.height).offset(x: m.minX, y: m.minY).allowsHitTesting(false)
                             }
-                            LoopBrace(width: width)
-                            Playhead(height: rulerHeight + model.rowsHeight)
+                            Playhead(height: model.rowsHeight)
                         }
                         .frame(width: width, alignment: .topLeading)
                         .gesture(DragGesture(minimumDistance: 5)
                             .onChanged { g in
-                                guard g.startLocation.y > rulerHeight else { return }
                                 marquee = CGRect(x: min(g.startLocation.x, g.location.x), y: min(g.startLocation.y, g.location.y),
                                                  width: abs(g.location.x - g.startLocation.x), height: abs(g.location.y - g.startLocation.y))
                             }
                             .onEnded { g in
                                 defer { marquee = nil }
                                 guard let m = marquee, !tracks.isEmpty else { return }
-                                let first = model.rowIndex(atY: max(0, m.minY - rulerHeight))
-                                let last = model.rowIndex(atY: max(0, m.maxY - rulerHeight))
+                                let first = model.rowIndex(atY: max(0, m.minY))
+                                let last = model.rowIndex(atY: max(0, m.maxY))
                                 guard first <= last else { return }
                                 let ids = Set(tracks[first...last].map(\.id))
                                 let a = model.snap(xTick(m.minX, model)), b = model.snap(xTick(m.maxX, model))
@@ -107,6 +134,7 @@ struct ArrangementView: View {
                     .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.x }) { _, x in
                         tracksX = x
                         if abs(x - pinnedX) > 0.5 { pinnedScroll.scrollTo(x: x) }
+                        if abs(x - rulerX) > 0.5 { rulerScroll.scrollTo(x: x) }
                     }
                 }
             }
@@ -363,13 +391,17 @@ private struct Lane: View {
         ZStack(alignment: .topLeading) {
             Canvas { ctx, size in
                 let ppb = model.pixelsPerBar
+                // The grid lines: bars strong, the grid steps faint. Steps under 5 points apart stay unseen.
+                let step = model.arrangementGrid
+                let stepPx = CGFloat(step) / CGFloat(model.barTicks) * ppb
+                let perBar = stepPx >= 5 ? Int(model.barTicks / step) : 0
                 var bar = 0
                 while CGFloat(Double(bar) * ppb) < size.width {
                     let x = CGFloat(Double(bar) * ppb)
                     ctx.fill(Path(CGRect(x: x, y: 0, width: 1, height: size.height)), with: .color(.white.opacity(0.10)))
-                    if ppb > 140 {
-                        for beat in 1..<4 {
-                            ctx.fill(Path(CGRect(x: x + CGFloat(Double(beat) * ppb / 4), y: 0, width: 1, height: size.height)), with: .color(.white.opacity(0.04)))
+                    if perBar > 1 {
+                        for i in 1..<perBar {
+                            ctx.fill(Path(CGRect(x: x + CGFloat(i) * stepPx, y: 0, width: 1, height: size.height)), with: .color(.white.opacity(0.04)))
                         }
                     }
                     bar += 1
@@ -610,7 +642,7 @@ private struct SelectionOverlay: View {
                 if r.tracks.contains(track.id) {
                     Rectangle().fill(.white.opacity(0.10))
                         .frame(width: max(1, tickX(r.end, model) - tickX(r.start, model)), height: model.rowHeight(track))
-                        .offset(x: tickX(r.start, model), y: rulerHeight + model.rowTop(index))
+                        .offset(x: tickX(r.start, model), y: model.rowTop(index))
                         .allowsHitTesting(false)
                 }
             }

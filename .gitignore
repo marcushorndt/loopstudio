@@ -1,9 +1,33 @@
+# Swift Package Manager and Xcode
 .build/
 .swiftpm/
 *.xcodeproj
+*.xcworkspace
 xcuserdata/
-.DS_Store
+DerivedData/
+*.dSYM
+*.dSYM.zip
 
-# Reference material, not part of the product
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Release images and local media
+*.dmg
+brag-output/
+
+# Reference material and local plugin states, not part of the product
 reference/
+gaze/
 .r303.state
+
+# Project caches (waveforms, warps, scans) inside a tracked sample project
+*.loopstudio/cache/

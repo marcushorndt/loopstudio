@@ -8,6 +8,7 @@ Ableton Link, which the app links as a C++ target.
 | Part | Where | Licence |
 |---|---|---|
 | Ableton Link | `Sources/LinkBridge/link` (git submodule) | GPL v2 or later, with a proprietary option from Ableton |
+| Live Cut | `Sources/LoopStudioEngine/BuiltInCutter.swift`, a port of Livecut by Rémy Muller with the BBCut procedures of Nick Collins | GPL v2 or later |
 
 ## Plugins that LoopStudio hosts, kept in their own repositories
 

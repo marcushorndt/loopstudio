@@ -36,14 +36,18 @@ struct GainComputer {
 final class CompressorDSP: DSPEffect, @unchecked Sendable {
     private var computer = GainComputer()
     private var makeup: Float = 1, mix: Float = 1
-    private var scCut = false
+    /// The sidechain filters: a low cut and a high cut, each off at the end of its range. Listen puts the
+    /// filtered sidechain on the output instead of the compressed sound.
+    private var scCut = false, scHigh = false, listen = false
     private var scL = Biquad(), scR = Biquad()
+    private var hiL = Biquad(), hiR = Biquad()
 
     override func configure(_ p: [String: Double]) {
         computer.configure(threshold: value(p, "threshold"), ratio: value(p, "ratio"), knee: value(p, "knee"),
                            attackMs: value(p, "attack"), releaseMs: value(p, "release"), rate: Float(sampleRate))
         makeup = dbToLinear(value(p, "makeup"))
         mix = value(p, "mix")
+        listen = value(p, "scListen") >= 0.5
         let cut = Double(value(p, "scLowCut"))
         scCut = cut > 25
         if scCut {
@@ -52,9 +56,17 @@ final class CompressorDSP: DSPEffect, @unchecked Sendable {
             f.z1 = scL.z1; f.z2 = scL.z2; scL = f
             f.z1 = scR.z1; f.z2 = scR.z2; scR = f
         }
+        let high = Double(value(p, "scHighCut"))
+        scHigh = high > 0 && high < 19_000
+        if scHigh {
+            var f = Biquad()
+            f.lowpass(min(high, sampleRate * 0.45), q: 0.707, rate: sampleRate)
+            f.z1 = hiL.z1; f.z2 = hiL.z2; hiL = f
+            f.z1 = hiR.z1; f.z2 = hiR.z2; hiR = f
+        }
     }
 
-    override func reset() { computer.reset(); scL.reset(); scR.reset(); meters[0] = 0 }
+    override func reset() { computer.reset(); scL.reset(); scR.reset(); hiL.reset(); hiR.reset(); meters[0] = 0 }
 
     override func process(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
         process(l, r, sidechainL: nil, sidechainR: nil, frames: frames)
@@ -62,13 +74,19 @@ final class CompressorDSP: DSPEffect, @unchecked Sendable {
 
     override func process(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>,
                           sidechainL: UnsafePointer<Float>?, sidechainR: UnsafePointer<Float>?, frames: Int) {
-        let m = mix, mk = makeup, cut = scCut
+        let m = mix, mk = makeup, cut = scCut, high = scHigh, hear = listen
         var worst: Float = 0
         for i in 0..<frames {
             var a = sidechainL?[i] ?? l[i], b = sidechainR?[i] ?? r[i]
             if cut { a = scL.tick(a); b = scR.tick(b) }
+            if high { a = hiL.tick(a); b = hiR.tick(b) }
             let reduction = computer.reductionDb(level: max(abs(a), abs(b)))
             if reduction > worst { worst = reduction }
+            if hear {
+                // What the detector hears, instead of the compressed sound. The meter still shows the reduction.
+                l[i] = a; r[i] = b
+                continue
+            }
             let gain = dbToLinear(-reduction) * mk
             l[i] = l[i] * (1 - m) + l[i] * gain * m
             r[i] = r[i] * (1 - m) + r[i] * gain * m

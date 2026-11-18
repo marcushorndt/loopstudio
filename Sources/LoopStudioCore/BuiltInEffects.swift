@@ -346,8 +346,9 @@ public enum BuiltInEffects {
     }()
 
     /// A compressor with a soft knee, a parallel mix, and a sidechain: its own input, or another track
-    /// (`DeviceSlot.sidechain`), through a low cut, so a kick on the sidechain ducks a bass without the bass's
-    /// own lows pumping it.
+    /// (`DeviceSlot.sidechain`), through a low cut and a high cut, so a kick on the sidechain ducks a bass
+    /// without the bass's own lows pumping it. Listen puts the filtered sidechain on the output, to hear what
+    /// the detector hears.
     static let compressor: EffectSpec = {
         var spec = EffectSpec(id: "compressor", name: "Compressor", params: [
             EffectParam("threshold", "Threshold", -60, 0, -18, unit: "dB"),
@@ -356,11 +357,13 @@ public enum BuiltInEffects {
             EffectParam("attack", "Attack", 0.1, 100, 10, unit: "ms", log: true),
             EffectParam("release", "Release", 10, 1_000, 120, unit: "ms", log: true),
             EffectParam("scLowCut", "SC Low Cut", 20, 2_000, 20, unit: "Hz", log: true),
+            EffectParam("scHighCut", "SC High Cut", 200, 20_000, 20_000, unit: "Hz", log: true),
+            EffectParam("scListen", "SC Listen", 0, 1, 0, choices: ["Off", "On"]),
             EffectParam("makeup", "Makeup", 0, 24, 0, unit: "dB"),
             EffectParam("mix", "Dry/Wet", 0, 1, 1),
         ])
         spec.groups = [EffectGroup("Detect", ["threshold", "ratio", "knee"]), EffectGroup("Time", ["attack", "release"]),
-                       EffectGroup("Sidechain", ["scLowCut"], row: 1), EffectGroup("Out", ["makeup", "mix"], row: 1)]
+                       EffectGroup("Sidechain", ["scLowCut", "scHighCut", "scListen"], row: 1), EffectGroup("Out", ["makeup", "mix"], row: 1)]
         spec.sidechain = true
         return spec
     }()

@@ -141,6 +141,25 @@ private func run(_ id: String, _ params: [String: Double], _ input: [Float], sid
     #expect(abs(db(rms(out[24_000...]), rms(quiet[24_000...]))) < 1, "the bass does not pass the sidechain low cut")
 }
 
+@Test func theSidechainHighCutIgnoresAHatOnTheSidechain() {
+    let quiet = sine(200, seconds: 1, amplitude: 0.05)
+    let hat = sine(8_000, seconds: 1, amplitude: 0.9)
+    let p: [String: Double] = ["threshold": -22, "ratio": 10, "knee": 0, "attack": 1, "release": 50, "scHighCut": 1_000]
+    let out = run("compressor", p, quiet, sidechain: hat)
+    #expect(abs(db(rms(out[24_000...]), rms(quiet[24_000...]))) < 1, "the hat does not pass the sidechain high cut")
+}
+
+@Test func sidechainListenPutsTheFilteredSidechainOnTheOutput() {
+    let quiet = sine(200, seconds: 1, amplitude: 0.05)
+    let bass = sine(40, seconds: 1, amplitude: 0.9)
+    let p: [String: Double] = ["threshold": -22, "ratio": 10, "knee": 0, "attack": 1, "release": 50, "scLowCut": 500, "scListen": 1]
+    let out = run("compressor", p, quiet, sidechain: bass)
+    // The bass is on the sidechain, the low cut takes it out, and Listen plays what is left: next to nothing.
+    #expect(rms(out[24_000...]) < 0.02, "listen plays the filtered sidechain, not the input: \(rms(out[24_000...]))")
+    let heard = run("compressor", ["threshold": -22, "ratio": 10, "knee": 0, "attack": 1, "release": 50, "scListen": 1], quiet, sidechain: bass)
+    #expect(abs(db(rms(heard[24_000...]), rms(bass[24_000...]))) < 1, "without a filter, listen plays the sidechain as it is")
+}
+
 @Test func theKneeMakesTheOnsetGradual() {
     let s = sine(440, seconds: 0.5, amplitude: 0.1) // -20 dB: right at the threshold
     let hard = run("compressor", ["threshold": -20, "ratio": 4, "knee": 0, "attack": 1, "release": 50], s)

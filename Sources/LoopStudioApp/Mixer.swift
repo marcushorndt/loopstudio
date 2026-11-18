@@ -476,6 +476,8 @@ struct TrackIOSection: View {
     @ViewBuilder private var midiFrom: some View {
         label("MIDI From")
         let sources = model.midiDevices
+        // As in the audio strip: the channel sits beside the device on one line, so the strip stays as tall.
+        HStack(spacing: 3) {
         Picker("", selection: Binding(
             get: { track.midiInput?.sourceUID.map { Optional($0) } ?? (track.midiInput == nil ? Int32?.none : Int32?.some(Int32.min)) },
             set: { choice in
@@ -502,10 +504,12 @@ struct TrackIOSection: View {
         if let input = track.midiInput {
             Picker("", selection: Binding(get: { input.channel.map { Int($0) } ?? -1 },
                                           set: { model.apply(.setMIDIInput(id: track.id, selection: MIDIInputSelection(sourceUID: input.sourceUID, sourceName: input.sourceName, channel: $0 < 0 ? nil : UInt8($0)))) })) {
-                Text("All Channels").tag(-1)
-                ForEach(0..<16, id: \.self) { Text("Ch \($0 + 1)").tag($0) }
+                Text("All").tag(-1)
+                ForEach(0..<16, id: \.self) { Text("\($0 + 1)").tag($0) }
             }
-            .labelsHidden().controlSize(.mini)
+            .labelsHidden().controlSize(.mini).fixedSize()
+            .hint("The MIDI channel the track listens to. All: every channel.")
+        }
         }
     }
 

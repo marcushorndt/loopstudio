@@ -8,20 +8,58 @@ import LoopStudioCore
 struct GainComputer {
     var threshold: Float = -18, slope: Float = 0.75, knee: Float = 6
     var attack: Float = 0.01, release: Float = 0.001
+    /// The release coefficients a program-dependent character blends between: four times faster, eight times slower.
+    var releaseFast: Float = 0.004, releaseSlow: Float = 0.00025
+    /// How the release behaves: 0 VCA (a clean exponential), 1 Opto (fast at first, then slower the longer
+    /// it compressed, like a T4 cell), 2 FET (faster the harder it is hit), 3 Vari-Mu (a wide knee, a release
+    /// that eases out).
+    var character = 0
     var env: Float = 0
+    /// How far over the threshold the last sample was, in dB; the characters shape the release with it.
+    var lastOver: Float = 0
+    /// Opto: how long the cell has been lit, 0...1 with a two-second time constant. It slows the release.
+    var heat: Float = 0, heatRate: Float = 0.00001
 
-    mutating func configure(threshold: Float, ratio: Float, knee: Float, attackMs: Float, releaseMs: Float, rate: Float) {
+    mutating func configure(threshold: Float, ratio: Float, knee: Float, attackMs: Float, releaseMs: Float, rate: Float, character: Int = 0) {
         self.threshold = threshold
         slope = 1 - 1 / max(ratio, 1)
-        self.knee = knee
+        self.character = character
+        self.knee = character == 3 ? knee + 12 : knee
         attack = 1 - expf(-1 / (max(attackMs, 0.01) * 0.001 * rate))
-        release = 1 - expf(-1 / (max(releaseMs, 1) * 0.001 * rate))
+        let ms = max(releaseMs, 1)
+        release = 1 - expf(-1 / (ms * 0.001 * rate))
+        releaseFast = 1 - expf(-1 / (ms * 0.25 * 0.001 * rate))
+        releaseSlow = 1 - expf(-1 / (ms * 8 * 0.001 * rate))
+        heatRate = 1 - expf(-1 / (2 * rate))
+    }
+
+    /// The release coefficient for this sample, from the character and how the signal sat over the threshold.
+    @inline(__always) private func releaseCoefficient() -> Float {
+        switch character {
+        case 1:
+            // Opto: the cell lets go fast while the reduction is deep, then creeps the rest of the way; the
+            // longer it was lit, the slower the creep. Cubic, so the fast part ends soon after the deep part.
+            let w = min(max(lastOver / 10, 0), 1)
+            return (releaseSlow + (releaseFast - releaseSlow) * w * w * w) / (1 + 2 * heat)
+        case 2:
+            // FET: the harder it is hit, the faster it recovers.
+            let w = min(max(lastOver / 20, 0), 1)
+            return min(1, release * (1 + 3 * w))
+        case 3:
+            // Vari-Mu: a release that eases out as the tube comes back.
+            let w = min(max(lastOver / 15, 0), 1)
+            return releaseSlow + (release - releaseSlow) * w * w
+        default:
+            return release
+        }
     }
 
     /// The gain reduction in dB for a detector level (linear), after the envelope.
     @inline(__always) mutating func reductionDb(level: Float) -> Float {
-        env += (level - env) * (level > env ? attack : release)
+        env += (level - env) * (level > env ? attack : releaseCoefficient())
         let over = linearToDb(env) - threshold
+        if character == 1 { heat += ((over > 0 ? 1 : 0) - heat) * heatRate }
+        lastOver = over
         if knee > 0, abs(over) <= knee / 2 {
             let x = over + knee / 2
             return slope * x * x / (2 * knee)
@@ -29,7 +67,7 @@ struct GainComputer {
         return over > 0 ? slope * over : 0
     }
 
-    mutating func reset() { env = 0 }
+    mutating func reset() { env = 0; lastOver = 0; heat = 0 }
 }
 
 /// A compressor with a soft knee, a parallel mix and a sidechain input with its own low cut.
@@ -46,7 +84,8 @@ final class CompressorDSP: DSPEffect, @unchecked Sendable {
 
     override func configure(_ p: [String: Double]) {
         computer.configure(threshold: value(p, "threshold"), ratio: value(p, "ratio"), knee: value(p, "knee"),
-                           attackMs: value(p, "attack"), releaseMs: value(p, "release"), rate: Float(sampleRate))
+                           attackMs: value(p, "attack"), releaseMs: value(p, "release"), rate: Float(sampleRate),
+                           character: Int(value(p, "character").rounded()))
         makeup = dbToLinear(value(p, "makeup"))
         mix = value(p, "mix")
         listen = value(p, "scListen") >= 0.5

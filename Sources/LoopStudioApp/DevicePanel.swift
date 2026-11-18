@@ -835,9 +835,11 @@ private struct GainReductionMeter: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
             let _ = context.date
             let dsp = model.engine.builtInEffect(device.id)
+            // Read before the ForEach: its row closure only runs again when its data changes, and the effect
+            // object is the same one every tick. The values are the data, so every tick redraws the bars.
+            let values = (0..<bands).map { i in dsp.map { Double($0.meters[i]) } ?? 0 }
             HStack(spacing: 2) {
-                ForEach(0..<bands, id: \.self) { i in
-                    let reduction = dsp.map { Double($0.meters[i]) } ?? 0
+                ForEach(Array(values.enumerated()), id: \.offset) { _, reduction in
                     ZStack(alignment: .top) {
                         RoundedRectangle(cornerRadius: 1).fill(Theme.panel)
                         RoundedRectangle(cornerRadius: 1).fill(Theme.accent.opacity(0.85))

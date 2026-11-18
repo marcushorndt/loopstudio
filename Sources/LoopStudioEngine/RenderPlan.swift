@@ -554,7 +554,7 @@ public struct RenderPlan {
             nodes.append(NodePlan(
                 isMaster: false, clips: clips, gain: silent && !tapped ? 0 : dB(t.volumeDb), panLeft: pl, panRight: pr,
                 output: tapped || t.isSendsOnly || !outputHeard || !keeps(t.id, outputTarget) ? nil : (t.output.flatMap { index[$0] } ?? masterIndex),
-                sends: t.sends.filter { !tapped && keeps(t.id, $0.target) }.compactMap { s in index[s.target].map {
+                sends: t.sends.filter { !tapped && !$0.muted && keeps(t.id, $0.target) }.compactMap { s in index[s.target].map {
                     SendPlan(target: $0, gain: dB(s.levelDb), preFader: s.preFader,
                              auto: lane(t.id.rawValue, "send.\(s.target.rawValue.uuidString)")) } },
                 effects: chain, silenced: silent && !tapped, volumeAuto: lane(t.id.rawValue, "volume"), panAuto: lane(t.id.rawValue, "pan"), instrument: instrument, instrumentAuto: instrumentAuto, synth: synth,

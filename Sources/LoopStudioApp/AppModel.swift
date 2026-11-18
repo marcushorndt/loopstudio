@@ -1991,6 +1991,19 @@ final class AppModel {
         apply(.setSends(id: track.id, sends: sends), key: "send\(track.id)\(target)")
     }
 
+    func sendMuted(_ track: Track, to target: TrackID) -> Bool {
+        track.sends.first { $0.target == target }?.muted ?? false
+    }
+
+    /// A muted send is off for the moment; its level stays, so it comes back as it was.
+    func setSendMuted(from track: Track, to target: TrackID, _ muted: Bool) {
+        var sends = track.sends
+        if let i = sends.firstIndex(where: { $0.target == target }) { sends[i].muted = muted }
+        else { sends.append(Send(target: target, levelDb: -96, muted: muted)) }
+        apply(.setSends(id: track.id, sends: sends))
+        status = muted ? "Send to \(project.track(target)?.name ?? "the return") muted" : "Send to \(project.track(target)?.name ?? "the return") on again"
+    }
+
     func sendPreFader(_ track: Track, to target: TrackID) -> Bool {
         track.sends.first { $0.target == target }?.preFader ?? false
     }

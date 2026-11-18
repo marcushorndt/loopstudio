@@ -92,7 +92,8 @@ struct GroupedKnobs: View {
 
     var body: some View {
         // A group can belong to one setting of a knob (the procedure of the cutter): only that one shows.
-        let groups = spec.groups.filter { $0.shown(device.params, spec: spec) }
+        // The sidechain's gain, filters and Listen only matter with a source: without one the group stays away.
+        let groups = spec.groups.filter { $0.shown(device.params, spec: spec) && ($0.title != "Sidechain" || device.sidechain != nil) }
         let rows = Array(Set(groups.map(\.row))).sorted()
         VStack(alignment: .leading, spacing: groupGap) {
             ForEach(rows, id: \.self) { row in

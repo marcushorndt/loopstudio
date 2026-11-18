@@ -644,11 +644,24 @@ public struct Send: Hashable, Codable, Sendable {
     public var target: TrackID
     public var levelDb: Double
     public var preFader: Bool
+    /// The send is off for the moment; the level stays, so it comes back as it was.
+    public var muted: Bool
 
-    public init(target: TrackID, levelDb: Double = 0, preFader: Bool = false) {
+    public init(target: TrackID, levelDb: Double = 0, preFader: Bool = false, muted: Bool = false) {
         self.target = target
         self.levelDb = levelDb
         self.preFader = preFader
+        self.muted = muted
+    }
+
+    enum CodingKeys: String, CodingKey { case target, levelDb, preFader, muted }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        target = try c.decode(TrackID.self, forKey: .target)
+        levelDb = try c.decode(Double.self, forKey: .levelDb)
+        preFader = try c.decodeIfPresent(Bool.self, forKey: .preFader) ?? false
+        muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
     }
 }
 

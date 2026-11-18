@@ -356,6 +356,7 @@ public enum BuiltInEffects {
             EffectParam("knee", "Knee", 0, 24, 6, unit: "dB"),
             EffectParam("attack", "Attack", 0.1, 100, 10, unit: "ms", log: true),
             EffectParam("release", "Release", 10, 1_000, 120, unit: "ms", log: true),
+            EffectParam("character", "Character", 0, 3, 0, choices: ["VCA", "Opto", "FET", "Vari-Mu"]),
             EffectParam("scGain", "SC Gain", -24, 24, 0, unit: "dB"),
             EffectParam("scLowCut", "SC Low Cut", 20, 2_000, 20, unit: "Hz", log: true),
             EffectParam("scHighCut", "SC High Cut", 200, 20_000, 20_000, unit: "Hz", log: true),
@@ -363,7 +364,7 @@ public enum BuiltInEffects {
             EffectParam("makeup", "Makeup", 0, 24, 0, unit: "dB"),
             EffectParam("mix", "Dry/Wet", 0, 1, 1),
         ])
-        spec.groups = [EffectGroup("Detect", ["threshold", "ratio", "knee"]), EffectGroup("Time", ["attack", "release"]),
+        spec.groups = [EffectGroup("Detect", ["threshold", "ratio", "knee"]), EffectGroup("Time", ["attack", "release", "character"]),
                        EffectGroup("Sidechain", ["scGain", "scLowCut", "scHighCut", "scListen"], row: 1), EffectGroup("Out", ["makeup", "mix"], row: 1)]
         spec.sidechain = true
         return spec

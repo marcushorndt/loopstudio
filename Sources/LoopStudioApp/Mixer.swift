@@ -349,10 +349,18 @@ struct SendKnob: View {
 
     var body: some View {
         let db = model.sendLevel(track, to: ret.id)
+        let muted = model.sendMuted(track, to: ret.id)
         VStack(spacing: 1) {
-            KnobDial(position: max(0, min(1, position)), tint: Theme.track(ret.colorIndex), lineWidth: 3)
+            KnobDial(position: max(0, min(1, position)), tint: muted ? Theme.dim : Theme.track(ret.colorIndex), lineWidth: 3)
                 .frame(width: 28, height: 28)
+                .opacity(muted ? 0.5 : 1)
+                // A muted send: a line across the knob, so the level is still visible underneath.
+                .overlay { if muted { Rectangle().fill(Theme.text).frame(width: 22, height: 2).rotationEffect(.degrees(-45)) } }
                 .contentShape(Rectangle())
+                // ⌘-click: the send is off for the moment, the level stays.
+                .simultaneousGesture(TapGesture().onEnded {
+                    if NSEvent.modifierFlags.contains(.command) { model.setSendMuted(from: track, to: ret.id, !muted) }
+                })
                 .gesture(DragGesture(minimumDistance: KnobEntry.dragStart)
                     .onChanged { g in
                         if start == nil { start = max(0, min(1, position)) }
@@ -373,12 +381,14 @@ struct SendKnob: View {
                 .midiLearnable(.send(track.id, ret.id))
             Text(start != nil ? (db <= -47.5 ? "-inf" : String(format: "%.0f", db)) : String(ret.name.prefix(1)))
                 .font(.system(size: 9, weight: .bold, design: start != nil ? .monospaced : .default))
-                .foregroundStyle(start != nil ? Theme.text : Theme.track(ret.colorIndex))
+                .foregroundStyle(start != nil ? Theme.text : (muted ? Theme.dim : Theme.track(ret.colorIndex)))
                 .lineLimit(1)
         }
         .frame(width: 36)
-        .hint("Send to \(ret.name): \(db <= -47.5 ? "off" : String(format: "%.1f dB", db)). Drag up or down; double-click to type a level; Option-double-click turns it off.")
+        .hint("Send to \(ret.name): \(db <= -47.5 ? "off" : String(format: "%.1f dB", db))\(muted ? ", muted" : ""). Drag up or down; double-click to type a level; Option-double-click turns it off; ⌘-click mutes it for the moment and keeps the level.")
         .contextMenu {
+            Toggle("Mute Send", isOn: Binding(get: { model.sendMuted(track, to: ret.id) },
+                                              set: { model.setSendMuted(from: track, to: ret.id, $0) }))
             Button("Send Off") { set(0) }
             Button("Send at 0 dB") { set(1) }
             Toggle("Pre-Fader", isOn: Binding(get: { model.sendPreFader(track, to: ret.id) },

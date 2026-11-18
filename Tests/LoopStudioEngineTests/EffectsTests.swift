@@ -160,6 +160,21 @@ private func run(_ id: String, _ params: [String: Double], _ input: [Float], sid
     #expect(abs(db(rms(heard[24_000...]), rms(bass[24_000...]))) < 1, "without a filter, listen plays the sidechain as it is")
 }
 
+@Test func theOptoCharacterLetsGoFastThenCreeps() {
+    // One second loud, then quiet. VCA has released 400 ms later; Opto, lit for a second, still holds some reduction.
+    let signal = sine(440, seconds: 1, amplitude: 0.9) + sine(440, seconds: 1, amplitude: 0.05)
+    let base: [String: Double] = ["threshold": -20, "ratio": 10, "knee": 0, "attack": 1, "release": 100]
+    let vca = run("compressor", base.merging(["character": 0]) { $1 }, signal)
+    let opto = run("compressor", base.merging(["character": 1]) { $1 }, signal)
+    let at = 48_000 + 19_200 ..< 48_000 + 21_600 // 400 to 450 ms into the quiet part
+    let vcaDb = db(rms(vca[at]), rms(signal[at])), optoDb = db(rms(opto[at]), rms(signal[at]))
+    #expect(abs(vcaDb) < 0.5, "VCA has released: \(vcaDb) dB")
+    #expect(optoDb < -1, "Opto still creeps back: \(optoDb) dB")
+    // Right after the loud part both still hold the signal down: the opto starts fast, not slow.
+    let early = 48_000 + 480 ..< 48_000 + 960
+    #expect(db(rms(opto[early]), rms(signal[early])) < -3, "Opto lets go fast at first")
+}
+
 @Test func theKneeMakesTheOnsetGradual() {
     let s = sine(440, seconds: 0.5, amplitude: 0.1) // -20 dB: right at the threshold
     let hard = run("compressor", ["threshold": -20, "ratio": 4, "knee": 0, "attack": 1, "release": 50], s)

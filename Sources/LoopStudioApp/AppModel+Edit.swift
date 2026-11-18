@@ -28,7 +28,8 @@ extension AppModel {
         switch action {
         case .undo: canUndo
         case .redo: canRedo
-        case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil) || !selectedNotes.isEmpty || rangeSelection != nil
+        case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil) || !selectedNotes.isEmpty
+            || rangeSelection != nil || selectedDevice != nil
         case .deleteTime: rangeSelection != nil
             || selectedScene != nil || selectedDevice != nil
         case .cut, .copy: !selectedClips.isEmpty || selectedClip != nil || deviceFocused
@@ -778,12 +779,19 @@ extension AppModel {
     func toggleMute(_ t: Track) { apply(.setMute(id: t.id, mute: !t.mute)) }
     /// Solo is exclusive, like Live: a click solos this track and unsolos the others. With Command held,
     /// the click only toggles this track, so several tracks can be soloed together.
+    /// A plain click solos this track alone; on a soloed track it releases every solo. ⌘-click adds or removes
+    /// one track from the soloed set.
     func toggleSolo(_ t: Track, additive: Bool = NSEvent.modifierFlags.contains(.command)) {
-        if additive || t.solo {
+        if additive {
             apply(.setSolo(id: t.id, solo: !t.solo))
             return
         }
-        var commands: [Command] = project.allTracks.filter { $0.solo && $0.id != t.id }.map { .setSolo(id: $0.id, solo: false) }
+        let soloed = project.allTracks.filter(\.solo)
+        if t.solo {
+            apply(.batch(commands: soloed.map { .setSolo(id: $0.id, solo: false) }))
+            return
+        }
+        var commands: [Command] = soloed.map { .setSolo(id: $0.id, solo: false) }
         commands.append(.setSolo(id: t.id, solo: true))
         apply(.batch(commands: commands))
     }

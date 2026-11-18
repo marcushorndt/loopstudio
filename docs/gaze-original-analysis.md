@@ -1,6 +1,6 @@
 # Stitches Gaze: analysis for a reimplementation
 
-Files: the original scripts are in `docs/gaze-original/` (script5.js is the app). Line numbers below refer to script5.js. The section markers sit at these lines: dsp-core 3, dsp-amp 540, dsp-drums 1276, dsp-fx 2137, dsp-guitar 3042, dsp 3765, tapes 3886, play 4123, audiofile 5757, reg 5910, gear 5981, pix 6061, draw 6209, audio 6524, gear/amp 6792, gear/bow 7122, gear/drums 7282, gear/fx 7682, gear/guitar 7738, gear/lodestone 9045, gear/out 9191, gear/pedal 9315, gear/tape 9526, playsheet 9883, composer 10937, presets 11295, desk 11539, ui 12006.
+Files: the original scripts are not in this repository (they stay in the private Gaze workspace; script5.js is the app). Line numbers below refer to script5.js. The section markers sit at these lines: dsp-core 3, dsp-amp 540, dsp-drums 1276, dsp-fx 2137, dsp-guitar 3042, dsp 3765, tapes 3886, play 4123, audiofile 5757, reg 5910, gear 5981, pix 6061, draw 6209, audio 6524, gear/amp 6792, gear/bow 7122, gear/drums 7282, gear/fx 7682, gear/guitar 7738, gear/lodestone 9045, gear/out 9191, gear/pedal 9315, gear/tape 9526, playsheet 9883, composer 10937, presets 11295, desk 11539, ui 12006.
 
 script0.js is empty. script1.js is the host's frame preamble (claude.ai artifact plumbing), not part of the app.
 

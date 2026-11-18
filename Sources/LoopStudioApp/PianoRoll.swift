@@ -683,6 +683,8 @@ struct PianoRoll: View {
         guard changed else { return }
         model.setNotes(clip.id, notes, key: "velocityLine\(clip.id)")
         model.selectedNotes = marking
+        // The next new notes take the velocity at the end of the line.
+        model.newNoteVelocity = UInt8(min(127, max(1, Int(v1.rounded()))))
     }
 
     /// Quantize and Humanize, with their amounts. They act on the marked notes, or on all notes.
@@ -853,7 +855,8 @@ struct PianoRoll: View {
     /// A double-click adds a note with the last used length. With snap off it starts on the exact tick.
     private func add(at point: CGPoint) {
         guard let (tick, pitch) = cell(point, step: grid) else { return }
-        let note = MIDINote(tick: Tick(tick), length: Tick(min(lastLength, clip.length.rawValue - tick)), pitch: UInt8(pitch))
+        let note = MIDINote(tick: Tick(tick), length: Tick(min(lastLength, clip.length.rawValue - tick)), pitch: UInt8(pitch),
+                            velocity: model.newNoteVelocity)
         model.setNotes(clip.id, clip.notes + [note])
         model.selectedNotes = [note]
         if model.previewNotes { model.auditionNote(UInt8(pitch)) }
@@ -888,8 +891,9 @@ struct PianoRoll: View {
                 guard let (tick, pitch) = cell(g.location, step: division) else { return }
                 let taken = (clip.notes + drawn).contains { $0.pitch == UInt8(pitch) && $0.tick.rawValue <= tick && tick < $0.tick.rawValue + $0.length.rawValue }
                 guard !taken else { return }
-                drawn.append(MIDINote(tick: Tick(tick), length: Tick(min(division, clip.length.rawValue - tick)), pitch: UInt8(pitch)))
-                if model.previewNotes { model.auditionNote(UInt8(pitch)) }
+                drawn.append(MIDINote(tick: Tick(tick), length: Tick(min(division, clip.length.rawValue - tick)), pitch: UInt8(pitch),
+                                      velocity: model.newNoteVelocity))
+                if model.previewNotes { model.auditionNote(UInt8(pitch), velocity: model.newNoteVelocity) }
             }
             .onEnded { _ in
                 guard !drawn.isEmpty else { return }
@@ -912,6 +916,8 @@ private func applyVelocity(_ model: AppModel, _ clip: MIDIClip, targets: [MIDINo
         return m
     }
     model.selectedNotes = changed
+    // The next new notes take the velocity set by hand.
+    if let v = changed.first?.velocity { model.newNoteVelocity = v }
     model.setNotes(clip.id, notes, key: "velocity\(clip.id)")
 }
 
@@ -1103,7 +1109,7 @@ private struct NoteView: View {
         .simultaneousGesture(TapGesture(count: 2).onEnded { if !model.drawMode { delete() } })
         .contextMenu {
             Button("Delete", role: .destructive) { delete() }
-            Menu("Velocity") { ForEach([32, 64, 96, 127], id: \.self) { v in Button("\(v)") { replace { $0.velocity = UInt8(v) } } } }
+            Menu("Velocity") { ForEach([32, 64, 96, 127], id: \.self) { v in Button("\(v)") { model.newNoteVelocity = UInt8(v); replace { $0.velocity = UInt8(v) } } } }
             Button(note.muted ? "Activate" : "Deactivate") { replace { $0.muted.toggle() } }
             Divider()
             Text("Drag: move · Option drag: copy · Command (or Control) drag up/down: velocity · Command during a move: the other grid · 0: deactivate").font(.caption)

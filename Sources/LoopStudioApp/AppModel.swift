@@ -169,6 +169,8 @@ final class AppModel {
     /// The pen of the piano roll: a click or a drag draws notes, a click on a note deletes it.
     var drawMode = false
     /// The piano roll plays a note when it is created, moved or its key is clicked. Kept between launches.
+    /// The velocity a new note gets: the last velocity set by hand (a drag, the line or the menu), 100 at first.
+    var newNoteVelocity: UInt8 = 100
     var previewNotes: Bool = UserDefaults.standard.object(forKey: "previewNotes") as? Bool ?? true {
         didSet { UserDefaults.standard.set(previewNotes, forKey: "previewNotes") }
     }

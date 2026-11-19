@@ -378,7 +378,12 @@ private struct DX7Browser: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 TextField("Search voices and banks", text: $query).textFieldStyle(.roundedBorder).font(.system(size: 12))
-                Button("Import…") { model.importDX7Banks() }.hint("Copy .syx bank files or folders of them into the library")
+                // The open panel is a modal window: the popover closes first, or AppKit throws when the two meet.
+                Button("Import…") {
+                    shown = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { model.importDX7Banks() }
+                }
+                .hint("Copy .syx bank files or folders of them into the library")
             }
             if model.dx7LibraryState == .loading {
                 Text("Reading the banks…").font(.system(size: 11)).foregroundStyle(Theme.dim)
@@ -388,6 +393,7 @@ private struct DX7Browser: View {
                     Text("Import 32-voice SysEx files (.syx), or drop them into the folder.").font(.system(size: 11)).foregroundStyle(Theme.dim)
                     Button("Reveal Bank Folder") { NSWorkspace.shared.activateFileViewerSelecting([AppModel.dx7Folder]) }
                 }
+                .padding(.vertical, 8)
             } else {
                 let list = hits
                 ScrollView {

@@ -179,8 +179,10 @@ private struct DX7Display: View {
         let alg = Int(device.params["alg"] ?? 0)
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
-                Button { step(-1) } label: { Image(systemName: "chevron.left").font(.system(size: 9, weight: .semibold)) }
-                    .buttonStyle(.plain).disabled(position == nil).hint("The voice before this one in its bank")
+                Button { step(-1, bank: NSEvent.modifierFlags.contains(.option)) } label: {
+                    Image(systemName: "chevron.left").font(.system(size: 9, weight: .semibold)).frame(width: 16, height: 24).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.dx7Banks.isEmpty).hint("The voice before this one; past the first voice the bank before. Option-click: the bank before.")
                 Button { browsing.toggle() } label: {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(device.name).font(.system(size: 11, weight: .semibold, design: .monospaced)).lineLimit(1)
@@ -194,8 +196,10 @@ private struct DX7Display: View {
                     DX7Browser(track: track, device: device, position: $position, shown: $browsing)
                 }
                 .hint("The voice. Click to browse every bank in the library.")
-                Button { step(1) } label: { Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)) }
-                    .buttonStyle(.plain).disabled(position == nil).hint("The next voice in its bank")
+                Button { step(1, bank: NSEvent.modifierFlags.contains(.option)) } label: {
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).frame(width: 16, height: 24).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).disabled(model.dx7Banks.isEmpty).hint("The next voice; past the last voice the next bank. Option-click: the next bank.")
             }
             .padding(.horizontal, 6).padding(.top, 4)
             let fb = Int(device.params["fb"] ?? 0)
@@ -223,11 +227,23 @@ private struct DX7Display: View {
         }
     }
 
-    private func step(_ by: Int) {
-        guard let p = position, let bank else { return }
-        let i = (p.voice + by + 32) % 32
-        guard let voice = bank.voice(i) else { return }
-        position = (bank.url, i)
+    /// The next or previous voice, on through the library: past the end of a bank the neighbouring bank.
+    /// With `bank`, the first voice of the neighbouring bank. Without a position, the library's first voice.
+    private func step(_ by: Int, bank byBank: Bool) {
+        let banks = model.dx7Banks
+        guard !banks.isEmpty else { return }
+        var b = position.flatMap { p in banks.firstIndex { $0.url == p.bank } } ?? (by > 0 ? -1 : 0)
+        var v = position?.voice ?? (by > 0 ? -1 : 0)
+        if byBank {
+            b = (b + by + banks.count) % banks.count
+            v = 0
+        } else {
+            v += by
+            if v < 0 { b = (b - 1 + banks.count) % banks.count; v = banks[b].names.count - 1 }
+            if v >= banks[b].names.count { b = (b + 1) % banks.count; v = 0 }
+        }
+        guard let voice = banks[b].voice(v) else { return }
+        position = (banks[b].url, v)
         model.loadDX7Voice(voice, onto: device.id, on: track.id)
     }
 }

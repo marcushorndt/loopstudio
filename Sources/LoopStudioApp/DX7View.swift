@@ -21,6 +21,29 @@ struct DX7View: View {
 
     enum Page { case envelope, scaling }
 
+    /// Finds the device's voice in the library, so the arrows step through its bank after a preset, a
+    /// reopened project or a restart: the bank voice with the device's name whose values match, or the
+    /// first with the name. Nothing found: the arrows stay off until the browser picks.
+    private func resolvePosition() {
+        guard model.dx7LibraryState == .loaded else { return }
+        let name = device.name.trimmingCharacters(in: .whitespaces)
+        if let p = position, let bank = model.dx7Banks.first(where: { $0.url == p.bank }),
+           p.voice < bank.names.count, bank.names[p.voice].trimmingCharacters(in: .whitespaces) == name { return }
+        func matches(_ voice: DX7.Voice) -> Bool {
+            voice.params.allSatisfy { key, value in
+                abs((device.params[key] ?? spec.param(key)?.def ?? 0) - value) < 0.5
+            }
+        }
+        var byName: (bank: URL, voice: Int)?
+        for bank in model.dx7Banks {
+            for (i, n) in bank.names.enumerated() where n.trimmingCharacters(in: .whitespaces) == name {
+                if byName == nil { byName = (bank.url, i) }
+                if let voice = bank.voice(i), matches(voice) { position = (bank.url, i); return }
+            }
+        }
+        position = byName
+    }
+
     private func knob(_ key: String) -> some View { ParamKnob(track: track, device: device, spec: spec, key: key, tint: dx7Tint) }
     private func knob(_ op: Int, _ key: String) -> some View { knob(DX7.key(op + 1, key)) }
 
@@ -62,7 +85,9 @@ struct DX7View: View {
                 }
             }
         }
-        .onAppear { model.loadDX7Library() }
+        .onAppear { model.loadDX7Library(); resolvePosition() }
+        .onChange(of: model.dx7LibraryState) { _, _ in resolvePosition() }
+        .onChange(of: device.name) { _, _ in resolvePosition() }
     }
 }
 

@@ -276,6 +276,7 @@ extension AppAction {
 final class KeyMonitor {
     /// One monitor for the app: the root view is rebuilt on a theme change, and a second monitor would act twice.
     private static var token: Any?
+    private static var clickToken: Any?
 
     /// Piano layout on the home row, like Live: A W S E D F T G Y H U J K.
     private static let piano: [String: Int] = ["a": 0, "w": 1, "s": 2, "e": 3, "d": 4, "f": 5, "t": 6, "g": 7, "y": 8, "h": 9, "u": 10, "j": 11, "k": 12, "o": 13, "l": 14, "p": 15]
@@ -290,6 +291,19 @@ final class KeyMonitor {
                 for pitch in self.held.values { model.noteOff(pitch) }
                 self.held.removeAll()
             }
+        }
+        // A click outside a text field ends the typing: the keys go back to the transport. Without this a
+        // field (the assistant's prompt, the search) keeps the keyboard until another field takes it.
+        Self.clickToken = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            guard let window = event.window, window.firstResponder is NSText,
+                  let hit = window.contentView?.hitTest(event.locationInWindow) else { return event }
+            var view: NSView? = hit
+            while let v = view {
+                if v is NSTextView || v is NSTextField { return event }
+                view = v.superview
+            }
+            window.makeFirstResponder(nil)
+            return event
         }
         Self.token = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self, weak model] event in
             guard let self, let model else { return event }

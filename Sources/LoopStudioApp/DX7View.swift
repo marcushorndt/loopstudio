@@ -232,17 +232,24 @@ private struct DX7Display: View {
     private func step(_ by: Int, bank byBank: Bool) {
         let banks = model.dx7Banks
         guard !banks.isEmpty else { return }
-        var b = position.flatMap { p in banks.firstIndex { $0.url == p.bank } } ?? (by > 0 ? -1 : 0)
-        var v = position?.voice ?? (by > 0 ? -1 : 0)
-        if byBank {
-            b = (b + by + banks.count) % banks.count
-            v = 0
+        var b: Int, v: Int
+        if let p = position, let known = banks.firstIndex(where: { $0.url == p.bank }) {
+            b = known
+            v = p.voice
+            if byBank {
+                b = (b + by + banks.count) % banks.count
+                v = 0
+            } else {
+                v += by
+                if v < 0 { b = (b - 1 + banks.count) % banks.count; v = max(0, banks[b].names.count - 1) }
+                if v >= banks[b].names.count { b = (b + 1) % banks.count; v = 0 }
+            }
         } else {
-            v += by
-            if v < 0 { b = (b - 1 + banks.count) % banks.count; v = banks[b].names.count - 1 }
-            if v >= banks[b].names.count { b = (b + 1) % banks.count; v = 0 }
+            // Nothing known yet: forward starts at the library's first voice, back at its last.
+            b = by > 0 ? 0 : banks.count - 1
+            v = by > 0 ? 0 : max(0, banks[b].names.count - 1)
         }
-        guard let voice = banks[b].voice(v) else { return }
+        guard b >= 0, b < banks.count, let voice = banks[b].voice(v) else { return }
         position = (banks[b].url, v)
         model.loadDX7Voice(voice, onto: device.id, on: track.id)
     }

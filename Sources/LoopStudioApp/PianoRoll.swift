@@ -467,8 +467,8 @@ struct PianoRoll: View {
     }
 
     /// A control lane as Live's clip envelope: breakpoints joined by lines (ramps) or held values (steps).
-    /// A click adds a breakpoint, a drag on a point moves it, a second click right after removes it. A drag
-    /// on empty space draws steps on the grid; the drawn stretch replaces what was there.
+    /// A click adds a breakpoint, a drag on a point moves it, a click on a point removes it. With the pen a drag
+    /// draws steps on the grid; the drawn stretch replaces what was there.
     /// The lane under the notes as a clip automation lane: the envelope editor for one parameter, on the
     /// grid of the notes. The pen (B) draws; otherwise a click adds a point and a drag moves it.
     @ViewBuilder
@@ -481,7 +481,7 @@ struct PianoRoll: View {
             }
             .overlay(alignment: .topLeading) {
                 if points.isEmpty {
-                    Text(model.drawMode ? "Drag to draw \(target.name) steps on the grid" : "Click adds a \(target.name) point; drag a segment or a band of points; B draws steps")
+                    Text(model.drawMode ? "Drag to draw \(target.name) steps on the grid" : "Click adds a \(target.name) point, a click on a point removes it; drag a segment, or mark a stretch (⌘-drag anywhere); B draws steps")
                         .font(.system(size: 9)).foregroundStyle(Theme.dim).padding(.leading, 8).padding(.top, 4).allowsHitTesting(false)
                 }
             }

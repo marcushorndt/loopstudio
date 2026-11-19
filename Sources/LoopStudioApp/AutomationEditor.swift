@@ -7,12 +7,12 @@ struct AutomationMarking {
     var delete: () -> Void
 }
 
-/// An envelope editor. A click adds a point; a drag on a point moves it; a drag on a segment moves the segment
-/// up or down; a drag on empty space marks a stretch of time, like a range on a clip: the points inside are
-/// marked, a drag inside the stretch moves them all, Delete removes them (the curve then runs straight from the
-/// point before to the point after). Double-click a point to delete it, shift-click a point to change the shape
-/// of the segment after it. The diamond in the middle of a straight segment sets its slope: drag it up or down;
-/// double-click straightens.
+/// An envelope editor. A click adds a point; a click on a point removes it (the curve then runs straight from
+/// its neighbour before to the one after); a drag on a point moves it; a drag on a segment moves the segment
+/// up or down; a drag on empty space, or a ⌘-drag anywhere, marks a stretch of time, like a range on a clip:
+/// the points inside are marked, a drag inside the stretch moves them all, Delete removes them. Shift-click a
+/// point to change the shape of the segment after it. The diamond in the middle of a straight segment sets its
+/// slope: drag it up or down; double-click straightens.
 struct AutomationEditor: View {
     @Environment(AppModel.self) private var model
     let target: AutomationTarget
@@ -178,7 +178,7 @@ struct AutomationEditor: View {
                 Button("Delete \(marked.count) Marked Point\(marked.count == 1 ? "" : "s")", action: deleteMarked)
                 Button("Clear Marking") { marked = []; range = nil }
             } else {
-                Text("Drag over the lane to mark a stretch; Delete removes its points, a drag inside moves them.")
+                Text("Drag over empty space, or ⌘-drag anywhere, to mark a stretch; Delete removes its points, a drag inside moves them. A click on a point removes it.")
             }
         }
         // The model routes Delete to the editor that holds a marking.
@@ -189,12 +189,22 @@ struct AutomationEditor: View {
         .onDisappear { if model.automationMarking?.editor == editorID { model.automationMarking = nil } }
     }
 
-    /// Removes the marked points. The curve then runs from the point before the stretch to the point after it.
+    /// Removes the marked points. The curve then runs straight from the point before the stretch to the point after it.
     private func deleteMarked() {
-        let keep = points.indices.filter { !marked.contains($0) }.map { points[$0] }
+        var keep = points.indices.filter { !marked.contains($0) }.map { points[$0] }
+        if let first = marked.min() { straighten(&keep, before: first) }
         marked = []
         range = nil
         onChange(keep)
+    }
+
+    /// After points were removed from index `gap` on: the point before the gap gets a straight segment, so a
+    /// held step does not flatten the bridge over the gap. The points before the gap kept their indices.
+    private func straighten(_ list: inout [AutomationPoint], before gap: Int) {
+        let i = gap - 1
+        guard list.indices.contains(i) else { return }
+        list[i].curve = .linear
+        list[i].bend = nil
     }
 
     /// A press that did not move on a point or a slope handle: the second one within a moment is a double
@@ -277,6 +287,13 @@ struct AutomationEditor: View {
     private func begin(at point: CGPoint) {
         var working = points
         moved = false
+        // ⌘-drag marks a stretch wherever it starts: a lane full of pen steps leaves no empty space to press on.
+        if NSEvent.modifierFlags.contains(.command) {
+            marked = []
+            range = nil
+            band = CGRect(origin: point, size: .zero)
+            return
+        }
         if nearest(to: point, in: working) == nil, let i = nearestHandle(to: point, in: working) {
             // Dragging up bows the curve up: for a rising segment that is a positive slope.
             bending = (i, working[i].bend ?? 0, working[i + 1].value > working[i].value ? 1 : -1)
@@ -383,7 +400,13 @@ struct AutomationEditor: View {
         }
         if !moved, groupStart != nil { return }
         if !moved, groupStart == nil, let i = dragging, points.indices.contains(i), draft[i].curve == points[i].curve {
-            if doubleClick(tick: points[i].tick, handle: false) { var next = points; next.remove(at: i); onChange(next); marked = [] }
+            // A click on a point removes it; the segment that now spans the gap runs straight.
+            var next = points
+            next.remove(at: i)
+            straighten(&next, before: i)
+            marked = []
+            range = nil
+            onChange(next)
             return
         }
         if let starts = groupStart {

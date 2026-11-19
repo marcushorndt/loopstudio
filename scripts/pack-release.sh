@@ -5,10 +5,13 @@
 # The image holds LoopStudio.app (from /Applications), the plugins from
 # ~/Library/Audio/Plug-Ins/Components that we know, Install.command, READ-ME-FIRST.txt and the
 # licences. It never holds ROM dumps: the Lemus machines need them, the receiver supplies them.
-# The result is ~/Desktop/LoopStudio-<version>.dmg unless --out says otherwise.
+# The result goes to the private handover folder ../3rd-party/loopstudio-private when it exists
+# (next to the ROMs, where every earlier image lies), else to ~/Desktop; --out overrides.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-with_gaze=1; with_lemus=1; out="$HOME/Desktop"
+with_gaze=1; with_lemus=1
+out="$HOME/Desktop"
+[ -d "../3rd-party/loopstudio-private" ] && out="$(cd ../3rd-party/loopstudio-private && pwd)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-gaze) with_gaze=0;;

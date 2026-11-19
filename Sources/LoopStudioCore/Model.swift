@@ -143,6 +143,32 @@ public struct AudioClip: Hashable, Codable, Sendable, Identifiable {
     }
 }
 
+public extension Array where Element == MIDINote {
+    /// The notes sorted, with no two notes of one pitch and channel overlapping. A note that runs into the
+    /// next note of its pitch ends where that note starts; a note that starts where another already starts
+    /// replaces it (the later one in the list wins, so a dropped or moved note takes the place).
+    func withoutOverlaps() -> [MIDINote] {
+        var byLane: [UInt16: [MIDINote]] = [:]
+        for n in self { byLane[UInt16(n.channel) << 8 | UInt16(n.pitch), default: []].append(n) }
+        var out: [MIDINote] = []
+        for lane in byLane.values {
+            // The original order breaks ties, so for two notes at one tick the later one in the list stays.
+            let ordered = lane.enumerated().sorted { ($0.element.tick, $0.offset) < ($1.element.tick, $1.offset) }.map(\.element)
+            var kept: [MIDINote] = []
+            for n in ordered {
+                if let last = kept.last, last.tick == n.tick { kept.removeLast() }
+                if var last = kept.last, last.tick + last.length > n.tick {
+                    last.length = n.tick - last.tick
+                    kept[kept.count - 1] = last
+                }
+                kept.append(n)
+            }
+            out += kept
+        }
+        return out.sorted { ($0.tick, $0.pitch, $0.channel) < ($1.tick, $1.pitch, $1.channel) }
+    }
+}
+
 public struct MIDINote: Hashable, Codable, Sendable {
     /// Relative to the clip start.
     public var tick: Tick

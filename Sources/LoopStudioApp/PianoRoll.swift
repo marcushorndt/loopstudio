@@ -1198,16 +1198,29 @@ private struct NoteView: View {
 
     private func ticks(_ points: CGFloat) -> Int64 { Int64(Double(points / pxPerBeat) * Double(Tick.perQuarter)) }
 
-    /// The length after the end edge moved by `points`: the end lands on the grid, inside the clip.
-    private func newLength(_ points: CGFloat) -> Int64 {
-        let end = snap(note.tick.rawValue + note.length.rawValue + ticks(points))
-        return min(max(minLength, end - note.tick.rawValue), max(minLength, clip.length.rawValue - note.tick.rawValue))
+    /// The other notes on this note's pitch and channel.
+    private var laneMates: [MIDINote] {
+        clip.notes.enumerated().filter { $0.offset != index && $0.element.pitch == note.pitch && $0.element.channel == note.channel }.map(\.element)
     }
 
-    /// The start after the start edge moved by `points`: on the grid, the end stays.
+    /// The length after the end edge moved by `points`: the end lands on the grid, inside the clip, and
+    /// never past the start of the next note on this pitch. Notes do not overlap.
+    private func newLength(_ points: CGFloat) -> Int64 {
+        let end = snap(note.tick.rawValue + note.length.rawValue + ticks(points))
+        var limit = clip.length.rawValue
+        if let next = laneMates.map(\.tick.rawValue).filter({ $0 > note.tick.rawValue }).min() { limit = min(limit, next) }
+        return min(max(minLength, end - note.tick.rawValue), max(minLength, limit - note.tick.rawValue))
+    }
+
+    /// The start after the start edge moved by `points`: on the grid, the end stays, and never before the
+    /// end of the previous note on this pitch.
     private func newStart(_ points: CGFloat) -> Int64 {
         let end = note.tick.rawValue + note.length.rawValue
-        return max(0, min(snap(note.tick.rawValue + ticks(points)), end - minLength))
+        var floor: Int64 = 0
+        if let previous = laneMates.filter({ $0.tick.rawValue < note.tick.rawValue }).map({ $0.tick.rawValue + $0.length.rawValue }).max() {
+            floor = min(previous, end - minLength)
+        }
+        return max(floor, min(snap(note.tick.rawValue + ticks(points)), end - minLength))
     }
 
     private func resize(end points: CGFloat) {

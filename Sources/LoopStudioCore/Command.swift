@@ -438,7 +438,8 @@ extension Project {
             guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
             guard case .midi(var c) = clip else { throw CommandError.invalidValue("only MIDI clips have notes") }
             let old = c.notes
-            c.notes = notes.sorted { ($0.tick, $0.pitch) < ($1.tick, $1.pitch) }
+            // Notes of one pitch never overlap: a note that runs into the next one ends there.
+            c.notes = notes.withoutOverlaps()
             try withTrack(trackID) { t in try t.replaceClip(.midi(c)) }
             return .setMIDINotes(clip: id, notes: old)
 

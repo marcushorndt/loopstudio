@@ -98,6 +98,7 @@ struct RackBody: View {
 /// In map mode a click makes it the waiting macro.
 struct MacroKnob: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.enclosingRacks) private var racks
     let track: Track
     let device: DeviceSlot
     let spec: EffectSpec
@@ -122,7 +123,12 @@ struct MacroKnob: View {
             Knob(param: param, value: driven?.value ?? (device.params[key] ?? param.def), tint: Theme.macroMap,
                  onChange: { model.setDeviceParam(track.id, device.id, key, param.clamp($0)) },
                  onReset: { model.setDeviceParam(track.id, device.id, key, nil) },
-                 automation: automation(param), automated: model.automatedValue(track, address))
+                 automation: automation(param),
+                 // A rack inside a rack: its macros can hang on the outer rack's macros.
+                 macros: model.knobMacros(address, racks: racks, on: track),
+                 rename: { name = rack.macroName(index); renaming = true },
+                 extraMenu: { AnyView(macroMenu) },
+                 automated: model.automatedValue(track, address))
             .allowsHitTesting(driven == nil)
             .overlay(alignment: .topLeading) {
                 if !mappings.isEmpty {
@@ -151,20 +157,6 @@ struct MacroKnob: View {
                         .hint(waiting ? "\(rack.macroName(index)) waits for a knob. Click a knob inside the rack to map it." : "Click to map knobs to \(rack.macroName(index)).")
                 }
             }
-            .contextMenu {
-                Button(waiting ? "Leave Map Mode" : "Map Knobs to \(rack.macroName(index))…") { model.toggleMacroMap(track: track.id, rack: device.id, macro: index) }
-                Button("Edit Mappings… (\(mappings.count))") { editing = true }.disabled(mappings.isEmpty)
-                Button("Clear Mappings") {
-                    model.apply(.batch(commands: mappings.map { .removeMacroMapping(track: track.id, rack: device.id, mapping: $0.id) }))
-                }
-                .disabled(mappings.isEmpty)
-                Divider()
-                Button("Rename Macro…") { name = rack.macroName(index); renaming = true }
-                let auto = automation(param)
-                Button(auto.laneShown ? "Hide Automation Curve" : "Show Automation Curve", action: auto.toggleLane)
-                Button("Clear Automation", action: auto.clear).disabled(!auto.hasCurve)
-                Button("Reset to Default") { model.setDeviceParam(track.id, device.id, key, nil) }
-            }
             .popover(isPresented: $renaming) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Macro \(index + 1) name").font(.caption).foregroundStyle(Theme.dim)
@@ -177,6 +169,17 @@ struct MacroKnob: View {
             .midiLearnable(.deviceParam(track.id, device.id, key))
             .macroMappable(address, track: track)
         }
+    }
+
+    /// The macro's own entries, at the top of the knob's menu.
+    @ViewBuilder private var macroMenu: some View {
+        Button(waiting ? "Leave Map Mode" : "Map Knobs to \(rack.macroName(index))…") { model.toggleMacroMap(track: track.id, rack: device.id, macro: index) }
+        Button("Edit Mappings… (\(mappings.count))") { editing = true }.disabled(mappings.isEmpty)
+        Button("Clear Mappings") {
+            model.apply(.batch(commands: mappings.map { .removeMacroMapping(track: track.id, rack: device.id, mapping: $0.id) }))
+        }
+        .disabled(mappings.isEmpty)
+        Button("Rename Macro…") { name = rack.macroName(index); renaming = true }
     }
 
     private func automation(_ param: EffectParam) -> KnobAutomation {

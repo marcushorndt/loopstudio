@@ -175,6 +175,40 @@ private func run(_ id: String, _ params: [String: Double], _ input: [Float], sid
     #expect(db(rms(opto[early]), rms(signal[early])) < -3, "Opto lets go fast at first")
 }
 
+@Test func everyOverdriveShapeStaysBoundedAtFullDrive() {
+    let loud = sine(220, seconds: 0.5, amplitude: 1)
+    for shape in 0...5 {
+        let out = run("overdrive", ["drive": 48, "shape": Double(shape), "tone": 20_000], loud)
+        let p = peak(out[4_800...])
+        #expect(p < 1.2 && p > 0.05, "shape \(shape) peaks at \(p)")
+    }
+}
+
+@Test func theOverdriveAtZeroDriveLeavesAQuietSineAlone() {
+    let quiet = sine(440, seconds: 0.5, amplitude: 0.1)
+    let out = run("overdrive", ["drive": 0, "shape": 0, "tone": 20_000], quiet)
+    #expect(abs(db(rms(out[4_800...]), rms(quiet[4_800...]))) < 0.5, "a sine at -20 dB passes nearly unchanged")
+    let dry = run("overdrive", ["drive": 48, "shape": 1, "mix": 0], quiet)
+    #expect(abs(db(rms(dry[4_800...]), rms(quiet[4_800...]))) < 0.05, "mix 0 is the dry signal")
+}
+
+@Test func theTubeShapeAddsAnEvenHarmonic() {
+    // A symmetric shape gives no second harmonic; the tube's offset curve does.
+    let tone = sine(1_000, seconds: 0.5, amplitude: 0.5)
+    func second(_ x: ArraySlice<Float>) -> Float {
+        var re: Float = 0, im: Float = 0
+        for (n, v) in x.enumerated() {
+            let w = 2 * Float.pi * 2_000 * Float(n) / Float(rate)
+            re += v * cosf(w); im += v * sinf(w)
+        }
+        return (re * re + im * im).squareRoot() / Float(x.count)
+    }
+    let soft = run("overdrive", ["drive": 18, "shape": 0, "tone": 20_000], tone)
+    let tube = run("overdrive", ["drive": 18, "shape": 2, "tone": 20_000], tone)
+    let window = 4_800 ..< 4_800 + 4_800
+    #expect(second(tube[window]) > 10 * second(soft[window]), "tube: \(second(tube[window])), soft: \(second(soft[window]))")
+}
+
 @Test func theKneeMakesTheOnsetGradual() {
     let s = sine(440, seconds: 0.5, amplitude: 0.1) // -20 dB: right at the threshold
     let hard = run("compressor", ["threshold": -20, "ratio": 4, "knee": 0, "attack": 1, "release": 50], s)

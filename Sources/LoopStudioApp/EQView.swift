@@ -31,9 +31,12 @@ struct EQView: View {
 
     private var tint: Color { Theme.track(track.colorIndex) }
 
+    /// The parameters as the macros set them now.
+    private var params: [String: Double] { model.drivenParams(device, on: track) }
+
     private func value(_ key: String) -> Double {
         guard let p = spec.param(key) else { return 0 }
-        return p.clamp(device.params[key] ?? p.def)
+        return p.clamp(params[key] ?? p.def)
     }
 
     private func x(_ hz: Double) -> CGFloat { CGFloat(log(max(hz, Self.minHz) / Self.minHz) / log(Self.maxHz / Self.minHz)) * Self.width }
@@ -118,7 +121,7 @@ struct EQView: View {
             }
             // Each band alone, faint; the marked one a little stronger.
             for band in 0..<spec.bands where value("b\(band + 1).on") >= 0.5 {
-                let response = EQDSP.bandResponseDb(at: Self.curveHz, band: band, spec: spec, params: device.params, sampleRate: model.sampleRate)
+                let response = EQDSP.bandResponseDb(at: Self.curveHz, band: band, spec: spec, params: params, sampleRate: model.sampleRate)
                 var path = Path()
                 for (i, hz) in Self.curveHz.enumerated() {
                     let p = CGPoint(x: x(hz), y: y(min(max(response[i], -Self.rangeDb), Self.rangeDb)))
@@ -127,7 +130,7 @@ struct EQView: View {
                 ctx.stroke(path, with: .color(tint.opacity(band == selected ? 0.45 : 0.2)), lineWidth: 1)
             }
             // The sum.
-            let sum = EQDSP.responseDb(at: Self.curveHz, spec: spec, params: device.params, sampleRate: model.sampleRate)
+            let sum = EQDSP.responseDb(at: Self.curveHz, spec: spec, params: params, sampleRate: model.sampleRate)
             var path = Path()
             for (i, hz) in Self.curveHz.enumerated() {
                 let p = CGPoint(x: x(hz), y: y(min(max(sum[i], -Self.rangeDb), Self.rangeDb)))

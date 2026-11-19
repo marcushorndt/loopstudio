@@ -606,6 +606,7 @@ public enum StandardTools {
             ("moveDevice", .moveDevice(track: track.id, device: DeviceID(uuid(10)), to: 0)),
             ("setDeviceParam", .setDeviceParam(track: track.id, device: DeviceID(uuid(10)), key: "mix", value: 0.3)),
             ("setDeviceBypass", .setDeviceBypass(track: track.id, device: DeviceID(uuid(10)), bypassed: true)),
+            ("setDeviceName (the title on the device's card)", .setDeviceName(track: track.id, device: DeviceID(uuid(10)), name: "Kick Comp")),
             ("setDeviceSource (the text of a Patch device; patch_write checks it first)", .setDeviceSource(track: track.id, device: DeviceID(uuid(10)), source: PatchExamples.tremolo, name: "Tremolo")),
             ("setDeviceSidechain (a compressor listens to another track; null: its own input)", .setDeviceSidechain(track: track.id, device: DeviceID(uuid(10)), source: TrackID(uuid(2)))),
             ("setDeviceSidechainTap (where the sidechain taps that track: preFX, postFX or postMixer)", .setDeviceSidechainTap(track: track.id, device: DeviceID(uuid(10)), tap: .postFX)),

@@ -272,6 +272,7 @@ struct DeviceMenu: View {
         let siblings = model.siblings(of: device.id, on: track)
         let holder = track.chainHolding(device.id)
         Button(device.bypassed ? "Turn On" : "Bypass") { model.apply(.setDeviceBypass(track: track.id, device: device.id, bypassed: !device.bypassed)) }
+        Button("Rename…") { model.deviceRenameRequest = device.id }
         Button("Duplicate") { model.duplicateDevice(track.id, device.id) }
         Button("Copy") { model.selectDevice(device.id); model.copyDevice() }
         Button("Cut") { model.selectDevice(device.id); model.cutDevice() }

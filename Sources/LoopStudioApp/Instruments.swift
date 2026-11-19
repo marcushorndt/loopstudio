@@ -6,6 +6,7 @@ import SwiftUI
 /// and the tempo switch of a synced knob.
 struct ParamKnob: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.enclosingRacks) private var racks
     let track: Track
     let device: DeviceSlot
     let spec: EffectSpec
@@ -29,6 +30,7 @@ struct ParamKnob: View {
                             onChange: { model.setDeviceParam(track.id, device.id, param.key, param.clamp($0)) },
                             onReset: { model.setDeviceParam(track.id, device.id, param.key, nil) },
                             automation: param.fixed ? nil : automation(param),
+                            macros: param.fixed ? nil : model.knobMacros(address, racks: racks, on: track),
                             automated: param.fixed ? nil : model.automatedValue(track, address),
                             sync: free.syncable ? KnobSync(synced: synced, unit: free.unit) {
                                 model.setDeviceParam(track.id, device.id, free.syncKey, synced ? 0 : 1)

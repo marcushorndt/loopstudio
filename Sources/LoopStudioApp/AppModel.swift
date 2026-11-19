@@ -271,6 +271,8 @@ final class AppModel {
     var shortcutsOpen = false
     /// Set to ask the session view to start renaming this track.
     var renameRequest: TrackID?
+    /// Set to ask the device card to start renaming this device (⌘R on a marked device, or its menu).
+    var deviceRenameRequest: DeviceID?
     /// Set to rename a clip; takes the place of a track rename while a clip is selected.
     var clipRenameRequest: ClipID?
     var selectedSceneRow: Int?

@@ -18,7 +18,7 @@ extension AppModel {
         switch action {
         case .play: transportPlaying ? "Stop" : (recordArmed ? "Start Recording" : "Play")
         case .record: recording ? "Stop Recording" : (recordArmed ? "Disarm Recording" : "Arm Recording")
-        case .renameTrack: selectedClip != nil ? "Rename Clip" : "Rename Track"
+        case .renameTrack: selectedClip != nil ? "Rename Clip" : deviceFocused ? "Rename Device" : "Rename Track"
         case .pause: transportPlaying ? "Pause" : "Continue"
         default: action.title
         }
@@ -36,7 +36,7 @@ extension AppModel {
         case .duplicate: !selectedClips.isEmpty || selectedClip != nil || !selectedNotes.isEmpty || selectedScene != nil || (trackFocused && selectedTrack != nil) || deviceFocused
         case .paste: !clipboard.isEmpty || !noteClipboard.isEmpty || deviceClipboard != nil
         case .backToArrangement, .captureSession: arrangementOverridden
-        case .renameTrack: selectedTrack != nil || selectedClip != nil
+        case .renameTrack: selectedTrack != nil || selectedClip != nil || deviceFocused
         case .groupTracks: selectedTrack != nil || deviceFocused
         case .ungroup: rackToUngroup != nil
         case .duplicateTrack: selectedTrack != nil
@@ -96,7 +96,9 @@ extension AppModel {
         case .groupTracks: if deviceFocused { groupSelectedDevices() } else { groupSelectedTracks() }
         case .ungroup: ungroupSelectedRack()
         case .renameTrack:
-            if let clip = selectedClip { clipRenameRequest = clip } else { renameRequest = selectedTrack }
+            if let clip = selectedClip { clipRenameRequest = clip }
+            else if deviceFocused, let device = selectedDevice { deviceRenameRequest = device }
+            else { renameRequest = selectedTrack }
         case .duplicateTrack: if let t = selectedTrack { duplicateTrack(t) }
         case .insertScene: insertScene(at: (selectedSceneRow ?? project.tracks.map(\.slots.count).max() ?? 0 - 1) + 1)
         case .deleteScene: if let r = selectedSceneRow { deleteScene(r) }

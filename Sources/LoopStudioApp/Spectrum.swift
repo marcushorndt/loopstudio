@@ -70,28 +70,35 @@ struct SpectrumBackdrop: View {
     @State private var analyzer = SpectrumAnalyzer()
 
     var body: some View {
-        let tap = model.engine.builtInEffect(device.id)?.spectrum
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: tap == nil)) { _ in
-            Canvas { ctx, size in
-                guard let tap else { return }
-                analyzer.update(from: tap)
-                let rate = model.sampleRate
-                let minHz = 20.0, maxHz = min(20_000, rate / 2)
-                let points = 160
-                var path = Path()
-                path.move(to: CGPoint(x: x(minHz), y: size.height))
-                for i in 0...points {
-                    let hz = minHz * pow(maxHz / minHz, Double(i) / Double(points))
-                    let level = max(analyzer.level(at: hz, sampleRate: rate), floorDb)
-                    let y = size.height * CGFloat(1 - (level - floorDb) / -floorDb)
-                    path.addLine(to: CGPoint(x: x(hz), y: max(0, y)))
-                }
-                path.addLine(to: CGPoint(x: x(maxHz), y: size.height))
-                path.closeSubpath()
-                ctx.fill(path, with: .color(tint.opacity(0.16)))
-                ctx.stroke(path, with: .color(tint.opacity(0.3)), lineWidth: 0.5)
+        // The tap is read on every tick, and the path is a value the view compares: a Canvas with a closure
+        // that only captured the tap never redrew between knob moves.
+        GeometryReader { geo in
+            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: model.engine.builtInEffect(device.id)?.spectrum == nil)) { context in
+                let _ = context.date
+                let path = spectrumPath(size: geo.size)
+                path.fill(tint.opacity(0.16))
+                path.stroke(tint.opacity(0.3), lineWidth: 0.5)
             }
         }
         .allowsHitTesting(false)
+    }
+
+    private func spectrumPath(size: CGSize) -> Path {
+        var path = Path()
+        guard let tap = model.engine.builtInEffect(device.id)?.spectrum else { return path }
+        analyzer.update(from: tap)
+        let rate = model.sampleRate
+        let minHz = 20.0, maxHz = min(20_000, rate / 2)
+        let points = 160
+        path.move(to: CGPoint(x: x(minHz), y: size.height))
+        for i in 0...points {
+            let hz = minHz * pow(maxHz / minHz, Double(i) / Double(points))
+            let level = max(analyzer.level(at: hz, sampleRate: rate), floorDb)
+            let y = size.height * CGFloat(1 - (level - floorDb) / -floorDb)
+            path.addLine(to: CGPoint(x: x(hz), y: max(0, y)))
+        }
+        path.addLine(to: CGPoint(x: x(maxHz), y: size.height))
+        path.closeSubpath()
+        return path
     }
 }

@@ -35,6 +35,18 @@ extension AppModel {
         project.macroDriving(address, on: track)
     }
 
+    /// The device's parameters with every macro-driven one replaced by the value the macro gives now, so a
+    /// curve or a display follows the macro like the knob does.
+    func drivenParams(_ device: DeviceSlot, on track: Track) -> [String: Double] {
+        var params = device.params
+        for rack in track.allDevices where rack.rack != nil {
+            for mapping in rack.rack?.mappings ?? [] where mapping.target.node == device.id.rawValue {
+                if let driven = macroDriving(mapping.target, on: track) { params[mapping.target.parameter] = driven.value }
+            }
+        }
+        return params
+    }
+
     // MARK: Macro map mode
 
     /// Enters macro map mode for one macro, or leaves it when that macro is already waiting.
@@ -67,6 +79,35 @@ extension AppModel {
         } catch {
             status = "Cannot map: \(error)"
         }
+    }
+
+    /// Hangs a knob on one macro of one rack, from the knob's own menu: no map mode needed.
+    func map(_ address: ParameterAddress, to macro: Int, rack: DeviceID, on track: Track) {
+        if let existing = macroDriving(address, on: track) {
+            apply(.removeMacroMapping(track: track.id, rack: existing.rack.id, mapping: existing.mapping.id))
+        }
+        do {
+            try tryApply(.setMacroMapping(track: track.id, rack: rack, mapping: MacroMapping(macro: macro, target: address)))
+            let target = project.automationTarget(address, on: track)?.name ?? address.parameter
+            let name = project.track(track.id)?.device(rack)?.rack?.macroName(macro) ?? "Macro \(macro + 1)"
+            status = "\(target) now follows \(name)."
+        } catch {
+            status = "Cannot map: \(error)"
+        }
+    }
+
+    /// The macros of the racks around a device, for the knob's menu: nil when the device sits on the track itself.
+    func knobMacros(_ address: ParameterAddress, racks: [DeviceID], on track: Track) -> KnobMacros? {
+        let entries: [KnobMacros.RackEntry] = racks.compactMap { id in
+            guard let slot = track.device(id), let rack = slot.rack else { return nil }
+            return KnobMacros.RackEntry(id: id, name: slot.name, macros: (0..<Rack.macroCount).map { rack.macroName($0) })
+        }
+        guard !entries.isEmpty else { return nil }
+        let driving = macroDriving(address, on: track)
+        return KnobMacros(racks: entries,
+                          mapped: driving.map { "\($0.rack.rack?.macroName($0.mapping.macro) ?? "Macro \($0.mapping.macro + 1)") of \($0.rack.name)" },
+                          map: { [weak self] rack, macro in self?.map(address, to: macro, rack: rack, on: track) },
+                          unmap: { [weak self] in self?.unmap(address, on: track) })
     }
 
     func unmap(_ address: ParameterAddress, on track: Track) {

@@ -29,9 +29,12 @@ struct MultibandView: View {
 
     private var tint: Color { Theme.track(track.colorIndex) }
 
+    /// The parameters as the macros set them now.
+    private var params: [String: Double] { model.drivenParams(device, on: track) }
+
     private func value(_ key: String) -> Double {
         guard let p = spec.param(key) else { return 0 }
-        return p.clamp(device.params[key] ?? p.def)
+        return p.clamp(params[key] ?? p.def)
     }
 
     private func x(_ hz: Double) -> CGFloat { CGFloat(log(max(hz, Self.minHz) / Self.minHz) / log(Self.maxHz / Self.minHz)) * Self.width }
@@ -65,7 +68,8 @@ struct MultibandView: View {
     }
 
     private var display: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: model.engine.builtInEffect(device.id) == nil)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: model.engine.builtInEffect(device.id) == nil)) { context in
+            // The canvas takes the tick as its identity: with a closure as its only input it never redrew.
             Canvas { ctx, size in
                 let dsp = model.engine.builtInEffect(device.id)
                 let edges = [x(Self.minHz), x(value("lowX")), x(highXEffective), x(Self.maxHz)]
@@ -100,6 +104,7 @@ struct MultibandView: View {
                     ctx.draw(Text(hzText).font(.system(size: 8)).foregroundStyle(Theme.dim), at: CGPoint(x: px + 2, y: size.height - 7), anchor: .leading)
                 }
             }
+            .id(context.date)
         }
     }
 

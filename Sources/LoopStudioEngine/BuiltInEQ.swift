@@ -19,9 +19,9 @@ public final class EQDSP: DSPEffect, @unchecked Sendable {
             var f = Biquad()
             switch type {
             case 0: f.highpass(freq, q: q, rate: rate)
-            case 1: f.lowShelf(freq, gainDb: gain, rate: rate)
+            case 1: f.lowShelf(freq, gainDb: gain, q: q, rate: rate)
             case 3: f.notch(freq, q: q, rate: rate)
-            case 4: f.highShelf(freq, gainDb: gain, rate: rate)
+            case 4: f.highShelf(freq, gainDb: gain, q: q, rate: rate)
             case 5: f.lowpass(freq, q: q, rate: rate)
             case 6: f.bandpass(freq, q: q, rate: rate)
             default: f.peaking(freq, gainDb: gain, q: q, rate: rate)

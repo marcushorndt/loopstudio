@@ -16,9 +16,12 @@ struct GranulatorView: View {
 
     private var tint: Color { Theme.track(track.colorIndex) }
 
+    /// The parameters as the macros set them now.
+    private var params: [String: Double] { model.drivenParams(device, on: track) }
+
     private func value(_ key: String) -> Double {
         guard let p = spec.param(key) else { return 0 }
-        return p.clamp(device.params[key] ?? p.def)
+        return p.clamp(params[key] ?? p.def)
     }
 
     var body: some View {

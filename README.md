@@ -63,7 +63,7 @@ notes and automation steps, band marking, arrow keys that move notes on the grid
 swing a clip without moving its notes, quantize with an amount, humanize. The computer keyboard
 plays notes (M).
 
-**Built-in devices.** Effects: Utility, Auto Filter, Tone EQ, EQ One to EQ Eight, Delay, Tape Echo,
+**Built-in devices.** Effects: Utility, Auto Filter, Tone EQ, EQ One to EQ Eight, Delay, Tape Echo, Overdrive,
 Reverb, Compressor, Limiter, Multiband Compressor, Live Cut (a port of Livecut with the BBCut
 procedures) and Granulator. Instruments: Acid Bass (a 303-style mono synth with accent and slide)
 and 808 Drums (twelve synthesized pads). An Audio Effect Rack and a MIDI Rack hold chains behind

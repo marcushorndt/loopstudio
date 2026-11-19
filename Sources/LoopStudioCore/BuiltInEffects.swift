@@ -196,6 +196,7 @@ public enum BuiltInEffects {
         ], groups: [EffectGroup("Delay", ["timeMs", "feedback", "pingPong"]), EffectGroup("Out", ["mix"])]),
         reverb,
         tapeEcho,
+        overdrive,
         liveCut,
         granulator,
         compressor,
@@ -367,6 +368,21 @@ public enum BuiltInEffects {
         spec.groups = [EffectGroup("Detect", ["threshold", "ratio", "knee"]), EffectGroup("Time", ["attack", "release", "character"]),
                        EffectGroup("Sidechain", ["scGain", "scLowCut", "scHighCut", "scListen"], row: 1), EffectGroup("Out", ["makeup", "mix"], row: 1)]
         spec.sidechain = true
+        return spec
+    }()
+
+    /// An overdrive with six shapes, oversampled twice. The low cut keeps the bass clean before the drive,
+    /// the tone takes the fizz off after it.
+    static let overdrive: EffectSpec = {
+        var spec = EffectSpec(id: "overdrive", name: "Overdrive", params: [
+            EffectParam("drive", "Drive", 0, 48, 12, unit: "dB"),
+            EffectParam("shape", "Shape", 0, 5, 0, choices: ["Soft", "Hard", "Tube", "Tape", "Fold", "Diode"]),
+            EffectParam("lowCut", "Low Cut", 20, 1_000, 20, unit: "Hz", log: true),
+            EffectParam("tone", "Tone", 500, 20_000, 8_000, unit: "Hz", log: true),
+            EffectParam("output", "Output", -24, 24, 0, unit: "dB"),
+            EffectParam("mix", "Dry/Wet", 0, 1, 1),
+        ])
+        spec.groups = [EffectGroup("Drive", ["drive", "shape"]), EffectGroup("Tone", ["lowCut", "tone"]), EffectGroup("Out", ["output", "mix"])]
         return spec
     }()
 

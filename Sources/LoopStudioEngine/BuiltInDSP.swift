@@ -103,6 +103,7 @@ public class DSPEffect: @unchecked Sendable {
         case "limiter": effect = LimiterDSP(spec: spec, sampleRate: sampleRate)
         case "multiband": effect = MultibandDSP(spec: spec, sampleRate: sampleRate)
         case "tapeEcho": effect = TapeEchoDSP(spec: spec, sampleRate: sampleRate)
+        case "overdrive": effect = OverdriveDSP(spec: spec, sampleRate: sampleRate)
         case "livecut": effect = LiveCutDSP(spec: spec, sampleRate: sampleRate)
         case "granulator": effect = GranulatorDSP(spec: spec, sampleRate: sampleRate)
         // A patch without a program: the starter. The renderer gives a device its own program (`PatchDSP`).
@@ -196,15 +197,16 @@ struct Biquad {
         let A = pow(10, gainDb / 40), w = 2 * .pi * min(f, rate * 0.45) / rate, c = cos(w), a = sin(w) / (2 * q)
         set(b0: 1 + a * A, b1: -2 * c, b2: 1 - a * A, a0: 1 + a / A, a1: -2 * c, a2: 1 - a / A)
     }
-    mutating func lowShelf(_ f: Double, gainDb: Double, rate: Double) {
+    /// `q` is the steepness of the shelf's edge: 0.707 is the gentle default, more makes it bump at the corner.
+    mutating func lowShelf(_ f: Double, gainDb: Double, q: Double = 0.707, rate: Double) {
         let A = pow(10, gainDb / 40), w = 2 * .pi * min(f, rate * 0.45) / rate, c = cos(w), s = sin(w)
-        let alpha = s / 2 * sqrt(2.0), t = 2 * sqrt(A) * alpha
+        let alpha = s / (2 * max(q, 0.1)), t = 2 * sqrt(A) * alpha
         set(b0: A * ((A + 1) - (A - 1) * c + t), b1: 2 * A * ((A - 1) - (A + 1) * c), b2: A * ((A + 1) - (A - 1) * c - t),
             a0: (A + 1) + (A - 1) * c + t, a1: -2 * ((A - 1) + (A + 1) * c), a2: (A + 1) + (A - 1) * c - t)
     }
-    mutating func highShelf(_ f: Double, gainDb: Double, rate: Double) {
+    mutating func highShelf(_ f: Double, gainDb: Double, q: Double = 0.707, rate: Double) {
         let A = pow(10, gainDb / 40), w = 2 * .pi * min(f, rate * 0.45) / rate, c = cos(w), s = sin(w)
-        let alpha = s / 2 * sqrt(2.0), t = 2 * sqrt(A) * alpha
+        let alpha = s / (2 * max(q, 0.1)), t = 2 * sqrt(A) * alpha
         set(b0: A * ((A + 1) + (A - 1) * c + t), b1: -2 * A * ((A - 1) + (A + 1) * c), b2: A * ((A + 1) + (A - 1) * c - t),
             a0: (A + 1) - (A - 1) * c + t, a1: 2 * ((A - 1) - (A + 1) * c), a2: (A + 1) - (A - 1) * c - t)
     }

@@ -28,6 +28,20 @@ struct KnobSync {
     var toggle: () -> Void
 }
 
+/// The macros a knob inside a rack can hang on: one entry per enclosing rack, outermost first.
+struct KnobMacros {
+    struct RackEntry: Identifiable {
+        var id: DeviceID
+        var name: String
+        var macros: [String]
+    }
+    var racks: [RackEntry]
+    /// The macro that drives this knob now, as "Macro name of Rack name".
+    var mapped: String?
+    var map: (DeviceID, Int) -> Void
+    var unmap: () -> Void
+}
+
 struct Knob: View {
     let param: EffectParam
     let value: Double
@@ -36,6 +50,13 @@ struct Knob: View {
     let onReset: () -> Void
     /// Automation of this knob: nil hides the menu entries (a knob with no automation target).
     var automation: KnobAutomation? = nil
+    /// The enclosing racks' macros: nil outside a rack. Adds "Map to Macro" to the menu.
+    var macros: KnobMacros? = nil
+    /// A double-click on the name renames the knob (a rack macro); nil for a fixed name.
+    var rename: (() -> Void)? = nil
+    /// Menu entries the owner adds at the top of the knob's menu (a macro's map mode and mappings). A
+    /// context menu on the owner would never show: the knob's own menu takes the right-click.
+    var extraMenu: (() -> AnyView)? = nil
     /// The value a curve gives the parameter at the play position: a thin red arc on the dial, apart from
     /// the setting the knob holds. `nil` when no curve moves it now.
     var automated: Double? = nil
@@ -96,6 +117,9 @@ struct Knob: View {
             }
             Text(sync == nil ? param.name : param.name.replacingOccurrences(of: " Note", with: ""))
                 .font(.system(size: 10)).foregroundStyle(Theme.dim).lineLimit(1)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { rename?() }
+                .hint(rename == nil ? "" : "\(param.name). Double-click to rename it.")
             if rotary {
                 // The automated value stands where the setting would, in the automation colour.
                 Text(shown(automated ?? value)).font(.system(size: 10, design: .monospaced)).lineLimit(1)
@@ -124,6 +148,7 @@ struct Knob: View {
             }
         }
         .contextMenu {
+            if let extraMenu { extraMenu(); Divider() }
             if let automation {
                 Button(automation.laneShown ? "Hide Automation Curve" : "Show Automation Curve", action: automation.toggleLane)
                 Button("Clear Automation", action: automation.clear).disabled(!automation.hasCurve)
@@ -138,8 +163,54 @@ struct Knob: View {
                 }
             }
             if let sync { Button(sync.synced ? "Free Time (\(sync.unit))" : "Follow the Tempo", action: sync.toggle) }
+            if let macros {
+                // Inside a rack: hang the knob on a macro of any enclosing rack, the nearest rack first.
+                Menu("Map to Macro") {
+                    ForEach(macros.racks.reversed()) { rack in
+                        if macros.racks.count > 1 {
+                            Section(rack.name) { macroButtons(rack, macros) }
+                        } else {
+                            macroButtons(rack, macros)
+                        }
+                    }
+                }
+                if let mapped = macros.mapped { Button("Unmap from \(mapped)", action: macros.unmap) }
+            }
+            if let rename { Button("Rename…", action: rename) }
             Button("Reset to Default", action: onReset)
         }
+    }
+
+    @ViewBuilder private func macroButtons(_ rack: KnobMacros.RackEntry, _ macros: KnobMacros) -> some View {
+        ForEach(Array(rack.macros.enumerated()), id: \.offset) { i, name in
+            Button(name) { macros.map(rack.id, i) }
+        }
+    }
+}
+
+/// The rename popover of a device card: Enter renames, Escape closes.
+struct DeviceRenameField: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+    let device: DeviceSlot
+    @State private var name = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Device name").font(.caption).foregroundStyle(Theme.dim)
+            TextField(device.name, text: $name)
+                .textFieldStyle(.roundedBorder).frame(width: 200)
+                .focused($focused)
+                .onSubmit {
+                    let trimmed = name.trimmingCharacters(in: .whitespaces)
+                    if !trimmed.isEmpty, trimmed != device.name { model.apply(.setDeviceName(track: track.id, device: device.id, name: trimmed)) }
+                    model.deviceRenameRequest = nil
+                }
+                .onExitCommand { model.deviceRenameRequest = nil }
+        }
+        .padding(12)
+        .onAppear { name = device.name; focused = true }
     }
 }
 
@@ -540,7 +611,12 @@ struct DeviceCard: View {
                 .contentShape(Rectangle())
                 .simultaneousGesture(TapGesture(count: 2).onEnded { model.toggleDeviceFold(device.id) })
                 .draggable(dragItem) { dragPreview }
-                .hint("\(device.name). Drag the title to move the device. Double-click folds it.")
+                .hint("\(device.name). Drag the title to move the device. Double-click folds it. ⌘R or the menu renames it.")
+                .popover(isPresented: Binding(get: { model.deviceRenameRequest == device.id },
+                                              set: { if !$0, model.deviceRenameRequest == device.id { model.deviceRenameRequest = nil } }),
+                         arrowEdge: .bottom) {
+                    DeviceRenameField(track: track, device: device)
+                }
                 if let spec, spec.sidechain { sidechainMenu }
                 if let spec, spec.isDynamics { GainReductionMeter(device: device, bands: spec.id == "multiband" ? 3 : 1) }
                 if device.format == "audiounit" { pluginHeader }

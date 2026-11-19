@@ -127,6 +127,7 @@ public class DSPInstrument: DSPEffect, MIDIReceiver, @unchecked Sendable {
         switch id {
         case "acid": instrument = AcidBassDSP(spec: spec, sampleRate: sampleRate)
         case "drum808": instrument = Drum808DSP(spec: spec, sampleRate: sampleRate)
+        case "dx7": instrument = FMDSP(spec: spec, sampleRate: sampleRate)
         default: return nil
         }
         instrument.configure([:])

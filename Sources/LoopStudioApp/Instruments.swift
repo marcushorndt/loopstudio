@@ -121,6 +121,7 @@ struct InstrumentView: View {
         switch device.identifier {
         case "acid": AcidBassView(track: track, device: device, spec: spec)
         case "drum808": Drum808View(track: track, device: device, spec: spec)
+        case "dx7": DX7View(track: track, device: device, spec: spec)
         default:
             KnobSection(title: spec.name) {
                 ForEach(spec.shownParams, id: \.key) { ParamKnob(track: track, device: device, spec: spec, key: $0.key) }

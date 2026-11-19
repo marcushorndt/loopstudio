@@ -420,6 +420,9 @@ final class AppModel {
     var audioFolders: [URL] = []
     /// The device presets on disk, read once at launch and after every save, import or delete.
     var presets: [PresetEntry] = []
+    /// The DX7 banks in the library folder, read once when a DX7 panel first asks for them.
+    var dx7Banks: [DX7BankEntry] = []
+    var dx7LibraryState: DX7LibraryState = .idle
     /// "Save Preset…" asks for a name here; the device chain shows the prompt.
     var presetPrompt: PresetPrompt?
     @ObservationIgnored var presetLibrary = PresetLibrary.standard

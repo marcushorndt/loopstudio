@@ -523,7 +523,7 @@ public enum BuiltInInstruments {
         EffectParam("volume", "Volume", -24, 12, 0, unit: "dB"),
     ], isInstrument: true)
 
-    public static let all: [EffectSpec] = [acid, drums, BuiltInEffects.midiRack]
+    public static let all: [EffectSpec] = [acid, drums, DX7.spec, BuiltInEffects.midiRack]
 
     public static func spec(_ id: String) -> EffectSpec? { all.first { $0.id == id } }
 

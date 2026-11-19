@@ -98,6 +98,8 @@ struct TrackMenuItems: View {
         AppAction.insertMIDITrack.button(model)
         AppAction.insertReturnTrack.button(model)
         AppAction.insertGroupTrack.button(model)
+        Divider()
+        SendToAssistant { model.attachment(track: track) }
     }
 }
 
@@ -162,6 +164,8 @@ struct ArrangementClipMenu: View {
         }
         ClipColorMenu(clip: clip, track: track)
         Button("Show in Clip Panel") { model.selectedClip = clip.id; model.detailTab = .clip; model.detailOpen = true }
+        Divider()
+        SendToAssistant { model.attachment(clip: clip, track: track) }
     }
 }
 
@@ -212,6 +216,7 @@ struct SlotMenu: View {
             Divider()
             AppAction.duplicate.button(model) { model.duplicateSlot(track: track.id, row: row) }
             Button("Edit Clip Automation") { model.openClipAutomation(slot.clip.id) }
+            SendToAssistant { model.attachment(clip: slot.clip, track: track, slot: row) }
             AppAction.deleteSelection.button(model, title: "Delete Clip") { model.apply(.setSlot(track: track.id, index: row, slot: nil)) }
             if case .dummy = slot.clip {} else {
                 Button("Insert into Arrangement at Playhead") { model.insertSlotIntoArrangement(track: track.id, row: row) }
@@ -260,6 +265,8 @@ struct SceneMenu: View {
         AppAction.insertScene.button(model, title: "Insert Scene Below") { model.insertScene(at: row + 1) }
         AppAction.duplicateScene.button(model) { model.duplicateScene(row) }
         AppAction.deleteScene.button(model) { model.deleteScene(row) }
+        Divider()
+        SendToAssistant { model.attachment(scene: row) }
     }
 }
 
@@ -331,6 +338,8 @@ struct DeviceMenu: View {
         Button("Export Preset…") { model.exportPreset(track: track.id, device: device.id) }
         Divider()
         AppAction.deleteSelection.button(model, title: "Delete") { model.apply(.removeDevice(track: track.id, device: device.id)) }
+        Divider()
+        SendToAssistant { model.attachment(device: device, track: track) }
     }
 }
 

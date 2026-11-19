@@ -176,6 +176,8 @@ struct FileRow: View {
             Button(model.previewing == url ? "Stop Preview" : "Preview") { model.togglePreview(url) }
             Button("Add to New Audio Track") { _ = model.dropOnNewTrack([url]) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            Divider()
+            SendToAssistant { model.attachment(file: url) }
         }
         .hint("Click to listen. Drag onto a clip slot or the timeline.")
     }

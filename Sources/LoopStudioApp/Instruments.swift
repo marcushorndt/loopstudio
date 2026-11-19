@@ -34,7 +34,8 @@ struct ParamKnob: View {
                             automated: param.fixed ? nil : model.automatedValue(track, address),
                             sync: free.syncable ? KnobSync(synced: synced, unit: free.unit) {
                                 model.setDeviceParam(track.id, device.id, free.syncKey, synced ? 0 : 1)
-                            } : nil)
+                            } : nil,
+                            attachment: { model.attachment(param: param, value: device.params[param.key] ?? param.def, device: device, track: track) })
             .allowsHitTesting(driven == nil)
             .overlay(alignment: .topTrailing) { if let driven { MacroBadge(track: track, address: address, driving: driven) } }
             .midiLearnable(.deviceParam(track.id, device.id, param.key))

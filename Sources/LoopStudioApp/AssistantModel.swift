@@ -16,7 +16,7 @@ final class AssistantModel {
     }
 
     enum Row: Identifiable, Equatable {
-        case user(id: String, text: String)
+        case user(id: String, text: String, attachment: String? = nil)
         case assistant(id: String, text: String)
         case progress(id: String, text: String)
         case tool(id: String, name: String, input: JSONValue, state: ToolState)
@@ -24,7 +24,7 @@ final class AssistantModel {
 
         var id: String {
             switch self {
-            case .user(let id, _), .assistant(let id, _), .progress(let id, _), .tool(let id, _, _, _), .notice(let id, _): id
+            case .user(let id, _, _), .assistant(let id, _), .progress(let id, _), .tool(let id, _, _, _), .notice(let id, _): id
             }
         }
     }
@@ -33,6 +33,10 @@ final class AssistantModel {
 
     private(set) var rows: [Row] = []
     var input = ""
+    /// What a right-click sent here ("Send to Assistant"). The next request refers to it; sending clears it.
+    var attachment: AssistantAttachment?
+    /// Counts up when the input should take the keyboard (after an attachment arrives).
+    private(set) var focusRequest = 0
     private(set) var running = false
     private(set) var usage = TokenUsage()
     private(set) var cost = 0.0
@@ -81,6 +85,14 @@ final class AssistantModel {
 
     init(app: AppModel) { self.app = app }
 
+    /// "Send to Assistant": the object goes under the input as a chip, the sidebar shows the assistant,
+    /// the field takes the keyboard.
+    func attach(_ a: AssistantAttachment) {
+        attachment = a
+        app.sidebarTab = .assistant
+        focusRequest += 1
+    }
+
     // MARK: The engine
 
     private func makeEngine() -> AssistantEngine {
@@ -110,12 +122,17 @@ final class AssistantModel {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !running, hasKey else { return }
         input = ""
-        rows.append(.user(id: UUID().uuidString, text: text))
+        let attached = attachment
+        attachment = nil
+        rows.append(.user(id: UUID().uuidString, text: text, attachment: attached?.label))
         running = true
         lastTurnUndoable = false
         if engine == nil { engine = makeEngine() }
         guard let engine else { return }
-        let context = screenContext()
+        var context = screenContext()
+        if let attached {
+            context += "\n[Sent along by right-click, the request refers to this: \(attached.detail)]"
+        }
         let ask = askBeforeChanges
         app.beginUndoGroup()
 
@@ -161,6 +178,7 @@ final class AssistantModel {
     }
 
     func clear() {
+        attachment = nil
         guard !running else { return }
         rows = []
         engine = nil

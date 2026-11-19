@@ -39,6 +39,8 @@ struct AssistantPane: View {
                     if assistant.rows.isEmpty {
                         Text("Ask for an edit in the words of the screen: \"add a delay after the EQ on the bass\", \"make slot 2 of track 1 loop two bars\", \"pull the feedback of the delay down a bit\".")
                             .font(.system(size: 11)).foregroundStyle(Theme.dim).padding(.top, 4)
+                        Text("Right-click a track, clip, note, device or knob and choose Send to Assistant: the request then refers to that thing.")
+                            .font(.system(size: 11)).foregroundStyle(Theme.dim)
                     }
                     ForEach(assistant.rows) { row in
                         AssistantRowView(row: row).id(row.id)
@@ -77,12 +79,26 @@ struct AssistantPane: View {
 
     private var inputField: some View {
         @Bindable var assistant = assistant
-        return HStack(alignment: .bottom, spacing: 6) {
-            TextField("Ask the assistant…", text: $assistant.input, axis: .vertical)
+        return VStack(spacing: 4) {
+            if let a = assistant.attachment {
+                HStack(spacing: 6) {
+                    Image(systemName: "paperclip").font(.system(size: 10))
+                    Text(a.label).font(.system(size: 11)).lineLimit(1)
+                    Spacer(minLength: 0)
+                    Button { assistant.attachment = nil } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 11)) }
+                        .buttonStyle(.plain).hint("Drop the attachment")
+                }
+                .foregroundStyle(Theme.dim).padding(.horizontal, 4)
+                .hint("Sent here by right-click. The next request refers to it.")
+            }
+            HStack(alignment: .bottom, spacing: 6) {
+            TextField(assistant.attachment == nil ? "Ask the assistant…" : "What should happen with it?", text: $assistant.input, axis: .vertical)
                 .textFieldStyle(.plain).lineLimit(1...6).font(.system(size: 12))
                 .padding(6).background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Theme.radius))
                 .focused($focused)
                 .onSubmit { assistant.send() }
+                .onChange(of: assistant.focusRequest) { _, _ in focused = true }
+                .onAppear { if assistant.attachment != nil { focused = true } }
             if assistant.running {
                 Button { assistant.stop() } label: { Image(systemName: "stop.fill") }
                     .buttonStyle(.plain).foregroundStyle(Theme.automationDot).frame(width: 22, height: 26).hint("Stop the turn")
@@ -90,6 +106,7 @@ struct AssistantPane: View {
                 Button { assistant.send() } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 18)) }
                     .buttonStyle(.plain).foregroundStyle(assistant.input.isEmpty ? Theme.dim : Theme.accent)
                     .frame(width: 22, height: 26).disabled(assistant.input.isEmpty).hint("Send (Return)")
+            }
             }
         }
         .padding(.horizontal, 10).padding(.bottom, 10)
@@ -102,10 +119,15 @@ private struct AssistantRowView: View {
 
     var body: some View {
         switch row {
-        case .user(_, let text):
-            Text(text).font(.system(size: 12)).foregroundStyle(Theme.text).textSelection(.enabled)
-                .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Theme.radius))
+        case .user(_, let text, let attachment):
+            VStack(alignment: .leading, spacing: 4) {
+                if let attachment {
+                    Label(attachment, systemImage: "paperclip").font(.system(size: 10)).foregroundStyle(Theme.dim).lineLimit(1)
+                }
+                Text(text).font(.system(size: 12)).foregroundStyle(Theme.text).textSelection(.enabled)
+            }
+            .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.panelRaised, in: RoundedRectangle(cornerRadius: Theme.radius))
         case .assistant(_, let text):
             Text(text).font(.system(size: 12)).foregroundStyle(Theme.text).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)

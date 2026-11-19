@@ -63,6 +63,8 @@ struct Knob: View {
     var sync: KnobSync? = nil
     /// The text under the knob, in place of `param.format`: a hosted plugin gives its own strings.
     var format: ((Double) -> String)? = nil
+    /// What "Send to Assistant" in the knob's menu sends: the parameter with its device and track.
+    var attachment: (() -> AssistantAttachment)? = nil
     @State private var startPosition: Double?
     @State private var entering = false
     @State private var entry = ""
@@ -178,6 +180,10 @@ struct Knob: View {
             }
             if let rename { Button("Rename…", action: rename) }
             Button("Reset to Default", action: onReset)
+            if let attachment {
+                Divider()
+                SendToAssistant(make: attachment)
+            }
         }
     }
 
@@ -863,7 +869,8 @@ struct AudioUnitKnobs: View {
                     onReset: { model.setDeviceParam(track.id, device.id, k.key, nil) },
                     automation: model.knobAutomation(track, address),
                     automated: automated,
-                    format: k.choices.isEmpty ? { unit.displayString(k.address, $0) ?? param.format($0) } : nil)
+                    format: k.choices.isEmpty ? { unit.displayString(k.address, $0) ?? param.format($0) } : nil,
+                    attachment: { model.attachment(param: param, value: value, device: device, track: track) })
             .allowsHitTesting(driven == nil)
             .overlay(alignment: .topTrailing) { if let driven { MacroBadge(track: track, address: address, driving: driven) } }
             .midiLearnable(.deviceParam(track.id, device.id, k.key))

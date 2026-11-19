@@ -1126,6 +1126,11 @@ private struct NoteView: View {
             Menu("Velocity") { ForEach([32, 64, 96, 127], id: \.self) { v in Button("\(v)") { model.newNoteVelocity = UInt8(v); replace { $0.velocity = UInt8(v) } } } }
             Button(note.muted ? "Activate" : "Deactivate") { replace { $0.muted.toggle() } }
             Divider()
+            let group = selected && model.selectedNotes.count > 1
+            SendToAssistant(title: group ? "Send \(model.selectedNotes.count) Marked Notes to Assistant" : "Send Note to Assistant") {
+                model.attachment(notes: group ? clip.notes.filter { model.selectedNotes.contains($0) } : [note], clip: clip)
+            }
+            Divider()
             Text("Drag: move · Option drag: copy · Command (or Control) drag up/down: velocity · Command during a move: the other grid · 0: deactivate").font(.caption)
         }
     }

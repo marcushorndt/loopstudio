@@ -146,6 +146,7 @@ private struct DX7Display: View {
     let device: DeviceSlot
     @Binding var position: (bank: URL, voice: Int)?
     @Binding var browsing: Bool
+    @State private var choosing = false
 
     private var bank: DX7BankEntry? { position.flatMap { p in model.dx7Banks.first { $0.url == p.bank } } }
 
@@ -172,12 +173,18 @@ private struct DX7Display: View {
                     .buttonStyle(.plain).disabled(position == nil).hint("The next voice in its bank")
             }
             .padding(.horizontal, 6).padding(.top, 4)
+            let fb = Int(device.params["fb"] ?? 0)
             AlgorithmGraph(algorithm: DX7.algorithms[alg], params: device.params)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .bottomTrailing) {
-                    Text("ALG \(alg + 1)").font(.system(size: 8, weight: .semibold)).foregroundStyle(Theme.dim).padding(4)
+                    Text("ALG \(alg + 1) · FB \(fb)").font(.system(size: 8, weight: .semibold)).foregroundStyle(Theme.dim).padding(4)
                 }
-                .hint("Algorithm \(alg + 1): the operators and who modulates whom. Carriers stand on the bottom row; the loop is the feedback. Right-click an operator button to switch it off.")
+                .contentShape(Rectangle())
+                .onTapGesture { choosing = true }
+                .popover(isPresented: $choosing, arrowEdge: .bottom) {
+                    DX7AlgorithmGrid(track: track, device: device, shown: $choosing)
+                }
+                .hint("Algorithm \(alg + 1): the operators and who modulates whom. Carriers stand on the bottom row; the wire with the arrow is the feedback (FB \(fb)). Click to pick one of the 32 from the grid.")
         }
         .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.line.opacity(0.7), lineWidth: 1))
@@ -204,7 +211,10 @@ private struct DX7Display: View {
 /// feedback as a loop. An operator with a level of zero or switched off is drawn faint.
 private struct AlgorithmGraph: View {
     let algorithm: DX7.Algorithm
+    /// The device's values: an operator at level zero or switched off is drawn faint. Empty: nothing is faint.
     let params: [String: Double]
+    /// Small, for the grid of all 32: tighter margins, smaller boxes.
+    var compact = false
 
     /// Columns and rows for the six operators: a tree under every carrier, left to right.
     static func layout(_ alg: DX7.Algorithm) -> (positions: [Int: (x: Double, y: Int)], width: Double, depth: Int) {
@@ -232,14 +242,16 @@ private struct AlgorithmGraph: View {
         Canvas { ctx, size in
             let (positions, columns, depth) = Self.layout(algorithm)
             let rows = Double(depth + 1)
-            let cellW = min(34, (size.width - 24) / columns), cellH = min(16, (size.height - 6) / rows)
+            let margin = compact ? 6.0 : 24.0
+            let cellW = min(34, (size.width - margin) / columns), cellH = min(16, (size.height - 6) / rows)
+            let boxW = min(20, cellW - 2), boxH = min(12, cellH - 3)
             let originX = (size.width - cellW * columns) / 2
             func point(_ op: Int) -> CGPoint {
                 let p = positions[op]!
                 return CGPoint(x: originX + p.x * cellW, y: size.height - 4 - cellH * (Double(p.y) + 0.5))
             }
             func faint(_ op: Int) -> Bool {
-                (params[DX7.key(op + 1, "on")] ?? 1) < 0.5 || (params[DX7.key(op + 1, "ol")] ?? 0) < 1
+                !params.isEmpty && ((params[DX7.key(op + 1, "on")] ?? 1) < 0.5 || (params[DX7.key(op + 1, "ol")] ?? 0) < 1)
             }
             // The wires: modulator to carrier, straight down.
             for op in 0..<6 {
@@ -249,29 +261,74 @@ private struct AlgorithmGraph: View {
                     ctx.stroke(path, with: .color(dx7Tint.opacity(faint(op) ? 0.25 : 0.7)), lineWidth: 1)
                 }
             }
-            // The feedback loop: out at the right of the source, back into the top of the target.
+            // The feedback, as on the panel print: a wire leaves the source at its right, climbs above the
+            // target and comes down into the target's top. Strong while FB is above zero, faint at zero.
             let from = point(algorithm.feedbackFrom), to = point(algorithm.feedbackTo)
+            let out = boxW / 2 + (compact ? 3 : 6)
+            let above = min(to.y, from.y) - boxH / 2 - (compact ? 3 : 5)
             var loop = Path()
-            let r = 7.0
-            if algorithm.feedbackFrom == algorithm.feedbackTo {
-                loop.addArc(center: CGPoint(x: from.x + 11, y: from.y - 4), radius: 4.5, startAngle: .degrees(90), endAngle: .degrees(-180), clockwise: true)
-            } else {
-                loop.move(to: CGPoint(x: from.x + 10, y: from.y))
-                loop.addLine(to: CGPoint(x: from.x + 10 + r, y: from.y))
-                loop.addLine(to: CGPoint(x: to.x + 10 + r, y: to.y - cellH * 0.5))
-                loop.addLine(to: CGPoint(x: to.x, y: to.y - cellH * 0.5))
+            loop.move(to: CGPoint(x: from.x + boxW / 2, y: from.y))
+            loop.addLine(to: CGPoint(x: from.x + out, y: from.y))
+            loop.addLine(to: CGPoint(x: from.x + out, y: above))
+            loop.addLine(to: CGPoint(x: to.x, y: above))
+            loop.addLine(to: CGPoint(x: to.x, y: to.y - boxH / 2))
+            let fb = params["fb"] ?? (params.isEmpty ? 7 : 0)
+            let fbColor = dx7Tint.opacity(fb > 0 ? 0.9 : 0.3)
+            ctx.stroke(loop, with: .color(fbColor), style: StrokeStyle(lineWidth: fb > 0 ? 1.2 : 1, dash: fb > 0 ? [] : [2, 2]))
+            // The arrow head where the wire enters the target.
+            var head = Path()
+            let tip = CGPoint(x: to.x, y: to.y - boxH / 2)
+            head.move(to: CGPoint(x: tip.x - 2.5, y: tip.y - 3.5)); head.addLine(to: tip); head.addLine(to: CGPoint(x: tip.x + 2.5, y: tip.y - 3.5))
+            ctx.stroke(head, with: .color(fbColor), lineWidth: 1)
+            if !compact {
+                ctx.draw(Text("FB").font(.system(size: 6, weight: .semibold)).foregroundStyle(fbColor),
+                         at: CGPoint(x: from.x + out + 2, y: (from.y + above) / 2), anchor: .leading)
             }
-            ctx.stroke(loop, with: .color(Theme.automationDot.opacity((params["fb"] ?? 0) > 0 ? 0.9 : 0.3)), lineWidth: 1)
             // The boxes.
             for op in 0..<6 {
                 let c = point(op)
-                let rect = CGRect(x: c.x - 10, y: c.y - 6, width: 20, height: 12)
+                let rect = CGRect(x: c.x - boxW / 2, y: c.y - boxH / 2, width: boxW, height: boxH)
                 let carrier = algorithm.isCarrier(op)
                 ctx.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(carrier ? dx7Tint.opacity(faint(op) ? 0.2 : 0.75) : Color.white.opacity(faint(op) ? 0.06 : 0.16)))
                 ctx.stroke(Path(roundedRect: rect, cornerRadius: 2), with: .color(dx7Tint.opacity(faint(op) ? 0.3 : 0.9)), lineWidth: 1)
-                ctx.draw(Text("\(op + 1)").font(.system(size: 8, weight: .bold)).foregroundStyle(carrier && !faint(op) ? .black : Theme.text), at: c)
+                ctx.draw(Text("\(op + 1)").font(.system(size: boxH * 0.66, weight: .bold)).foregroundStyle(carrier && !faint(op) ? .black : Theme.text), at: c)
             }
         }
+    }
+}
+
+/// The 32 algorithms as on the DX7's panel: a grid to tap. The current one is framed.
+private struct DX7AlgorithmGrid: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+    let device: DeviceSlot
+    @Binding var shown: Bool
+
+    var body: some View {
+        let current = Int(device.params["alg"] ?? 0)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Algorithm").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.text)
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(78), spacing: 4), count: 8), spacing: 4) {
+                ForEach(0..<32, id: \.self) { i in
+                    Button {
+                        model.setDeviceParam(track.id, device.id, "alg", Double(i))
+                        shown = false
+                    } label: {
+                        AlgorithmGraph(algorithm: DX7.algorithms[i], params: [:], compact: true)
+                            .frame(width: 78, height: 60)
+                            .overlay(alignment: .topLeading) {
+                                Text("\(i + 1)").font(.system(size: 8, weight: .semibold)).foregroundStyle(i == current ? dx7Tint : Theme.dim).padding(3)
+                            }
+                            .background(Color.black.opacity(i == current ? 0.4 : 0.2), in: RoundedRectangle(cornerRadius: 4))
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(i == current ? dx7Tint : Theme.line.opacity(0.5), lineWidth: i == current ? 1.5 : 1))
+                    }
+                    .buttonStyle(.plain)
+                    .hint("Algorithm \(i + 1)")
+                }
+            }
+            Text("Carriers on the bottom row, modulators above them, the arrow is the feedback.").font(.system(size: 9)).foregroundStyle(Theme.dim)
+        }
+        .padding(10)
     }
 }
 

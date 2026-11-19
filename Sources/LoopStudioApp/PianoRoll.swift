@@ -240,7 +240,8 @@ struct PianoRoll: View {
                         Rectangle().fill(Theme.panel).frame(width: keysWidth, height: Self.laneHeight)
                             .overlay(alignment: .topLeading) { laneMenu.padding(2) }
                         if lane == .velocity { velocityLane.frame(width: width, height: Self.laneHeight) }
-                        else if let address = lane.automationAddress { automationLane(address).frame(width: width, height: Self.laneHeight) }
+                        // The automation lane fills the view past a short clip, so a drag can start right of the clip's end.
+                        else if let address = lane.automationAddress { automationLane(address).frame(width: laneWidth, height: Self.laneHeight) }
                         else { controlLane.frame(width: width, height: Self.laneHeight) }
                     }
                     .offset(y: laneOffset).zIndex(1)
@@ -471,12 +472,16 @@ struct PianoRoll: View {
     /// draws steps on the grid; the drawn stretch replaces what was there.
     /// The lane under the notes as a clip automation lane: the envelope editor for one parameter, on the
     /// grid of the notes. The pen (B) draws; otherwise a click adds a point and a drag moves it.
+    /// The automation lane's width: the clip, or the visible view when the clip is shorter than it.
+    private var laneWidth: CGFloat { max(width, visibleWidth - keysWidth) }
+
     @ViewBuilder
     private func automationLane(_ address: ParameterAddress) -> some View {
         if let owner, let target = model.project.clipAutomationTargets(.midi(clip), owner: owner).first(where: { $0.address == address }) {
             let points = clip.lanes?.first { $0.target == address }?.points ?? []
             AutomationEditor(target: target, points: points, pixelsPerTick: Double(pxPerBeat) / Double(Tick.perQuarter),
-                             width: width, height: Self.laneHeight, tint: tint, pen: model.drawMode, penGrid: model.noteGrid) { pts in
+                             width: laneWidth, height: Self.laneHeight, tint: tint, pen: model.drawMode, penGrid: model.noteGrid,
+                             maxTick: clip.length) { pts in
                 model.apply(.setClipAutomation(clip: clip.id, target: address, points: pts))
             }
             .overlay(alignment: .topLeading) {

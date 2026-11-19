@@ -26,6 +26,9 @@ struct AutomationEditor: View {
     var pen = false
     /// The cell of the pen, in ticks: the grid of the view that holds the editor.
     var penGrid: Int64 = Tick.perQuarter / 4
+    /// The last tick a point can sit on (a clip's length): the lane can be wider than the clip, so a drag can
+    /// start past its end, but no point lands there.
+    var maxTick: Tick? = nil
     let onChange: ([AutomationPoint]) -> Void
 
     @State private var draft: [AutomationPoint]?
@@ -156,6 +159,7 @@ struct AutomationEditor: View {
                     let others = points.indices.filter { !starts.keys.contains($0) }.map { points[$0].tick.rawValue }
                     if let prev = others.filter({ $0 < lo }).max() { delta = max(delta, prev + 1 - lo) }
                     if let next = others.filter({ $0 > hi }).min() { delta = min(delta, next - 1 - hi) }
+                    if let maxTick { delta = min(delta, maxTick.rawValue - hi) }
                     for (j, p0) in starts where working.indices.contains(j) {
                         working[j].tick = Tick(max(0, p0.tick.rawValue + delta))
                         working[j].value = target.value(atPosition: target.position(p0.value) + dPos)
@@ -165,6 +169,7 @@ struct AutomationEditor: View {
                 }
                 // A point stays between its neighbours: the order of the curve never changes in a drag.
                 var tick = snap(Int64(max(0, g.location.x / pixelsPerTick)))
+                if let maxTick { tick = min(tick, maxTick.rawValue) }
                 if i > 0 { tick = max(tick, points[i - 1].tick.rawValue + 1) }
                 if i + 1 < points.count { tick = min(tick, points[i + 1].tick.rawValue - 1) }
                 if i > 0, i + 1 < points.count, points[i - 1].tick.rawValue + 1 > points[i + 1].tick.rawValue - 1 { tick = points[i].tick.rawValue }
@@ -337,7 +342,8 @@ struct AutomationEditor: View {
 
     /// Adds a point under the pointer: on the grid, at the value the pointer is at.
     private func addPoint(at point: CGPoint) {
-        let tick = snap(Int64(max(0, point.x / pixelsPerTick)))
+        var tick = snap(Int64(max(0, point.x / pixelsPerTick)))
+        if let maxTick { tick = min(tick, maxTick.rawValue) }
         let value = target.value(atPosition: 1 - Double(min(max(0, point.y), height)) / Double(height))
         var next = points.filter { $0.tick != Tick(tick) }
         next.append(AutomationPoint(tick: Tick(tick), value: value))
@@ -350,6 +356,7 @@ struct AutomationEditor: View {
     /// the last drawn cell it continues where it was.
     private func draw(at point: CGPoint) {
         let cell = Int64(max(0, point.x / pixelsPerTick)) / penGrid * penGrid
+        if let maxTick, cell >= maxTick.rawValue { return }
         let value = target.value(atPosition: 1 - Double(min(max(0, point.y), height)) / Double(height))
         if let last = penLast, abs(cell - last) > penGrid {
             for c in stride(from: min(cell, last), through: max(cell, last), by: Int(penGrid)) { penPoints[c] = value }

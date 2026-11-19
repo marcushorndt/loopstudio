@@ -37,6 +37,8 @@ struct AutomationEditor: View {
     @State private var marked: Set<Int> = []
     /// The band being dragged over empty space, from its press to the pointer.
     @State private var band: CGRect?
+    /// Where the band's drag pressed: the band is measured from here, whichever way the pointer goes.
+    @State private var bandStart: CGPoint?
     /// The marked stretch of time, in ticks, kept after the drag: Delete and a group drag work on it.
     @State private var range: ClosedRange<Int64>?
     @State private var editorID = UUID()
@@ -142,8 +144,9 @@ struct AutomationEditor: View {
                     draft = working
                     return
                 }
-                if let start = band?.origin {
-                    // The band is a stretch of time over the whole height, like a marked range on a clip.
+                if band != nil, let start = bandStart {
+                    // The band is a stretch of time over the whole height, like a marked range on a clip. It is
+                    // measured from the press: a band measured from its own origin collapsed in a leftward drag.
                     let rect = CGRect(x: min(start.x, g.location.x), y: 0, width: abs(g.location.x - start.x), height: height)
                     band = rect
                     let lo = Int64(max(0, rect.minX / pixelsPerTick)), hi = Int64(max(0, rect.maxX / pixelsPerTick))
@@ -297,6 +300,7 @@ struct AutomationEditor: View {
             marked = []
             range = nil
             band = CGRect(origin: point, size: .zero)
+            bandStart = point
             return
         }
         if nearest(to: point, in: working) == nil, let i = nearestHandle(to: point, in: working) {
@@ -338,15 +342,24 @@ struct AutomationEditor: View {
             return
         }
         band = CGRect(origin: point, size: .zero)
+            bandStart = point
     }
 
-    /// Adds a point under the pointer: on the grid, at the value the pointer is at.
+    /// Adds a point under the pointer: on the grid, at the value the pointer is at. The shape of the segment it
+    /// lands in moves to its right half: the new point takes the curve and the slope, the point before it goes
+    /// straight (a held step stays a step on both halves).
     private func addPoint(at point: CGPoint) {
         var tick = snap(Int64(max(0, point.x / pixelsPerTick)))
         if let maxTick { tick = min(tick, maxTick.rawValue) }
         let value = target.value(atPosition: 1 - Double(min(max(0, point.y), height)) / Double(height))
         var next = points.filter { $0.tick != Tick(tick) }
-        next.append(AutomationPoint(tick: Tick(tick), value: value))
+        var added = AutomationPoint(tick: Tick(tick), value: value)
+        if let i = next.indices.filter({ next[$0].tick.rawValue < tick }).max(), next.indices.contains(i + 1) {
+            added.curve = next[i].curve
+            added.bend = next[i].bend
+            if next[i].curve != .hold { next[i].curve = .linear; next[i].bend = nil }
+        }
+        next.append(added)
         next.sort { $0.tick < $1.tick }
         onChange(next)
     }
@@ -386,6 +399,7 @@ struct AutomationEditor: View {
             bending = nil
             segment = nil
             band = nil
+            bandStart = nil
             groupStart = nil
             moved = false
             penPoints = [:]

@@ -1,11 +1,20 @@
 import LoopStudioCore
 import SwiftUI
 
+/// The marking of one automation editor, as the model sees it: Delete removes the marked points.
+struct AutomationMarking {
+    var editor: UUID
+    var delete: () -> Void
+}
+
 /// An envelope editor. A click adds a point; a drag on a point moves it; a drag on a segment moves the segment
-/// up or down; a drag on empty space marks the points inside the band, and a marked point then drags the whole
-/// group. Double-click a point to delete it, shift-click a point to change the shape of the segment after it.
-/// The diamond in the middle of a straight segment sets its slope: drag it up or down; double-click straightens.
+/// up or down; a drag on empty space marks a stretch of time, like a range on a clip: the points inside are
+/// marked, a drag inside the stretch moves them all, Delete removes them (the curve then runs straight from the
+/// point before to the point after). Double-click a point to delete it, shift-click a point to change the shape
+/// of the segment after it. The diamond in the middle of a straight segment sets its slope: drag it up or down;
+/// double-click straightens.
 struct AutomationEditor: View {
+    @Environment(AppModel.self) private var model
     let target: AutomationTarget
     let points: [AutomationPoint]
     /// Horizontal scale: how many pixels one tick takes.
@@ -25,6 +34,9 @@ struct AutomationEditor: View {
     @State private var marked: Set<Int> = []
     /// The band being dragged over empty space, from its press to the pointer.
     @State private var band: CGRect?
+    /// The marked stretch of time, in ticks, kept after the drag: Delete and a group drag work on it.
+    @State private var range: ClosedRange<Int64>?
+    @State private var editorID = UUID()
     /// The segment being dragged: its first point and the values of both ends at the press.
     @State private var segment: (index: Int, values: (Double, Double))?
     /// The marked points at the press of a group drag.
@@ -54,6 +66,10 @@ struct AutomationEditor: View {
             if let band {
                 ctx.fill(Path(band), with: .color(.white.opacity(0.06)))
                 ctx.stroke(Path(band), with: .color(.white.opacity(0.5)), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+            } else if let range {
+                let rect = CGRect(x: x(Tick(range.lowerBound)), y: 0, width: x(Tick(range.upperBound)) - x(Tick(range.lowerBound)), height: size.height)
+                ctx.fill(Path(rect), with: .color(.white.opacity(0.08)))
+                ctx.stroke(Path(rect), with: .color(.white.opacity(0.45)), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
             }
             guard !shown.isEmpty else { return }
             var line = Path()
@@ -124,10 +140,11 @@ struct AutomationEditor: View {
                     return
                 }
                 if let start = band?.origin {
-                    let rect = CGRect(x: min(start.x, g.location.x), y: min(start.y, g.location.y),
-                                      width: abs(g.location.x - start.x), height: abs(g.location.y - start.y))
+                    // The band is a stretch of time over the whole height, like a marked range on a clip.
+                    let rect = CGRect(x: min(start.x, g.location.x), y: 0, width: abs(g.location.x - start.x), height: height)
                     band = rect
-                    marked = Set(points.indices.filter { rect.contains(CGPoint(x: x(points[$0].tick), y: y(points[$0].value))) })
+                    let lo = Int64(max(0, rect.minX / pixelsPerTick)), hi = Int64(max(0, rect.maxX / pixelsPerTick))
+                    marked = Set(points.indices.filter { (lo...hi).contains(points[$0].tick.rawValue) })
                     return
                 }
                 guard let i = dragging, var working = draft, working.indices.contains(i) else { return }
@@ -156,6 +173,28 @@ struct AutomationEditor: View {
                 draft = working
             }
             .onEnded { g in finish(at: g.startLocation) })
+        .contextMenu {
+            if !marked.isEmpty {
+                Button("Delete \(marked.count) Marked Point\(marked.count == 1 ? "" : "s")", action: deleteMarked)
+                Button("Clear Marking") { marked = []; range = nil }
+            } else {
+                Text("Drag over the lane to mark a stretch; Delete removes its points, a drag inside moves them.")
+            }
+        }
+        // The model routes Delete to the editor that holds a marking.
+        .onChange(of: marked) { _, now in
+            if now.isEmpty { if model.automationMarking?.editor == editorID { model.automationMarking = nil } }
+            else { model.automationMarking = AutomationMarking(editor: editorID, delete: deleteMarked) }
+        }
+        .onDisappear { if model.automationMarking?.editor == editorID { model.automationMarking = nil } }
+    }
+
+    /// Removes the marked points. The curve then runs from the point before the stretch to the point after it.
+    private func deleteMarked() {
+        let keep = points.indices.filter { !marked.contains($0) }.map { points[$0] }
+        marked = []
+        range = nil
+        onChange(keep)
     }
 
     /// A press that did not move on a point or a slope handle: the second one within a moment is a double
@@ -261,7 +300,16 @@ struct AutomationEditor: View {
             draft = working
             return
         }
+        // A press inside the marked stretch drags every marked point, up, down or sideways.
+        if let range, !marked.isEmpty, range.contains(Int64(max(0, point.x / pixelsPerTick))),
+           let first = marked.sorted().first, working.indices.contains(first) {
+            dragging = first
+            groupStart = Dictionary(uniqueKeysWithValues: marked.filter { working.indices.contains($0) }.map { ($0, working[$0]) })
+            draft = working
+            return
+        }
         marked = []
+        range = nil
         if let s = nearestSegment(to: point, in: working) {
             segment = (s, (working[s].value, working[s + 1].value))
             draft = working
@@ -320,9 +368,11 @@ struct AutomationEditor: View {
             penLast = nil
         }
         if pen { if let draft { onChange(draft) }; return }
-        if band != nil {
-            // A press on empty space that did not move is a click: it adds a point.
-            if !moved { addPoint(at: press); marked = [] }
+        if let band {
+            // A press on empty space that did not move is a click: it adds a point. A drag keeps its stretch.
+            if !moved { addPoint(at: press); marked = []; range = nil; return }
+            let lo = Int64(max(0, band.minX / pixelsPerTick)), hi = Int64(max(0, band.maxX / pixelsPerTick))
+            range = lo <= hi ? lo...hi : nil
             return
         }
         if segment != nil, !moved { addPoint(at: press); return }
@@ -331,6 +381,7 @@ struct AutomationEditor: View {
             if doubleClick(tick: points[b.index].tick, handle: true) { var next = points; next[b.index].bend = nil; onChange(next) }
             return
         }
+        if !moved, groupStart != nil { return }
         if !moved, groupStart == nil, let i = dragging, points.indices.contains(i), draft[i].curve == points[i].curve {
             if doubleClick(tick: points[i].tick, handle: false) { var next = points; next.remove(at: i); onChange(next); marked = [] }
             return
@@ -340,6 +391,11 @@ struct AutomationEditor: View {
             let movedPoints = starts.keys.compactMap { draft.indices.contains($0) ? draft[$0] : nil }
             draft.sort { $0.tick < $1.tick }
             marked = Set(draft.indices.filter { i in movedPoints.contains { $0.tick == draft[i].tick && $0.value == draft[i].value } })
+            if let range, let lo = movedPoints.map(\.tick.rawValue).min(), let hi = movedPoints.map(\.tick.rawValue).max(),
+               let oldLo = starts.values.map(\.tick.rawValue).min() {
+                let shift = lo - oldLo
+                self.range = (range.lowerBound + shift)...max(range.upperBound + shift, hi)
+            }
         } else {
             draft.sort { $0.tick < $1.tick }
         }

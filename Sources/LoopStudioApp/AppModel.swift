@@ -271,6 +271,9 @@ final class AppModel {
     var shortcutsOpen = false
     /// Set to ask the session view to start renaming this track.
     var renameRequest: TrackID?
+    /// The automation editor that has marked points: Delete removes them. Set by the editor while it has a
+    /// marking, cleared when the marking goes.
+    var automationMarking: AutomationMarking?
     /// Set to ask the device card to start renaming this device (⌘R on a marked device, or its menu).
     var deviceRenameRequest: DeviceID?
     /// Set to rename a clip; takes the place of a track rename while a clip is selected.
@@ -1600,6 +1603,8 @@ final class AppModel {
     }
 
     func deleteSelected() {
+        // Marked automation points go first: the editor that holds them registered the deletion.
+        if let marked = automationMarking { marked.delete(); return }
         if !selectedNotes.isEmpty, detailTab == .clip, let id = selectedClip, case .midi(let m)? = project.findClip(id)?.1 {
             setNotes(id, m.notes.filter { !selectedNotes.contains($0) })
             selectedNotes = []

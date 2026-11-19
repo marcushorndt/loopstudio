@@ -126,6 +126,29 @@ enum AppTools {
                     return status(m)
                 }
             },
+            Tool(name: "show", title: "Show a track or a clip in the detail panel",
+                 description: "Open the detail panel on a track's devices (track) or on a clip (clip), as a click on the Track or Clip tab would. For the person, or for a screenshot.",
+                 inputSchema: Schema.object([
+                    "track": Schema.string("Track id, name or position from 1: its devices are shown"),
+                    "clip": Schema.string("Clip id or name: the clip is shown"),
+                 ]),
+                 annotations: ToolAnnotations(idempotent: true)) { args in
+                let track = args.optionalString("track"), clip = args.optionalString("clip")
+                return try await box.on { m in
+                    if let clip {
+                        let (_, c) = try Resolve.clip(clip, in: m.project)
+                        m.selectedClip = c.id
+                        m.detailTab = .clip
+                        m.detailOpen = true
+                    } else if let track {
+                        let t = try Resolve.track(track, in: m.project)
+                        m.openTrackInspector(t.id)
+                    } else {
+                        throw ToolFailure("give track or clip")
+                    }
+                    return status(m)
+                }
+            },
             Tool(name: "launch", title: "Launch session clips",
                  description: "Start a session slot (track + slot), a whole scene row (scene), stop one track's clips (stopTrack) or all of them (stopAll). Launches follow the slot's launch grid; the transport starts when it was stopped.",
                  inputSchema: Schema.object([

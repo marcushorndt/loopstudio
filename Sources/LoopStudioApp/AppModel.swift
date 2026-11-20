@@ -2296,6 +2296,16 @@ final class AppModel {
 
     /// True when a drag in the sample editor goes free of the grid: with the grid on while ⌘ or Option is
     /// held, with the grid off unless one of them is held.
+    /// The modifier keys the app sees now, by name, from both sources: "⌘ ⌥" or "none".
+    func heldKeyNames() -> String {
+        let a = NSEvent.modifierFlags, b = Self.heldModifiers
+        let names = [(NSEvent.ModifierFlags.command, "⌘"), (.option, "⌥"), (.shift, "⇧"), (.control, "⌃")].compactMap { f, n -> String? in
+            let inA = a.contains(f), inB = b.contains(f)
+            return inA || inB ? n + (inA && inB ? "" : inA ? "(1)" : "(2)") : nil
+        }
+        return names.isEmpty ? "none" : names.joined(separator: " ")
+    }
+
     func freeOfGrid() -> Bool {
         let flags = NSEvent.modifierFlags.union(Self.heldModifiers)
         let held = flags.contains(.option) || flags.contains(.command)

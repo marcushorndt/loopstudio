@@ -658,12 +658,12 @@ struct ClipFilePositions: View {
             TickRow(title: "Start", value: clip.offset, minimum: 0, reset: { setStart(clip.loop ? region.start : 0) }, commit: setStart)
                 .hint("Start marker: where playback begins in the file. Click a part, then Up or Down. Double-click: back to the loop start, or without Loop to the file start.")
             TickRow(title: "Loop start", value: region.start, minimum: 0, reset: { setLoopStart(0) }, commit: setLoopStart)
-                .disabled(!clip.loop)
-                .hint(clip.loop ? "Where the loop begins in the file. The start marker can sit before it (an intro) or inside it." : "Turn Loop on to set a loop.")
+                .opacity(clip.loop ? 1 : 0.6)
+                .hint("Where the loop begins in the file. The start marker can sit before it (an intro) or inside it. Without Loop it is kept for when Loop is on.")
             TickRow(title: "Loop length", value: region.length, minimum: Tick.perQuarter / 64, isLength: true,
                     reset: { setLoopLength(Tick(max(1, fileTicks.rawValue - region.start.rawValue))) }, commit: setLoopLength)
-                .disabled(!clip.loop)
-                .hint(clip.loop ? "How long the loop is." : "Turn Loop on to set a loop.")
+                .opacity(clip.loop ? 1 : 0.6)
+                .hint("How long the loop is. Without Loop it is kept for when Loop is on.")
         }
     }
 
@@ -674,14 +674,10 @@ struct ClipFilePositions: View {
 
     private func setStart(_ t: Tick) {
         var c = clip
-        if clip.loop {
-            // A session loop without a start of its own starts at the start marker: pin it, so it stays.
-            if session && c.loopStart == nil { c.loopStart = region.start }
-            let end = region.start + region.length
-            c.offset = Tick(min(t.rawValue, end.rawValue - 1))
-        } else {
-            c.offset = t
-        }
+        // A session loop without a start of its own starts at the start marker: pin it, so it stays.
+        if session && c.loopStart == nil { c.loopStart = region.start }
+        let end = region.start + region.length
+        c.offset = clip.loop ? Tick(min(t.rawValue, end.rawValue - 1)) : t
         apply(c)
     }
 
@@ -690,7 +686,7 @@ struct ClipFilePositions: View {
         let length = region.length
         c.loopStart = t
         if !session { c.loopLength = length }
-        if c.offset >= t + length { c.offset = t }
+        if clip.loop && c.offset >= t + length { c.offset = t }
         apply(c)
     }
 
@@ -698,7 +694,7 @@ struct ClipFilePositions: View {
         var c = clip
         c.loopStart = region.start
         if session { c.length = t } else { c.loopLength = t }
-        if c.offset >= region.start + t { c.offset = region.start }
+        if clip.loop && c.offset >= region.start + t { c.offset = region.start }
         apply(c)
     }
 }

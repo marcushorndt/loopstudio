@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The sample page of an audio clip, like Live's: a loop bar above the waveform, a start marker, and zoom.
 ///
-/// The loop bar shows the loop as a brace, or without Loop the part of the file the clip plays. Drag in the
+/// The loop bar shows the loop as a brace; without Loop it is greyed and can still be set. Drag in the
 /// bar to mark a new loop; drag a brace edge to resize it, its middle to move it. The start marker below is
 /// where playback begins. With Loop on it moves on its own: before the loop it plays an intro, then the
 /// loop repeats; the brace moves past it without taking it along. Everything snaps to the grid, which gets finer as you zoom in; Option
@@ -45,9 +45,8 @@ struct SampleEditor: View {
     private var session: Bool { model.isSessionClip(clip.id) }
     private var fileTicks: Tick { Tick(Int64((fileBeats * Double(Tick.perQuarter)).rounded())) }
 
-    /// The brace: the loop when the clip loops, otherwise the part of the file it plays.
+    /// The brace: the loop. Without Loop it stays, greyed, and can still be set, like in Live.
     private var brace: (offset: Tick, length: Tick) {
-        guard clip.loop else { return (clip.offset, clip.length) }
         let r = clip.loopRegion(session: session)
         return (r.start, r.length ?? Tick(max(1, fileTicks.rawValue - r.start.rawValue)))
     }
@@ -56,7 +55,7 @@ struct SampleEditor: View {
     private var shownOffset: Tick { draft?.offset ?? brace.offset }
     private var shownLength: Tick { draft?.length ?? brace.length }
     /// The start marker as drawn.
-    private var shownStart: Tick { clip.loop ? (startDraft ?? clip.offset) : (draft?.offset ?? clip.offset) }
+    private var shownStart: Tick { startDraft ?? clip.offset }
 
     var body: some View {
         GeometryReader { geo in
@@ -181,9 +180,10 @@ struct SampleEditor: View {
             // The brace: the part of the file the clip plays.
             let x0 = CGFloat(shownOffset.quarters) * ppb, x1 = CGFloat((shownOffset + shownLength).quarters) * ppb
             let brace = CGRect(x: x0, y: 2, width: max(2, x1 - x0), height: size.height - 4)
-            ctx.fill(Path(roundedRect: brace, cornerRadius: 2), with: .color(tint.opacity(draft == nil ? 0.45 : 0.7)))
-            ctx.stroke(Path(roundedRect: brace, cornerRadius: 2), with: .color(tint), lineWidth: 1)
-            for x in [x0, x1] { ctx.fill(Path(CGRect(x: x - 1.5, y: 2, width: 3, height: size.height - 4)), with: .color(tint)) }
+            let edge = clip.loop ? tint : Theme.dim
+            ctx.fill(Path(roundedRect: brace, cornerRadius: 2), with: .color(edge.opacity(draft == nil ? (clip.loop ? 0.45 : 0.25) : 0.7)))
+            ctx.stroke(Path(roundedRect: brace, cornerRadius: 2), with: .color(edge), lineWidth: 1)
+            for x in [x0, x1] { ctx.fill(Path(CGRect(x: x - 1.5, y: 2, width: 3, height: size.height - 4)), with: .color(edge)) }
             ctx.fill(Path(CGRect(x: 0, y: size.height - 1, width: size.width, height: 1)), with: .color(Theme.line))
         }
         .contentShape(Rectangle())
@@ -236,7 +236,11 @@ struct SampleEditor: View {
                 ctx.fill(Path(CGRect(x: x, y: 0, width: 1, height: size.height)), with: .color(Theme.text.opacity(strong ? 0.14 : (t % Int64(Tick.perQuarter) == 0 ? 0.08 : 0.04))))
                 t += step
             }
-            let x0 = CGFloat(shownOffset.quarters) * ppb, x1 = CGFloat((shownOffset + shownLength).quarters) * ppb
+            // Dimmed: what does not play. With Loop, outside the loop and the intro; without, before the start
+            // and after the clip's end.
+            let a = clip.loop ? min(shownOffset, shownStart) : shownStart
+            let b = clip.loop ? shownOffset + shownLength : shownStart + clip.length
+            let x0 = CGFloat(a.quarters) * ppb, x1 = CGFloat(b.quarters) * ppb
             ctx.fill(Path(CGRect(x: 0, y: 0, width: x0, height: size.height)), with: .color(Theme.background.opacity(0.55)))
             ctx.fill(Path(CGRect(x: x1, y: 0, width: max(0, size.width - x1), height: size.height)), with: .color(Theme.background.opacity(0.55)))
             guard asset.frames > 0 else { return }
@@ -257,7 +261,8 @@ struct SampleEditor: View {
                     .foregroundStyle(Theme.onTint)
                     .padding(.horizontal, 3).padding(.vertical, 1)
                     .background(active ? Theme.text : tint, in: RoundedRectangle(cornerRadius: 2))
-                    .offset(x: x, y: 2)
+                    // The click area first, then the offset: a shape set after the offset stays at the old
+                    // place, so after one drag the flag could no longer be grabbed.
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) { resetStart() }
                     .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
@@ -268,6 +273,7 @@ struct SampleEditor: View {
                             update(.start, beat: clip.offset.quarters + Double(v.translation.width / ppb), step: step, free: model.freeOfGrid())
                         }
                         .onEnded { _ in commitDraft() })
+                    .offset(x: x, y: 2)
                     .hint("Start marker: where playback begins. With Loop on it moves on its own, before the loop (an intro) or inside it, but not past the loop end. ⌘ or Option drags free of the grid; with the grid off they snap to it. Double-click resets it to the loop start, or without Loop to the file start.")
             }
         }
@@ -286,7 +292,7 @@ struct SampleEditor: View {
     private func update(_ mode: LoopDrag?, beat: Double, step: Int64, free: Bool) {
         guard let mode else { return }
         // Says what the drag does, so a held key that the app does not see shows at once.
-        model.status = free ? "Free of the grid" : "On the grid (\(Self.stepName(step))). Hold ⌘ or Option to drag free."
+        model.status = (free ? "Free of the grid" : "On the grid (\(Self.stepName(step)))") + " · grid \(model.sampleGrid ? "on" : "off") · keys seen: \(model.heldKeyNames())"
         let end = Tick(Int64((max(totalBeats, fileBeats) * Double(Tick.perQuarter)).rounded()))
         let at = snapped(beat, step: step, free: free)
         let minLength = Tick(free ? Int64(Tick.perQuarter) / 16 : step)
@@ -306,12 +312,8 @@ struct SampleEditor: View {
         case .right:
             draft = (b.offset, max(minLength, at - b.offset))
         case .start:
-            if clip.loop {
-                // On a looping clip the start moves on its own, up to just before the loop end.
-                startDraft = min(at, Tick(max(0, (b.offset + b.length - minLength).rawValue)))
-            } else {
-                draft = (min(at, max(0, end - clip.length)), clip.length)
-            }
+            // The start moves on its own. With Loop it stops just before the loop end.
+            startDraft = clip.loop ? min(at, Tick(max(0, (b.offset + b.length - minLength).rawValue))) : min(at, end)
         }
     }
 
@@ -323,15 +325,10 @@ struct SampleEditor: View {
             if session && c.loopStart == nil { c.loopStart = brace.offset }
             c.offset = start
         } else if let draft {
-            if clip.loop {
-                c.loopStart = draft.offset
-                if session { c.length = draft.length } else { c.loopLength = draft.length }
-                // The start marker may sit before the loop or inside it, never past its end.
-                if c.offset >= draft.offset + draft.length { c.offset = draft.offset }
-            } else {
-                c.offset = draft.offset
-                c.length = draft.length
-            }
+            c.loopStart = draft.offset
+            if session { c.length = draft.length } else { c.loopLength = draft.length }
+            // With Loop the start marker may sit before the loop or inside it, never past its end.
+            if clip.loop && c.offset >= draft.offset + draft.length { c.offset = draft.offset }
         }
         guard c != clip else { return }
         model.apply(.setClip(clip: .audio(c)))

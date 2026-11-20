@@ -1,13 +1,14 @@
 # Third-party code and what is not in this repository
 
 LoopStudio is licensed under the GNU GPL, version 3 (see `LICENSE`). The licence follows from
-Ableton Link, which the app links as a C++ target.
+Ableton Link and Rubber Band, which the app links as C++ targets.
 
 ## In this repository
 
 | Part | Where | Licence |
 |---|---|---|
 | Ableton Link | `Sources/LinkBridge/link` (git submodule) | GPL v2 or later, with a proprietary option from Ableton |
+| Rubber Band Library 4.0.0 | `Sources/RubberBandBridge/rubberband` (git submodule), for the Complex and Complex Pro warp modes | GPL v2 or later, with a commercial option from Particular Programs |
 | Live Cut | `Sources/LoopStudioEngine/BuiltInCutter.swift`, a port of Livecut by Rémy Muller with the BBCut procedures of Nick Collins | GPL v2 or later |
 
 ## Plugins that LoopStudio hosts, kept in their own repositories

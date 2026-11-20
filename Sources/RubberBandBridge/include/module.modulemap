@@ -1,0 +1,4 @@
+module RubberBandBridge {
+    header "rb_bridge.h"
+    export *
+}

@@ -38,7 +38,15 @@ let package = Package(
                 .define("ASIO_NO_TYPEID", to: "1"),
                 .define("ASIO_VERSION_NAMESPACE", to: "link_asio_1_38_2"),
             ]),
-        .target(name: "LoopStudioEngine", dependencies: ["LoopStudioCore", "LinkBridge"], swiftSettings: audioThreadSettings),
+        // Rubber Band Library (GPL v2 or later, see Sources/RubberBandBridge/README.md): the Complex warp modes.
+        .target(
+            name: "RubberBandBridge",
+            path: "Sources/RubberBandBridge",
+            sources: ["rb_bridge.cpp"],
+            publicHeadersPath: "include",
+            cxxSettings: [.unsafeFlags(["-O3", "-w"])],
+            linkerSettings: [.linkedFramework("Accelerate")]),
+        .target(name: "LoopStudioEngine", dependencies: ["LoopStudioCore", "LinkBridge", "RubberBandBridge"], swiftSettings: audioThreadSettings),
         // Tool registry and MCP server: the one way for scripts and agents to drive the app.
         .target(name: "LoopStudioControl", dependencies: ["LoopStudioCore", "LoopStudioProject", "LoopStudioEngine"]),
         .executableTarget(name: "loopstudio", dependencies: ["LoopStudioEngine", "LoopStudioProject", "LoopStudioCore", "LoopStudioControl"]),

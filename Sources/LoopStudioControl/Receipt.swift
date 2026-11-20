@@ -178,7 +178,7 @@ public enum ReadBack {
             pair("\(a.clipInfo(id)?.path ?? "clip") › controllers", nil, "changed")
         case .setClipEnvelope(let id, _), .setClipAutomation(let id, _, _), .setClipAutomationLength(let id, _),
              .setDummyAutomation(let id, _, _), .setClipGroove(let id, _), .commitGroove(let id), .setAudioClip(let id, _, _, _, _),
-             .setClipWarp(let id, _, _):
+             .setClipWarp(let id, _, _), .setClipWarpSettings(let id, _):
             pair("\(a.clipInfo(id)?.path ?? "clip") › \(command.kind)", nil, "changed")
         case .setSlot(let t, let index, _):
             pair("\(a.trackName(t)) › slot \(index + 1)", b.slot(t, index), a.slot(t, index))

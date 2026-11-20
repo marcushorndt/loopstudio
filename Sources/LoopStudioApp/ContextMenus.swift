@@ -141,7 +141,7 @@ struct ArrangementClipMenu: View {
         switch clip {
         case .audio(let a):
             Button(a.loop ? "Loop Off" : "Loop On") { model.apply(.setClipLoop(clip: a.id, loop: !a.loop)) }
-            Button(a.warpMode == .off ? "Warp On" : "Warp Off") { model.apply(.setClipWarp(clip: a.id, mode: a.warpMode == .off ? .beats : .off, markers: a.warpMarkers)) }
+            Button(a.warpMode == .off ? "Warp On" : "Warp Off") { model.apply(.setClipWarp(clip: a.id, mode: a.warpMode == .off ? model.warpModeToTurnOn(a) : .off, markers: a.warpMarkers)) }
             Button(a.muted ? "Activate Clip" : "Deactivate Clip") { model.toggleClipMute(a) }
             Menu("Fade In") {
                 ForEach([0.0, 2, 10, 50, 200], id: \.self) { ms in Button(ms == 0 ? "None" : "\(Int(ms)) ms") { model.setClipFades(a, fadeInMs: ms, fadeOutMs: a.fadeOutMs) } }

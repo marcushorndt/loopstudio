@@ -10,6 +10,7 @@ func usage() -> Never {
     print("""
     usage:
       loopstudio play <file> --source-bpm N [--bpm N] [--seconds N]
+      loopstudio tempo <file>... [--loop] [--render BPM]   the tempo, the transients, and (with --render) the time per warp mode
       loopstudio info <project.loopstudio>
       loopstudio units
       loopstudio devices
@@ -102,6 +103,41 @@ case "assistant-check":
         case .notice(let n): print("\n[notice] \(n)")
         case .usage(let u, _): print("\n[usage] in \(u.input) cached \(u.cacheRead) out \(u.output)")
         case .finished(let reason): print("\n[finished: \(reason)]")
+        }
+    }
+case "tempo":
+    // The detection a drop runs, on files outside a project. --render stretches each file to a tempo in
+    // every warp mode and prints how long each took.
+    let files = args.dropFirst().filter { !$0.hasPrefix("--") && Double($0) == nil }
+    let target = option("--render")
+    for path in files {
+        let url = URL(fileURLWithPath: path)
+        do {
+            let pcm = try AudioBank.decode(url, targetRate: 48_000)
+            let seconds = Double(pcm.frames) / pcm.sampleRate
+            let loop = args.contains("--loop") || AutoLoopRule().shouldLoop(seconds: seconds)
+            let name = url.deletingPathExtension().lastPathComponent
+            let started = Date()
+            let estimate = TempoDetect.estimate(pcm, name: name, loop: loop)
+            let heard = TempoDetect.onsetTempo(pcm)
+            let transients = pcm.transients
+            let took = Date().timeIntervalSince(started)
+            let tempo = estimate.map { String(format: "%.3f BPM (%@, confidence %.2f)", $0.bpm, $0.method.rawValue, $0.confidence) } ?? "no tempo"
+            let onsets = heard.map { String(format: "onsets say %.3f BPM, confidence %.2f", $0.bpm, $0.confidence) } ?? "no onset tempo"
+            print("\(url.lastPathComponent): \(String(format: "%.1f", seconds)) s, \(loop ? "loop" : "long"): \(tempo); \(onsets); \(transients.count) transients; \(String(format: "%.2f", took)) s")
+            if let target, let bpm = estimate?.bpm,
+               let m = WarpMapping.make(sourceFrames: pcm.frames, sourceTempo: bpm, markers: [], assetRate: pcm.sampleRate,
+                                        tempoMap: TempoMap(bpm: target), startTick: 0, sampleRate: pcm.sampleRate) {
+                for mode in WarpMode.stretching {
+                    let t0 = Date()
+                    let out = TimeStretch.render(pcm, mode: mode, settings: WarpSettings(), mapping: m)
+                    let t = Date().timeIntervalSince(t0)
+                    print("  " + mode.title.padding(toLength: 12, withPad: " ", startingAt: 0) + String(format: "%6.2f s for %.1f s of audio (%.0fx real time)", t,
+                                 Double(out.frames) / out.sampleRate, Double(out.frames) / out.sampleRate / max(t, 1e-6)))
+                }
+            }
+        } catch {
+            print("\(path): \(error.localizedDescription)")
         }
     }
 case "info":

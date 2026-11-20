@@ -2059,10 +2059,16 @@ final class AppModel {
 
     /// The heavy part of an import: the hash, the copy into the package, the decode and the waveform. No
     /// project state, so it can run on any thread.
-    nonisolated static func importWork(_ url: URL, package: URL, rate: Double) throws -> Imported {
-        let asset = try AssetStore.importFile(url, into: package)
+    /// `tempoFor`: the loop rule, to look for the file's tempo (a recorded take passes nil: it has none of its own).
+    nonisolated static func importWork(_ url: URL, package: URL, rate: Double, tempoFor rule: AutoLoopRule? = nil) throws -> Imported {
+        var asset = try AssetStore.importFile(url, into: package)
         guard let file = AssetStore.fileURL(for: asset, in: package) else { throw CocoaError(.fileNoSuchFile) }
         let pcm = try AudioBank.decode(file, targetRate: rate)
+        if let rule, asset.sourceTempo == nil {
+            // The tempo makes a dropped file follow the project tempo (see Project.autoWarp).
+            let loop = rule.shouldLoop(seconds: Double(pcm.frames) / max(1, pcm.sampleRate))
+            asset.sourceTempo = TempoDetect.estimate(pcm, name: url.deletingPathExtension().lastPathComponent, loop: loop)?.bpm
+        }
         return Imported(asset: asset, pcm: pcm, waveform: peaks(of: pcm, bins: 1_000))
     }
 
@@ -2070,10 +2076,10 @@ final class AppModel {
     /// the copy and the decode run there, then the asset joins the project here. `name`: the asset's name,
     /// when it is not the file's.
     func importAudio(_ url: URL, name: String? = nil) async -> Asset? {
-        let package = packageURL, rate = sampleRate
+        let package = packageURL, rate = sampleRate, rule = project.autoLoop
         status = "Importing \(url.lastPathComponent)…"
         let result = await Task.detached(priority: .userInitiated) { () -> Result<Imported, Error> in
-            do { return .success(try Self.importWork(url, package: package, rate: rate)) } catch { return .failure(error) }
+            do { return .success(try Self.importWork(url, package: package, rate: rate, tempoFor: rule)) } catch { return .failure(error) }
         }.value
         guard packageURL == package else { status = "The project changed while \(url.lastPathComponent) was imported"; return nil }
         switch result {
@@ -2090,7 +2096,7 @@ final class AppModel {
     /// name, when it is not the file's.
     func importAudioNow(_ url: URL, name: String? = nil) -> Asset? {
         do {
-            return register(try Self.importWork(url, package: packageURL, rate: sampleRate), from: url, name: name)
+            return register(try Self.importWork(url, package: packageURL, rate: sampleRate, tempoFor: project.autoLoop), from: url, name: name)
         } catch {
             status = "Cannot import \(url.lastPathComponent): \(error.localizedDescription)"
             return nil

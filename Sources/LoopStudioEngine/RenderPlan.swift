@@ -684,9 +684,11 @@ public struct RenderPlan {
         if project.tempoMap.points.count <= 1 { timing = "bpm \(project.tempoMap.points.first?.bpm ?? 0)" }
         else if let span, let bpm = constantTempo(project.tempoMap, from: startTick, to: startTick + span) { timing = "bpm \(bpm) span \(span.rawValue)" }
         else { timing = "\(project.tempoMap.points)|\(startTick.rawValue)" }
-        let key = "\(c.asset)|\(c.warpMode)|\(asset?.sourceTempo ?? 0)|\(c.warpMarkers)|\(timing)|\(rate)"
+        let settings = c.warp.clamped
+        let key = "\(c.asset)|\(c.warpMode)|\(settings.key(for: c.warpMode))|\(asset?.sourceTempo ?? 0)|\(c.warpMarkers)|\(timing)|\(rate)"
+        let mode = c.warpMode
         return bank.warped(key: key, clip: c.id) {
-            TimeStretch.stretch(raw, mode: c.warpMode, outFrames: mapping.outFrames, source: mapping.source)
+            TimeStretch.render(raw, mode: mode, settings: settings, mapping: mapping)
         }
     }
 

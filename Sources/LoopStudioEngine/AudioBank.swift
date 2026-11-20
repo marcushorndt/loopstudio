@@ -23,10 +23,37 @@ public final class PCMBuffer: @unchecked Sendable {
         }
     }
 
+    /// Silence: `channels` channels of `frames` frames, to be filled through `mutableChannel`.
+    public init(channels: Int, frames: Int, sampleRate: Double) {
+        precondition(channels > 0 && frames > 0)
+        self.channels = channels
+        self.frames = frames
+        self.sampleRate = sampleRate
+        storage = .allocate(capacity: channels * frames)
+        storage.initialize(repeating: 0, count: channels * frames)
+    }
+
     deinit { storage.deallocate() }
 
     public func channel(_ index: Int) -> UnsafePointer<Float> {
         UnsafePointer(storage + min(index, channels - 1) * frames)
+    }
+
+    /// For the code that fills a new buffer. A buffer that is shared must not change.
+    func mutableChannel(_ index: Int) -> UnsafeMutablePointer<Float> {
+        storage + min(index, channels - 1) * frames
+    }
+
+    private let transientLock = NSLock()
+    private var transientFrames: [Int]?
+
+    /// The frames where a transient (an attack) starts, found once per buffer. Beats cuts the audio there.
+    public var transients: [Int] {
+        transientLock.lock(); defer { transientLock.unlock() }
+        if let t = transientFrames { return t }
+        let t = Onsets.detect(self)
+        transientFrames = t
+        return t
     }
 }
 

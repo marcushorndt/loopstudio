@@ -10,7 +10,7 @@ private func tone(seconds: Double, amplitude: Float = 0.5) throws -> String {
     let n = AVAudioFrameCount(seconds * 48_000)
     let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: n)!
     buffer.frameLength = n
-    for c in 0..<2 { for i in 0..<Int(n) { buffer.floatChannelData![c][i] = amplitude * sinf(2 * .pi * 440 * Float(i) / 48_000) } }
+    for c in 0..<2 { for i in 0..<Int(n) { buffer.floatChannelData![c][i] = amplitude * Float(sin(2 * .pi * 440 * Double(i) / 48_000)) } }
     let file = try AVAudioFile(forWriting: url, settings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48_000,
                                                           AVNumberOfChannelsKey: 2, AVLinearPCMBitDepthKey: 24])
     try file.write(from: buffer)

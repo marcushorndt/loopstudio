@@ -13,9 +13,13 @@ public enum TimeStretch {
         return max(64, Int((base * rate / 48_000).rounded() / 2) * 2)
     }
 
-    @_optimize(speed)
     public static func stretch(_ pcm: PCMBuffer, mode: WarpMode, outFrames: Int, source: (Double) -> Double) -> PCMBuffer {
-        let n = window(for: mode, rate: pcm.sampleRate)
+        wsola(pcm, window: window(for: mode, rate: pcm.sampleRate), outFrames: outFrames, source: source)
+    }
+
+    /// WSOLA with a window of `n` frames (even): every window is placed where it best continues the last one.
+    @_optimize(speed)
+    static func wsola(_ pcm: PCMBuffer, window n: Int, outFrames: Int, source: (Double) -> Double) -> PCMBuffer {
         let hs = n / 2
         let tolerance = n / 4
         let total = pcm.frames
@@ -96,6 +100,8 @@ public struct WarpMapping {
     public var outFrames: Int
     /// Fractional source frame at an output frame.
     public var source: (Double) -> Double
+    /// Beats on the timeline since the start of the clip, at an output frame. Beats' note grid uses it.
+    public var beats: (Double) -> Double
 
     /// `startFrame` is where the clip begins on the timeline. `markers` count in ticks from the start of the audio.
     public static func make(sourceFrames: Int, sourceTempo: Double?, markers: [WarpMarker], assetRate: Double,
@@ -135,6 +141,6 @@ public struct WarpMapping {
         var hi = Double(sourceFrames), lo = 0.0
         while source(hi) < target { hi *= 2; if hi > limit { return nil } }
         for _ in 0..<40 { let mid = (lo + hi) / 2; if source(mid) < target { lo = mid } else { hi = mid } }
-        return WarpMapping(outFrames: Int(hi.rounded()), source: source)
+        return WarpMapping(outFrames: Int(hi.rounded()), source: source, beats: beats)
     }
 }

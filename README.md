@@ -52,8 +52,13 @@ arrangement. The arrangement has a loop brace, time selection, split at the play
 clip gain envelopes, and automation lanes per track. Returns and the master sit at the bottom of the
 arrangement and scroll with the tracks.
 
-**Audio clips.** Warping in Beats and Tones modes with warp markers, stretched offline with WSOLA
-and cached per clip. Tempo ramps bend time. A sample editor with a loop bar, a start marker and
+**Audio clips.** Warping with warp markers in six modes: Beats (cut at the transients or on a note
+grid, with loop and envelope settings), Tones (aligned grains), Texture (loose grains with Flux),
+Re-Pitch (speed and pitch together), Complex and Complex Pro (Rubber Band R2 and R3, with
+formants). Transpose and Detune in every mode but Re-Pitch. Each clip renders offline on a worker
+and is cached; the last render plays while a new one is made. A dropped file finds its tempo from
+its name, its loop length or its beats, and then follows the project tempo: a loop in Beats, a
+song in Complex. `docs/warp.md` describes the design. Tempo ramps bend time. A sample editor with a loop bar, a start marker and
 zoom. Recording from a sound card input with latency compensation, from another track, or the
 master (resampling); takes that start and end on the bar; a count-in; a metronome.
 
@@ -155,8 +160,9 @@ next open. `relative.loopstudio` in this repository is the sample project the co
 | `Sources/LoopStudioApp` | The SwiftUI app. |
 | `Sources/loopstudio` | The command line tool: `mcp`, render, checks. |
 | `Sources/LinkBridge` | Ableton Link as a C++ target (git submodule). |
+| `Sources/RubberBandBridge` | Rubber Band Library as a C++ target (git submodule), for the Complex warp modes. |
 | `Tests/` | One test target per library. The engine tests include a malloc-hook soak test: zero allocations on the audio thread. |
-| `docs/` | `architecture.md` is the map of the code and the rules for the realtime path. `midi.md`, `patcher.md`, `scripting.md`, `mcp.md`, `assistant.md` and `lemus-handover.md` cover one area each. `edge-cases-and-ideas.md` holds the rules for the edge cases. |
+| `docs/` | `architecture.md` is the map of the code and the rules for the realtime path. `warp.md`, `midi.md`, `patcher.md`, `scripting.md`, `mcp.md`, `assistant.md` and `lemus-handover.md` cover one area each. `edge-cases-and-ideas.md` holds the rules for the edge cases. |
 | `scripts/` | `run-app.sh`, `install-app.sh`, `pack-release.sh` (a disk image with the app and the installed plugins), `make-icon.swift`. |
 | `Resources/` | The app icon. |
 
@@ -192,5 +198,5 @@ Engine, and run `swift test` before a pull request. Commits made with an AI agen
 
 ## Licence
 
-GNU GPL v3, see `LICENSE`. The licence follows from Ableton Link and Live Cut, which are GPL.
+GNU GPL v3, see `LICENSE`. The licence follows from Ableton Link, Rubber Band and Live Cut, which are GPL.
 `THIRD-PARTY.md` lists what the app links and which plugins live in their own repositories.

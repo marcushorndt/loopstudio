@@ -132,7 +132,8 @@ public enum StandardTools {
             name: "asset_import", title: "Import audio file",
             description: """
             Copy an audio file into the project (stored by content hash, so the same file is never stored twice) and register it as an asset. \
-            Returns the asset ID, its length, and whether it would loop or play once under the project's auto-loop rule.
+            Returns the asset ID, its length, whether it would loop or play once under the project's auto-loop rule, \
+            the tempo found in its name, loop length or beats (sourceTempo, null when none), and the warp mode a dropped clip gets.
             """,
             inputSchema: Schema.object(["path": Schema.string("Absolute path of an audio file (wav, aiff, caf, mp3, m4a, flac).")], required: ["path"]),
             annotations: ToolAnnotations(idempotent: true)
@@ -142,11 +143,17 @@ public enum StandardTools {
             guard FileManager.default.fileExists(atPath: source.path) else { throw ToolFailure("file not found: \(source.path)") }
             var project = try await session.project()
 
-            let imported: Asset
+            var imported: Asset
             do { imported = try AssetStore.importFile(source, into: package) }
             catch { throw ToolFailure("cannot import: \(error)") }
             if let existing = project.assets.first(where: { $0.sha256 == imported.sha256 }) {
                 return try assetInfo(existing, project: project, alreadyInProject: true)
+            }
+            // The tempo, as a drop finds it: from the name, the loop length or the beats.
+            if imported.sourceTempo == nil, let file = AssetStore.fileURL(for: imported, in: package),
+               let pcm = try? AudioBank.decode(file, targetRate: project.sampleRate) {
+                let loop = project.autoLoop.shouldLoop(seconds: Double(pcm.frames) / max(1, pcm.sampleRate))
+                imported.sourceTempo = TempoDetect.estimate(pcm, name: source.deletingPathExtension().lastPathComponent, loop: loop)?.bpm
             }
             try await session.apply(.addAsset(asset: imported))
             project = try await session.project()
@@ -521,6 +528,8 @@ public enum StandardTools {
             "channels": .number(Double(asset.channels)),
             "alreadyInProject": .bool(alreadyInProject),
             "wouldLoop": .bool(project.autoLoop.shouldLoop(seconds: seconds)),
+            "sourceTempo": asset.sourceTempo.map { .number(($0 * 1000).rounded() / 1000) } ?? .null,
+            "warp": .string(project.autoWarp(for: asset).rawValue),
         ])
     }
 
@@ -587,7 +596,10 @@ public enum StandardTools {
             ("setMonitor", .setMonitor(id: TrackID(uuid(7)), mode: .auto)),
             ("setSendsOnly", .setSendsOnly(id: track.id, sendsOnly: true)),
             ("setAssetTempo", .setAssetTempo(id: AssetID(uuid(8)), bpm: 92)),
-            ("setClipWarp", .setClipWarp(clip: ClipID(uuid(4)), mode: .beats, markers: [WarpMarker(sourceFrame: 48_000, tick: 960)])),
+            ("setClipWarp (mode: off, beats, tones, texture, repitch, complex, complexPro; markers pin source frames to ticks, empty follows the source tempo)",
+             .setClipWarp(clip: ClipID(uuid(4)), mode: .beats, markers: [WarpMarker(sourceFrame: 48_000, tick: 960)])),
+            ("setClipWarpSettings (every field optional; preserve: transients, quarter, eighth, sixteenth, thirtySecond; transientLoop: off, forward, backAndForth; transientEnvelope, flux, formants 0-100; tonesGrainMs 5-200; textureGrainMs 10-500; transpose -48..48 semitones; detune -50..50 cents; settings null resets)",
+             .setClipWarpSettings(clip: ClipID(uuid(4)), settings: { var w = WarpSettings(); w.preserve = .sixteenth; w.transientLoop = .off; w.transpose = -2; return w }())),
             ("setAutomation (a volume curve)", .setAutomation(track: track.id, target: ParameterAddress(node: track.id.rawValue, parameter: "volume"),
                                                               points: [AutomationPoint(tick: 0, value: -12), AutomationPoint(tick: 3840, value: 0, curve: .easeInOut)])),
             ("setClipAutomation (a dummy clip moves any track; an audio or MIDI clip moves its own track, node 00000000-0000-0000-0000-000000000000 = own track)",

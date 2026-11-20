@@ -1,3 +1,6 @@
 [submodule "Sources/LinkBridge/link"]
 	path = Sources/LinkBridge/link
 	url = https://github.com/Ableton/link.git
+[submodule "Sources/RubberBandBridge/rubberband"]
+	path = Sources/RubberBandBridge/rubberband
+	url = https://github.com/breakfastquay/rubberband.git

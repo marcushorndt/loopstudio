@@ -37,6 +37,7 @@ chmod +x "$vol/Install.command"
 cp scripts/release/READ-ME-FIRST.txt "$vol/READ-ME-FIRST.txt"
 cp LICENSE "$vol/Licenses/LoopStudio-GPL-3.0.txt"
 [ -f Sources/LinkBridge/link/LICENSE.md ] && cp Sources/LinkBridge/link/LICENSE.md "$vol/Licenses/Ableton-Link-LICENSE.md"
+[ -f Sources/RubberBandBridge/rubberband/COPYING ] && cp Sources/RubberBandBridge/rubberband/COPYING "$vol/Licenses/RubberBand-GPL-2.0.txt"
 
 plugins=(remote-midi)
 [ $with_gaze = 1 ] && plugins+=(Gaze)

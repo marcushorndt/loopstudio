@@ -82,7 +82,153 @@ public struct AutomationLane: Hashable, Codable, Sendable, Identifiable {
 
 // MARK: Clips
 
-public enum WarpMode: String, Codable, Sendable { case off, beats, tones }
+/// How a clip follows the project tempo. `off` plays the file as it is. The others stretch it, each with its
+/// own method, cheapest first:
+/// - `repitch`: speed and pitch change together, like a tape or a turntable.
+/// - `beats`: the audio is cut at its transients (or on a grid) and every piece plays at its own speed; gaps
+///   fill by looping the end of a piece. For drums and percussive loops.
+/// - `tones`: overlapping grains, aligned to the waveform. For a single voice, bass or lead.
+/// - `texture`: grains without alignment, with a random spread (Flux). For pads, noise and ambience.
+/// - `complex`: a phase vocoder (Rubber Band R2). For full mixes and polyphonic material.
+/// - `complexPro`: the finer phase vocoder (Rubber Band R3) with formant control. The best result, and the most CPU.
+public enum WarpMode: String, Codable, Sendable, CaseIterable {
+    case off, beats, tones, texture, repitch, complex, complexPro
+
+    /// The modes a warped clip can use, in the order of the menu.
+    public static let stretching: [WarpMode] = [.beats, .tones, .texture, .repitch, .complex, .complexPro]
+
+    public var title: String {
+        switch self {
+        case .off: "Off"
+        case .beats: "Beats"
+        case .tones: "Tones"
+        case .texture: "Texture"
+        case .repitch: "Re-Pitch"
+        case .complex: "Complex"
+        case .complexPro: "Complex Pro"
+        }
+    }
+
+    /// False for Re-Pitch, where the pitch follows the speed and Transpose has no effect.
+    public var keepsPitch: Bool { self != .repitch }
+}
+
+/// The settings of the warp modes. Each mode reads its own; they all stay with the clip, so a switch back
+/// finds them again. Every field has a default, and a project without them reads as the defaults.
+public struct WarpSettings: Hashable, Codable, Sendable {
+    /// Where Beats cuts the audio: at the detected transients, or on a note grid of the source.
+    public enum Preserve: String, Codable, Sendable, CaseIterable {
+        case transients, quarter, eighth, sixteenth, thirtySecond
+        /// Grid step in beats. `nil` for transients.
+        public var beats: Double? {
+            switch self {
+            case .transients: nil
+            case .quarter: 1
+            case .eighth: 0.5
+            case .sixteenth: 0.25
+            case .thirtySecond: 0.125
+            }
+        }
+        public var title: String {
+            switch self {
+            case .transients: "Transients"
+            case .quarter: "1/4"
+            case .eighth: "1/8"
+            case .sixteenth: "1/16"
+            case .thirtySecond: "1/32"
+            }
+        }
+    }
+
+    /// How Beats fills the gap when a piece is shorter than its slot (a slower tempo).
+    public enum TransientLoop: String, Codable, Sendable, CaseIterable {
+        /// The piece plays once; the rest of the slot is silent.
+        case off
+        /// The second half of the piece loops forward.
+        case forward
+        /// The second half of the piece plays forward and back.
+        case backAndForth
+        public var title: String {
+            switch self {
+            case .off: "Silence"
+            case .forward: "Loop Forward"
+            case .backAndForth: "Back and Forth"
+            }
+        }
+    }
+
+    public var preserve: Preserve = .transients
+    public var transientLoop: TransientLoop = .forward
+    /// Beats: 100 plays each piece at full level to its end; lower values fade every piece out sooner. 0...100.
+    public var transientEnvelope: Double = 100
+    /// Tones: the grain length in milliseconds. 5...200.
+    public var tonesGrainMs: Double = 40
+    /// Texture: the grain length in milliseconds. 10...500.
+    public var textureGrainMs: Double = 100
+    /// Texture: how far grains wander from their place, 0...100 % of a grain.
+    public var flux: Double = 0
+    /// Complex Pro: how much the formants stay where they are when the pitch moves, 0...100 %.
+    public var formants: Double = 100
+    /// Semitones, -48...48. Every mode but Re-Pitch.
+    public var transpose: Int = 0
+    /// Cents, -50...50. Every mode but Re-Pitch.
+    public var detune: Double = 0
+
+    public init() {}
+
+    public static let ranges: (tonesGrainMs: ClosedRange<Double>, textureGrainMs: ClosedRange<Double>, percent: ClosedRange<Double>,
+                               transpose: ClosedRange<Int>, detune: ClosedRange<Double>) =
+        (5...200, 10...500, 0...100, -48...48, -50...50)
+
+    /// The values, each kept inside its range.
+    public var clamped: WarpSettings {
+        var s = self
+        let r = Self.ranges
+        s.transientEnvelope = min(max(s.transientEnvelope, r.percent.lowerBound), r.percent.upperBound)
+        s.tonesGrainMs = min(max(s.tonesGrainMs, r.tonesGrainMs.lowerBound), r.tonesGrainMs.upperBound)
+        s.textureGrainMs = min(max(s.textureGrainMs, r.textureGrainMs.lowerBound), r.textureGrainMs.upperBound)
+        s.flux = min(max(s.flux, r.percent.lowerBound), r.percent.upperBound)
+        s.formants = min(max(s.formants, r.percent.lowerBound), r.percent.upperBound)
+        s.transpose = min(max(s.transpose, r.transpose.lowerBound), r.transpose.upperBound)
+        s.detune = min(max(s.detune, r.detune.lowerBound), r.detune.upperBound)
+        return s
+    }
+
+    /// The settings that change the sound of `mode`, as text for a cache key: a change to another mode's
+    /// settings does not render the clip again.
+    public func key(for mode: WarpMode) -> String {
+        let pitch = mode.keepsPitch ? " t\(transpose) d\(detune)" : ""
+        switch mode {
+        case .off, .repitch: return "-"
+        case .beats: return "\(preserve.rawValue) \(transientLoop.rawValue) e\(transientEnvelope)" + pitch
+        case .tones: return "g\(tonesGrainMs)" + pitch
+        case .texture: return "g\(textureGrainMs) f\(flux)" + pitch
+        case .complex: return "c" + pitch
+        case .complexPro: return "f\(formants)" + pitch
+        }
+    }
+
+    /// The pitch as a frequency ratio: 2 is an octave up.
+    public var pitchRatio: Double { pow(2, (Double(transpose) + detune / 100) / 12) }
+
+    enum CodingKeys: String, CodingKey {
+        case preserve, transientLoop, transientEnvelope, tonesGrainMs, textureGrainMs, flux, formants, transpose, detune
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = WarpSettings()
+        preserve = try c.decodeIfPresent(Preserve.self, forKey: .preserve) ?? d.preserve
+        transientLoop = try c.decodeIfPresent(TransientLoop.self, forKey: .transientLoop) ?? d.transientLoop
+        transientEnvelope = try c.decodeIfPresent(Double.self, forKey: .transientEnvelope) ?? d.transientEnvelope
+        tonesGrainMs = try c.decodeIfPresent(Double.self, forKey: .tonesGrainMs) ?? d.tonesGrainMs
+        textureGrainMs = try c.decodeIfPresent(Double.self, forKey: .textureGrainMs) ?? d.textureGrainMs
+        flux = try c.decodeIfPresent(Double.self, forKey: .flux) ?? d.flux
+        formants = try c.decodeIfPresent(Double.self, forKey: .formants) ?? d.formants
+        transpose = try c.decodeIfPresent(Int.self, forKey: .transpose) ?? d.transpose
+        detune = try c.decodeIfPresent(Double.self, forKey: .detune) ?? d.detune
+    }
+}
 
 public struct WarpMarker: Hashable, Codable, Sendable {
     public var sourceFrame: Int64
@@ -112,6 +258,8 @@ public struct AudioClip: Hashable, Codable, Sendable, Identifiable {
     public var muted: Bool
     public var warpMode: WarpMode
     public var warpMarkers: [WarpMarker]
+    /// The settings of the warp modes. `nil`: the defaults. Read them through `warp`.
+    public var warpSettings: WarpSettings?
     /// Own colour, an index into the palette. `nil` follows the track.
     public var colorIndex: Int?
     /// Own name. `nil` shows the asset name (audio) or a default.
@@ -141,6 +289,11 @@ public struct AudioClip: Hashable, Codable, Sendable, Identifiable {
         self.warpMode = warpMode
         self.warpMarkers = warpMarkers
     }
+}
+
+public extension AudioClip {
+    /// The warp settings in force: the clip's own, or the defaults.
+    var warp: WarpSettings { warpSettings ?? WarpSettings() }
 }
 
 public extension Array where Element == MIDINote {
@@ -917,11 +1070,18 @@ public struct Project: Hashable, Codable, Sendable {
     /// keeps its own beats (four beats at 100 BPM stay four beats at 120 BPM); other audio keeps its seconds.
     public func naturalLength(of asset: Asset, from start: Tick = 0) -> Tick {
         let seconds = Double(asset.frames) / max(1, asset.sampleRate)
-        if let bpm = asset.sourceTempo, bpm > 0, autoLoop.shouldLoop(seconds: seconds) {
+        if let bpm = asset.sourceTempo, bpm > 0, autoWarp(for: asset) != .off {
             return Tick(max(1, Tick.quarters(seconds * bpm / 60).rawValue))
         }
         let end = tempoMap.tick(atSeconds: tempoMap.seconds(at: start) + seconds)
         return Tick(max(1, (end - start).rawValue))
+    }
+
+    /// The warp mode a new clip of the asset gets. Audio with a known tempo follows the project tempo, like
+    /// a warped clip in Live: a loop in Beats, a longer file (a song, a stem) in Complex. Without a tempo: off.
+    public func autoWarp(for asset: Asset) -> WarpMode {
+        guard let bpm = asset.sourceTempo, bpm > 0, asset.sampleRate > 0 else { return .off }
+        return autoLoop.shouldLoop(seconds: Double(asset.frames) / asset.sampleRate) ? .beats : .complex
     }
 
     public func makeAudioClip(asset assetID: AssetID, start: Tick = 0, length: Tick) -> AudioClip {
@@ -929,8 +1089,7 @@ public struct Project: Hashable, Codable, Sendable {
         var warp = WarpMode.off
         if let asset = asset(assetID), asset.sampleRate > 0 {
             loop = autoLoop.shouldLoop(seconds: Double(asset.frames) / asset.sampleRate)
-            // A loop with a known tempo follows the project tempo, like a warped clip in Live.
-            if loop, asset.sourceTempo != nil { warp = .beats }
+            warp = autoWarp(for: asset)
         }
         return AudioClip(asset: assetID, start: start, length: length, loop: loop,
                          fadeInMs: defaultFadeMs, fadeOutMs: defaultFadeMs, warpMode: warp)

@@ -109,6 +109,8 @@ public enum Command: Codable, Sendable {
     case setAssetTempo(id: AssetID, bpm: Double?)
     /// Warp mode and markers of an audio clip. Markers pair a source frame with a tick, counted from the start of the audio.
     case setClipWarp(clip: ClipID, mode: WarpMode, markers: [WarpMarker])
+    /// The settings of the warp modes (Beats' Preserve, grain sizes, Flux, Formants, Transpose). `nil`: the defaults.
+    case setClipWarpSettings(clip: ClipID, settings: WarpSettings?)
     case removeAsset(id: AssetID)
 
     /// `index` is where the port goes; `nil` means the end.
@@ -600,6 +602,14 @@ extension Project {
             let old = Command.setClipWarp(clip: id, mode: c.warpMode, markers: c.warpMarkers)
             c.warpMode = mode
             c.warpMarkers = sorted
+            try withTrack(trackID) { t in try t.replaceClip(.audio(c)) }
+            return old
+
+        case .setClipWarpSettings(let id, let settings):
+            guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }
+            guard case .audio(var c) = clip else { throw CommandError.invalidValue("only audio clips warp") }
+            let old = Command.setClipWarpSettings(clip: id, settings: c.warpSettings)
+            c.warpSettings = settings?.clamped
             try withTrack(trackID) { t in try t.replaceClip(.audio(c)) }
             return old
 

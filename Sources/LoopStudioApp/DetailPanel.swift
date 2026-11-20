@@ -460,6 +460,11 @@ private struct ClipLanesPanel: View {
                 }
                 .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
             }
+            if case .audio = clip {
+                Toggle("Waveform", isOn: Binding(get: { model.lanesWaveform }, set: { model.lanesWaveform = $0 }))
+                    .toggleStyle(.checkbox)
+                    .hint("Show the clip's sound under the curves")
+            }
             Spacer(minLength: 0)
             // The picker lives on the page itself: the Clip column that also holds it may be folded away.
             PillMenu(label: "Automate") { ClipLaneToggles(clip: clip, track: track) }
@@ -492,6 +497,14 @@ private struct ClipLanesPanel: View {
         }
     }
 
+    /// An audio clip's sound under its curves, over the whole cycle: what plays where the curve moves.
+    @ViewBuilder
+    private func laneWaveform(width: CGFloat) -> some View {
+        if model.lanesWaveform, case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
+            WaveformView(peaks: peaks, color: tint.opacity(0.28), sourceAt: model.waveMap(a, asset, elapsed: 0, length: cycle))
+        }
+    }
+
     /// Where the clip loops inside a longer, unlinked automation cycle.
     private func loopMarks(ppt: Double) -> some View {
         Canvas { ctx, size in
@@ -521,6 +534,7 @@ private struct ClipLanesPanel: View {
                              width: width, height: height - 2, tint: tint, pen: model.drawMode, penGrid: model.noteGrid) { pts in
                 model.apply(.setClipAutomation(clip: clip.id, target: address, points: pts))
             }
+            .overlay { laneWaveform(width: width).allowsHitTesting(false) }
             .overlay { loopMarks(ppt: ppt).allowsHitTesting(false) }
             .overlay { ClipPlayhead(clip: clip.id, period: cycle) { CGFloat(Double($0.rawValue) * ppt) } }
             .clipShape(RoundedRectangle(cornerRadius: Theme.radius))

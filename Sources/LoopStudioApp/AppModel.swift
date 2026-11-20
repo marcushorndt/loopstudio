@@ -1330,6 +1330,8 @@ final class AppModel {
     /// Loops the marked range (or the extent of the marked clips) and turns the loop on.
     /// With nothing marked it only switches the loop on or off.
     func loopSelection() {
+        // A stretch marked in a clip's sample view loops that clip.
+        if let s = sampleSelection, loopClip(to: s) { return }
         var range: (Tick, Tick)?
         if let r = rangeSelection { range = (r.start, r.end) }
         else if !selectedClips.isEmpty {
@@ -2288,6 +2290,29 @@ final class AppModel {
     /// The modifier keys of the last mouse or modifier event, from the app's own event monitor. A second
     /// source beside `NSEvent.modifierFlags` for the grid keys of a drag.
     nonisolated(unsafe) static var heldModifiers: NSEvent.ModifierFlags = []
+
+    /// A stretch marked in the sample view of an audio clip, in the clip's file ticks. ⌘L loops the clip there.
+    var sampleSelection: (clip: ClipID, start: Tick, end: Tick)?
+
+    /// Loops an audio clip over a marked stretch and turns Loop on. The start marker stays when it sits
+    /// before the stretch or inside it; past its end it moves to the stretch start.
+    @discardableResult
+    func loopClip(to s: (clip: ClipID, start: Tick, end: Tick)) -> Bool {
+        guard s.end > s.start, case .audio(let a)? = project.findClip(s.clip)?.clip else { return false }
+        var c = a
+        c.loop = true
+        c.loopStart = s.start
+        if isSessionClip(a.id) { c.length = s.end - s.start } else { c.loopLength = s.end - s.start }
+        if c.offset >= s.end { c.offset = s.start }
+        apply(.setClip(clip: .audio(c)))
+        status = "Loop: the marked stretch"
+        return true
+    }
+
+    /// The clip's file under its automation lanes (audio clips).
+    var lanesWaveform: Bool = UserDefaults.standard.object(forKey: "lanesWaveform") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(lanesWaveform, forKey: "lanesWaveform") }
+    }
 
     /// The grid of the sample editor: the loop, the start and the warp markers snap to it.
     var sampleGrid: Bool = UserDefaults.standard.object(forKey: "sampleGrid") as? Bool ?? true {

@@ -5,12 +5,15 @@ import SwiftUI
 struct AutomationMarking {
     var editor: UUID
     var delete: () -> Void
+    /// ⌘D: a copy of the marked stretch right after it.
+    var duplicate: () -> Void
 }
 
 /// An envelope editor. A click adds a point; a click on a point removes it (the curve then runs straight from
 /// its neighbour before to the one after); a drag on a point moves it; a drag on a segment moves the segment
 /// up or down; a drag on empty space, or a ⌘-drag anywhere, marks a stretch of time, like a range on a clip:
-/// the points inside are marked, a drag inside the stretch moves them all, Delete removes them. Shift-click a
+/// the points inside are marked, a drag inside the stretch moves them all, Delete removes them, ⌘D puts a
+/// copy right after it (again and again, to repeat a pattern). Everything snaps to a sixteenth; Option is free. Shift-click a
 /// point to change the shape of the segment after it. The diamond in the middle of a straight segment sets its
 /// slope: drag it up or down; double-click straightens.
 struct AutomationEditor: View {
@@ -192,9 +195,33 @@ struct AutomationEditor: View {
         // The model routes Delete to the editor that holds a marking.
         .onChange(of: marked) { _, now in
             if now.isEmpty { if model.automationMarking?.editor == editorID { model.automationMarking = nil } }
-            else { model.automationMarking = AutomationMarking(editor: editorID, delete: deleteMarked) }
+            else { model.automationMarking = AutomationMarking(editor: editorID, delete: deleteMarked, duplicate: duplicateMarked) }
         }
         .onDisappear { if model.automationMarking?.editor == editorID { model.automationMarking = nil } }
+    }
+
+    /// A copy of the marked stretch right after it: the points from its start up to its end move by its length
+    /// and replace what was there. The copy is marked next, so ⌘D again repeats the pattern once more.
+    private func duplicateMarked() {
+        let lo: Int64, hi: Int64
+        if let range, range.upperBound > range.lowerBound { lo = range.lowerBound; hi = range.upperBound }
+        else {
+            // Points marked without a stretch: their span, at least a sixteenth.
+            let ticks = marked.compactMap { points.indices.contains($0) ? points[$0].tick.rawValue : nil }
+            guard let a = ticks.min(), let b = ticks.max() else { return }
+            lo = a; hi = max(b + grid, a + grid)
+        }
+        let span = hi - lo
+        var copies = points.filter { $0.tick.rawValue >= lo && $0.tick.rawValue < hi }.map { p -> AutomationPoint in
+            var q = p; q.tick = Tick(p.tick.rawValue + span); return q
+        }
+        if let maxTick { copies = copies.filter { $0.tick <= maxTick } }
+        guard !copies.isEmpty else { model.status = "Nothing to copy in the marked stretch"; return }
+        var next = points.filter { $0.tick.rawValue < hi || $0.tick.rawValue >= hi + span } + copies
+        next.sort { $0.tick < $1.tick }
+        marked = Set(next.indices.filter { (hi..<(hi + span)).contains(next[$0].tick.rawValue) })
+        range = hi...(hi + span)
+        onChange(next)
     }
 
     /// Removes the marked points. The curve then runs straight from the point before the stretch to the point after it.
@@ -229,7 +256,7 @@ struct AutomationEditor: View {
 
     private func x(_ t: Tick) -> CGFloat { CGFloat(Double(t.rawValue) * pixelsPerTick) }
     private func y(_ v: Double) -> CGFloat { height * (1 - CGFloat(target.position(v))) }
-    private func snap(_ t: Int64) -> Int64 { (t + grid / 2) / grid * grid }
+    private func snap(_ t: Int64) -> Int64 { NSEvent.modifierFlags.contains(.option) ? t : (t + grid / 2) / grid * grid }
 
     private func label(_ v: Double) -> String {
         if !target.choices.isEmpty { return target.choices[min(max(0, Int(v.rounded())), target.choices.count - 1)] }
@@ -409,8 +436,10 @@ struct AutomationEditor: View {
         if let band {
             // A press on empty space that did not move is a click: it adds a point. A drag keeps its stretch.
             if !moved { addPoint(at: press); marked = []; range = nil; return }
-            let lo = Int64(max(0, band.minX / pixelsPerTick)), hi = Int64(max(0, band.maxX / pixelsPerTick))
-            range = lo <= hi ? lo...hi : nil
+            // The stretch snaps like the points, so a copy of it lines up with the grid.
+            let lo = snap(Int64(max(0, band.minX / pixelsPerTick))), hi = snap(Int64(max(0, band.maxX / pixelsPerTick)))
+            range = lo < hi ? lo...hi : nil
+            marked = Set(points.indices.filter { (lo...max(lo, hi)).contains(points[$0].tick.rawValue) })
             return
         }
         if segment != nil, !moved { addPoint(at: press); return }

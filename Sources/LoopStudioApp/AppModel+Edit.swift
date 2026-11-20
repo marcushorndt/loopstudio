@@ -33,7 +33,7 @@ extension AppModel {
         case .deleteTime: rangeSelection != nil
             || selectedScene != nil || selectedDevice != nil
         case .cut, .copy: !selectedClips.isEmpty || selectedClip != nil || deviceFocused
-        case .duplicate: !selectedClips.isEmpty || selectedClip != nil || !selectedNotes.isEmpty || selectedScene != nil || (trackFocused && selectedTrack != nil) || deviceFocused
+        case .duplicate: automationMarking != nil || !selectedClips.isEmpty || selectedClip != nil || !selectedNotes.isEmpty || selectedScene != nil || (trackFocused && selectedTrack != nil) || deviceFocused
         case .paste: !clipboard.isEmpty || !noteClipboard.isEmpty || deviceClipboard != nil
         case .backToArrangement, .captureSession: arrangementOverridden
         case .renameTrack: selectedTrack != nil || selectedClip != nil || deviceFocused
@@ -64,7 +64,8 @@ extension AppModel {
             // Marked notes: a copy right after them, like Live. The note clipboard keeps the copy. A marked
             // device card gets its copy right next to it. A focused track with nothing else marked
             // duplicates the track, as ⌘D does in Live.
-            if !selectedNotes.isEmpty { copySelection(); pasteClipboard() }
+            if let marking = automationMarking { marking.duplicate() }
+            else if !selectedNotes.isEmpty { copySelection(); pasteClipboard() }
             else if let id = selectedDevice, let (track, _) = deviceLocation(id) { duplicateDevice(track.id, id) }
             else if trackFocused, selectedClips.isEmpty, selectedClip == nil, selectedScene == nil, let t = selectedTrack { duplicateTrack(t) }
             else { duplicateSelection() }

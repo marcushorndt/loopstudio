@@ -51,6 +51,10 @@ struct WarpEditor: View {
     var visible: ClosedRange<CGFloat>? = nil
     /// A playhead period that never wraps: the clip's own loop does the wrapping (`AudioClip.playTick`).
     static let noPeriod = Tick(1 << 60)
+    /// A drag that does not start on a marker marks a stretch: its press and its pointer x, and the end.
+    var onMark: ((CGFloat, CGFloat) -> Void)? = nil
+    var onMarkEnd: (() -> Void)? = nil
+    @State private var marking = false
 
     @State private var dragIndex: Int?
     @State private var dragTick: Tick?
@@ -121,12 +125,17 @@ struct WarpEditor: View {
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 3)
                 .onChanged { v in
-                    if dragIndex == nil { dragIndex = nearest(x: v.startLocation.x, ppb: ppb) }
+                    if dragIndex == nil && !marking {
+                        dragIndex = nearest(x: v.startLocation.x, ppb: ppb)
+                        marking = dragIndex == nil && onMark != nil
+                    }
+                    if marking { onMark?(v.startLocation.x, v.location.x); return }
                     guard let i = dragIndex else { return }
                     dragTick = clamped(i, beat: Double(v.location.x / ppb), free: model.freeOfGrid())
                 }
                 .onEnded { _ in
-                    defer { dragIndex = nil; dragTick = nil }
+                    defer { dragIndex = nil; dragTick = nil; marking = false }
+                    if marking { onMarkEnd?(); return }
                     guard let i = dragIndex, let t = dragTick, markers.indices.contains(i), markers[i].tick != t else { return }
                     var m = markers
                     m[i].tick = t

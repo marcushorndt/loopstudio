@@ -25,6 +25,8 @@ struct SampleEditor: View {
     @State private var draft: (offset: Tick, length: Tick)?
     /// The start marker while it is dragged on a looping clip.
     @State private var startDraft: Tick?
+    /// A stretch is being marked: the click that ends the drag must not clear it.
+    @State private var markingNow = false
     @State private var dragMode: LoopDrag?
     /// The width of the visible part: the waveform draws only there, so a deep zoom stays cheap.
     @State private var viewportWidth: CGFloat = 800
@@ -131,6 +133,11 @@ struct SampleEditor: View {
             Button { setZoom(zoom / 1.5) } label: { Image(systemName: "minus.magnifyingglass") }.hint("Zoom out")
             Button { setZoom(zoom * 1.5) } label: { Image(systemName: "plus.magnifyingglass") }.hint("Zoom in. The grid gets finer as you zoom.")
             Button { setZoom(1) } label: { Image(systemName: "arrow.left.and.right.square") }.hint("Show the whole file")
+            Button { if let s = model.sampleSelection, s.clip == clip.id { model.loopClip(to: s) } } label: {
+                Image(systemName: "repeat")
+            }
+            .disabled(selection == nil)
+            .hint("Loop the marked stretch (⌘L). Drag over the waveform to mark one.")
             Button { model.sampleGrid.toggle() } label: {
                 Image(systemName: "grid").foregroundStyle(model.sampleGrid ? Theme.accent : Theme.dim)
             }
@@ -212,15 +219,22 @@ struct SampleEditor: View {
     private func waveformArea(ppb: CGFloat, step: Int64) -> some View {
         ZStack(alignment: .topLeading) {
             if warped {
-                WarpEditor(clip: clip, asset: asset, peaks: peaks, tint: tint, ppb: ppb, visible: visible)
+                WarpEditor(clip: clip, asset: asset, peaks: peaks, tint: tint, ppb: ppb, visible: visible,
+                           onMark: { a, b in mark(from: a, to: b, ppb: ppb, step: step) }, onMarkEnd: endMark)
             } else {
                 waveform(ppb: ppb, step: step)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 3)
+                        .onChanged { v in mark(from: v.startLocation.x, to: v.location.x, ppb: ppb, step: step) }
+                        .onEnded { _ in endMark() })
                 ClipPlayhead(clip: clip.id, period: WarpEditor.noPeriod) {
                     CGFloat(clip.playTick(after: $0, session: session, fileTicks: fileTicks).quarters) * ppb
                 }
             }
+            selectionOverlay(ppb: ppb)
             startMarker(ppb: ppb, step: step)
         }
+        .simultaneousGesture(TapGesture().onEnded { if !markingNow { model.sampleSelection = nil } })
     }
 
     private func waveform(ppb: CGFloat, step: Int64) -> some View {
@@ -248,6 +262,34 @@ struct SampleEditor: View {
             peaks.draw(in: ctx, from: max(0, shown.lowerBound), to: min(size.width, shown.upperBound), mid: size.height / 2,
                        half: size.height * 0.45, color: tint.opacity(0.9)) { g.source(atBeat: Double($0 / ppb)) / frames }
         }
+    }
+
+    /// The marked stretch: a drag over the waveform away from the markers. ⌘L, or the loop button, loops the
+    /// clip there. A click clears it.
+    private var selection: (start: Tick, end: Tick)? {
+        guard let s = model.sampleSelection, s.clip == clip.id else { return nil }
+        return (s.start, s.end)
+    }
+
+    private func mark(from a: CGFloat, to b: CGFloat, ppb: CGFloat, step: Int64) {
+        markingNow = true
+        let free = model.freeOfGrid()
+        let lo = snapped(Double(min(a, b) / ppb), step: step, free: free), hi = snapped(Double(max(a, b) / ppb), step: step, free: free)
+        model.sampleSelection = (clip.id, lo, max(hi, lo + Tick(1)))
+        model.status = "Marked \(MusicalLength.format(hi - lo, ticksPerBar: model.barTicks)) · ⌘L loops it · " + (free ? "free of the grid" : "on the grid (\(Self.stepName(step)))")
+    }
+
+    private func endMark() { DispatchQueue.main.async { markingNow = false } }
+
+    private func selectionOverlay(ppb: CGFloat) -> some View {
+        Canvas { ctx, size in
+            guard let s = selection else { return }
+            let x0 = CGFloat(s.start.quarters) * ppb, x1 = CGFloat(s.end.quarters) * ppb
+            let r = CGRect(x: x0, y: 0, width: max(1, x1 - x0), height: size.height)
+            ctx.fill(Path(r), with: .color(Theme.text.opacity(0.12)))
+            ctx.stroke(Path(r), with: .color(Theme.text.opacity(0.6)), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+        }
+        .allowsHitTesting(false)
     }
 
     /// The flag at the clip's start in the file. Drag it to move the start; the length stays.

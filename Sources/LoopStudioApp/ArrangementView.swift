@@ -53,7 +53,7 @@ struct ArrangementView: View {
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain).hint("Show or hide automation lanes on all tracks (A)")
-                            Button { model.automationEdit.toggle() } label: {
+                            Button { model.perform(.automationEditMode) } label: {
                                 Image(systemName: "point.topleft.down.to.point.bottomright.curvepath").font(.system(size: 11))
                                     .foregroundStyle(model.automationEdit ? Theme.automationDot : Theme.dim)
                                     .frame(width: 22, height: 18)
@@ -61,7 +61,7 @@ struct ArrangementView: View {
                                         .stroke(model.automationEdit ? Theme.automationDot.opacity(0.7) : Theme.line, lineWidth: 1))
                                     .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain).hint("Automation mode: the curve over the clips takes the clicks, so you edit it there. Clips still move by their headers. Off, the clips take the clicks.")
+                            .buttonStyle(.plain).hint("Automation mode (⌥A): the curve over the clips takes the clicks; click to add a point, click a point to remove it, drag to move. The pen (B) draws there too. Clips still move by their headers.")
                         }
                         .padding(.horizontal, 8).frame(width: headerWidth, height: rulerHeight)
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -425,7 +425,8 @@ private struct Lane: View {
             if let first = model.shownLanes(track).first, let target = model.project.automationTarget(first) {
                 let h = max(8, model.laneHeight(track) - ArrangementClip.headerHeight - 4)
                 Group {
-                    if model.automationEdit {
+                    // The automation mode or the pen (B) make it editable there.
+                    if model.automationEdit || model.drawMode {
                         AutomationEditor(target: target, points: model.automationPoints(track, first),
                                          pixelsPerTick: model.pixelsPerBar / Double(model.barTicks),
                                          width: width, height: h, tint: Theme.automationDot, pen: model.drawMode, penGrid: Tick.perQuarter,

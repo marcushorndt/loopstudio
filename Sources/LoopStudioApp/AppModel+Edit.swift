@@ -134,6 +134,9 @@ extension AppModel {
         case .switchView: viewMode = viewMode == .session ? .arrangement : .session
         case .toggleDetail: detailOpen.toggle()
         case .toggleAutomation: toggleAutomationView()
+        case .automationEditMode:
+            automationEdit.toggle()
+            status = automationEdit ? "Automation mode: edit the curve over the clips" : "Automation mode off"
         case .showShortcuts: shortcutsOpen = true
         }
     }

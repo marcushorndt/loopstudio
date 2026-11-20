@@ -13,7 +13,7 @@ enum AppAction: String, CaseIterable, Identifiable {
     case moveUp, moveDown, moveLeft, moveRight, extendUp, extendDown, extendLeft, extendRight, launchSelected
     case noteOctaveUp, noteOctaveDown, noteLonger, noteShorter, noteOtherGridLeft, noteOtherGridRight, snapNotes, selectAll
     case gridNarrower, gridWider, gridTriplet, gridFixed
-    case sessionView, arrangementView, switchView, toggleDetail, toggleAutomation, showShortcuts
+    case sessionView, arrangementView, switchView, toggleDetail, toggleAutomation, automationEditMode, showShortcuts
 
     var id: String { rawValue }
 
@@ -30,7 +30,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .moveUp, .moveDown, .moveLeft, .moveRight, .extendUp, .extendDown, .extendLeft, .extendRight, .launchSelected: .navigate
         case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .noteOtherGridLeft, .noteOtherGridRight, .snapNotes, .selectAll: .edit
         case .gridNarrower, .gridWider, .gridTriplet, .gridFixed: .edit
-        case .sessionView, .arrangementView, .switchView, .toggleDetail, .toggleAutomation, .showShortcuts: .view
+        case .sessionView, .arrangementView, .switchView, .toggleDetail, .toggleAutomation, .automationEditMode, .showShortcuts: .view
         }
     }
 
@@ -101,6 +101,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .switchView: "Switch Session / Arrangement"
         case .toggleDetail: "Show Clip and Device Panel"
         case .toggleAutomation: "Show / Hide Automation"
+        case .automationEditMode: "Automation Mode (Edit Over the Clips)"
         case .showShortcuts: "Keyboard Shortcuts"
         }
     }
@@ -167,6 +168,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .switchView: KeyBinding("\t", [])
         case .toggleDetail: KeyBinding("d", [.command, .option])
         case .toggleAutomation: KeyBinding("a", [])
+        case .automationEditMode: KeyBinding("a", .option)
         case .showShortcuts: KeyBinding("/", .command)
         default: nil
         }

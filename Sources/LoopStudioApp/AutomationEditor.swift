@@ -32,6 +32,8 @@ struct AutomationEditor: View {
     /// The last tick a point can sit on (a clip's length): the lane can be wider than the clip, so a drag can
     /// start past its end, but no point lands there.
     var maxTick: Tick? = nil
+    /// How strongly the editor's own background covers what lies under it (a lane shows the clips there).
+    var backgroundOpacity: Double = 0.6
     let onChange: ([AutomationPoint]) -> Void
 
     @State private var draft: [AutomationPoint]?
@@ -66,7 +68,7 @@ struct AutomationEditor: View {
     var body: some View {
         Canvas { ctx, size in
             // Background and a line at the default value.
-            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.background.opacity(0.6)))
+            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.background.opacity(backgroundOpacity)))
             let defY = y(target.def)
             ctx.stroke(Path { p in p.move(to: CGPoint(x: 0, y: defY)); p.addLine(to: CGPoint(x: size.width, y: defY)) },
                        with: .color(Theme.dim.opacity(0.35)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))

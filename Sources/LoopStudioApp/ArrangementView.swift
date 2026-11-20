@@ -410,13 +410,27 @@ private struct Lane: View {
             ForEach(track.clips, id: \.id) { clip in
                 ArrangementClip(clip: clip, track: track, trackIndex: index, trackCount: count)
             }
+            // The first lane's curve also lies over the clips, under their headers, so the main automation
+            // shows where the sound is. It is edited in its lane below.
+            if let first = model.shownLanes(track).first, let target = model.project.automationTarget(first) {
+                MainLaneCurve(target: target, points: model.automationPoints(track, first), ppt: model.pixelsPerBar / Double(model.barTicks))
+                    .frame(width: width, height: max(8, model.laneHeight(track) - ArrangementClip.headerHeight - 4))
+                    .offset(y: ArrangementClip.headerHeight + 2)
+                    .allowsHitTesting(false)
+            }
             ForEach(Array(model.shownLanes(track).enumerated()), id: \.element) { i, address in
                 if let target = model.project.automationTarget(address) {
-                    AutomationEditor(target: target, points: model.automationPoints(track, address),
-                                     pixelsPerTick: model.pixelsPerBar / Double(model.barTicks),
-                                     width: width, height: AppModel.automationRow, tint: Theme.track(track.colorIndex), pen: model.drawMode, penGrid: Tick.perQuarter) { pts in
-                        model.apply(.setAutomation(track: track.id, target: address, points: pts))
+                    // Under each lane a faint copy of the track's clips: where the sound is, under the curve.
+                    ZStack(alignment: .topLeading) {
+                        ClipGhosts(track: track, height: AppModel.automationRow)
+                        AutomationEditor(target: target, points: model.automationPoints(track, address),
+                                         pixelsPerTick: model.pixelsPerBar / Double(model.barTicks),
+                                         width: width, height: AppModel.automationRow, tint: Theme.track(track.colorIndex), pen: model.drawMode, penGrid: Tick.perQuarter,
+                                         backgroundOpacity: 0.3) { pts in
+                            model.apply(.setAutomation(track: track.id, target: address, points: pts))
+                        }
                     }
+                    .frame(width: width, height: AppModel.automationRow, alignment: .topLeading)
                     .overlay(alignment: .topLeading) { ClipOverrideSpans(address: address) }
                     .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
                     .offset(y: model.laneHeight(track) + CGFloat(i) * AppModel.automationRow)
@@ -712,6 +726,70 @@ private struct SelectionOverlay: View {
 }
 
 /// A tiny picture of the notes of a MIDI clip.
+/// A faint copy of a track's clips for an automation lane: the waveform or the notes of each clip at its
+/// place on the timeline, low in contrast so the curve stays in front.
+private struct ClipGhosts: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+    let height: CGFloat
+
+    var body: some View {
+        let tint = Theme.track(track.colorIndex)
+        ZStack(alignment: .topLeading) {
+            ForEach(track.clips, id: \.id) { clip in
+                let x = tickX(clip.start, model), w = max(2, tickX(clip.start + clip.length, model) - x)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 2).fill(tint.opacity(0.07))
+                    switch clip {
+                    case .audio(let a):
+                        if let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
+                            WaveformView(peaks: peaks, color: tint.opacity(0.22), sourceAt: model.waveMap(a, asset, elapsed: 0, length: a.length))
+                        }
+                    case .midi(let m):
+                        MiniNotes(clip: m).opacity(0.25)
+                    default:
+                        EmptyView()
+                    }
+                }
+                .frame(width: w, height: height - 6)
+                .offset(x: x, y: 3)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// The first automation lane of a track drawn over its clips: the curve and its points.
+private struct MainLaneCurve: View {
+    let target: AutomationTarget
+    let points: [AutomationPoint]
+    let ppt: Double
+
+    var body: some View {
+        Canvas { ctx, size in
+            guard !points.isEmpty else { return }
+            func y(_ v: Double) -> CGFloat { size.height * (1 - CGFloat(target.position(v))) }
+            var path = Path()
+            var x: CGFloat = 0
+            while x <= size.width {
+                let v = AutomationMath.value(points, at: Tick(Int64(Double(x) / ppt))) ?? target.def
+                let p = CGPoint(x: x, y: y(v))
+                if x == 0 { path.move(to: p) } else { path.addLine(to: p) }
+                x += 2
+            }
+            ctx.stroke(path, with: .color(.black.opacity(0.5)), lineWidth: 3)
+            ctx.stroke(path, with: .color(Theme.automationDot), lineWidth: 1.4)
+            for p in points {
+                let px = CGFloat(Double(p.tick.rawValue) * ppt)
+                guard px >= -4, px <= size.width + 4 else { continue }
+                let r = CGRect(x: px - 2.5, y: y(p.value) - 2.5, width: 5, height: 5)
+                ctx.fill(Path(ellipseIn: r), with: .color(Theme.automationDot))
+                ctx.stroke(Path(ellipseIn: r), with: .color(.black.opacity(0.6)), lineWidth: 1)
+            }
+        }
+    }
+}
+
 private struct MiniNotes: View {
     let clip: MIDIClip
 

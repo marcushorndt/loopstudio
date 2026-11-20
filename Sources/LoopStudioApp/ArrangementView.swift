@@ -397,6 +397,12 @@ private struct Lane: View {
         .allowsHitTesting(false)
     }
 
+    /// The arrangement's time selection on this track: the automation there drags up and down as a box.
+    private var selectedStretch: ClosedRange<Int64>? {
+        guard let r = model.rangeSelection, r.tracks.contains(track.id), r.end > r.start else { return nil }
+        return r.start.rawValue...r.end.rawValue
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             Canvas { ctx, size in
@@ -434,7 +440,8 @@ private struct Lane: View {
                     AutomationEditor(target: target, points: points, pixelsPerTick: ppt,
                                      width: width, height: h, tint: Theme.automationDot, pen: model.drawMode, penGrid: Tick.perQuarter,
                                      backgroundOpacity: 0,
-                                     hitShape: whole ? nil : AnyShape(CurveHitShape(target: target, points: points, ppt: ppt))) { pts in
+                                     hitShape: whole ? nil : AnyShape(CurveHitShape(target: target, points: points, ppt: ppt)),
+                                     outerRange: selectedStretch) { pts in
                         model.apply(.setAutomation(track: track.id, target: first, points: pts))
                     }
                 }
@@ -458,7 +465,7 @@ private struct Lane: View {
                         AutomationEditor(target: target, points: model.automationPoints(track, address),
                                          pixelsPerTick: model.pixelsPerBar / Double(model.barTicks),
                                          width: width, height: AppModel.automationRow, tint: Theme.track(track.colorIndex), pen: model.drawMode, penGrid: Tick.perQuarter,
-                                         backgroundOpacity: 0.3) { pts in
+                                         backgroundOpacity: 0.3, outerRange: selectedStretch) { pts in
                             model.apply(.setAutomation(track: track.id, target: address, points: pts))
                         }
                     }

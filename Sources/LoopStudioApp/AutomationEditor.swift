@@ -38,6 +38,9 @@ struct AutomationEditor: View {
     /// Where the editor takes clicks. `nil`: everywhere. Over clips only the curve does, so a click beside it
     /// goes to the clips.
     var hitShape: AnyShape? = nil
+    /// A stretch marked outside the editor (the arrangement's time selection on this track), in ticks. Without a
+    /// marking of its own the editor drags the curve there as a box.
+    var outerRange: ClosedRange<Int64>? = nil
     let onChange: ([AutomationPoint]) -> Void
 
     @State private var draft: [AutomationPoint]?
@@ -239,7 +242,7 @@ struct AutomationEditor: View {
     /// Where the editor takes clicks: everywhere, or its hit shape and the marked stretch.
     private var hitArea: AnyShape {
         guard let hitShape else { return AnyShape(Rectangle()) }
-        guard let range, range.upperBound > range.lowerBound else { return hitShape }
+        guard let range = range ?? outerRange, range.upperBound > range.lowerBound else { return hitShape }
         let rect = CGRect(x: x(Tick(range.lowerBound)), y: 0, width: x(Tick(range.upperBound)) - x(Tick(range.lowerBound)), height: height)
         return AnyShape(HitUnion(base: hitShape, extra: rect))
     }
@@ -400,7 +403,7 @@ struct AutomationEditor: View {
             return
         }
         // A press inside the marked stretch, off its points, moves the curve there up or down as a box.
-        if let range, range.upperBound > range.lowerBound, range.contains(Int64(max(0, point.x / pixelsPerTick))) {
+        if let range = range ?? outerRange, range.upperBound > range.lowerBound, range.contains(Int64(max(0, point.x / pixelsPerTick))) {
             box = (range.lowerBound, range.upperBound)
             draft = working
             return
@@ -489,8 +492,16 @@ struct AutomationEditor: View {
         }
         if segment != nil, !moved { addPoint(at: press); return }
         if let b = box {
+            // A click without a move in the arrangement's selection does what a click on the clip does: the
+            // selection goes and the playhead lands there.
+            if !moved, range == nil, outerRange != nil {
+                model.rangeSelection = nil
+                model.seek(to: model.snap(Tick(Int64(max(0, press.x / pixelsPerTick))), alt: NSEvent.modifierFlags.contains(.option)))
+                return
+            }
             guard moved, let draft else { return }
             marked = Set(draft.indices.filter { (b.lo...b.hi).contains(draft[$0].tick.rawValue) })
+            range = b.lo...b.hi
             onChange(draft)
             return
         }

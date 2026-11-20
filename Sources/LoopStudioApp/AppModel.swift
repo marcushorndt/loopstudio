@@ -438,7 +438,7 @@ final class AppModel {
     /// A worker makes warps now. A render cannot stop half way, so a newer edit does not start a second
     /// worker beside it: it sets `warpAgain`, and when the running render ends one rebuild asks for the
     /// warps of the newest state. Holding a tempo key then never piles up renders of the steps between.
-    @ObservationIgnored private var warpRunning = false
+    @ObservationIgnored private(set) var warpRunning = false
     @ObservationIgnored private var warpAgain = false
     /// The tempo field has the keyboard: Up and Down change the tempo (see `Shortcuts`).
     @ObservationIgnored var tempoFieldFocused = false

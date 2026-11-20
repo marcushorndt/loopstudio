@@ -342,3 +342,17 @@ private func peak(_ x: UnsafePointer<Float>, near: Int, reach: Int, count: Int) 
     #expect(TempoDetect.estimate(silent, name: "render", loop: true) == nil)
     #expect(TempoDetect.estimate(silent, name: "render 96 bpm", loop: true)?.bpm == 96, "the name still counts")
 }
+
+@Test func warpCacheKeepsItsMemoryBudget() {
+    let bank = AudioBank.live()
+    let second = 48_000 * MemoryLayout<Float>.size
+    bank.warpBudget = 3 * second
+    func make() -> PCMBuffer { PCMBuffer(samples: [[Float](repeating: 0.1, count: 48_000)], sampleRate: 48_000) }
+    for i in 0..<20 {
+        _ = bank.warped(key: "tempo \(i)", make: make)
+        _ = bank.takePendingWarps()   // every step is a new plan, as a tempo sweep makes them
+    }
+    let stats = bank.warpStats()
+    #expect(stats.megabytes * 1_048_576 <= Double(3 * second) + 1)
+    #expect(stats.cached >= 1 && stats.cached <= 3)
+}

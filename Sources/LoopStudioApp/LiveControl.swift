@@ -199,6 +199,18 @@ enum AppTools {
             "view": .string(m.viewMode == .session ? "session" : "arrangement"),
             "status": .string(m.status),
         ]
+        // The warps of audio clips: a clip that waits for its render plays its last one, or is silent.
+        let w = m.bank.warpStats()
+        o["warp"] = .object(["rendering": .bool(m.warpRunning), "cached": .number(Double(w.cached)),
+                             "cacheMB": .number((w.megabytes * 10).rounded() / 10),
+                             "clipsOnStandIn": .number(Double(w.standIn)), "clipsSilent": .number(Double(w.silent))])
+        // The output now, as the meters show it (0 to 1): the master and every track that sounds.
+        var levels: [String: JSONValue] = ["Master": .number((Double(m.meterLevel(track: nil)) * 1000).rounded() / 1000)]
+        for t in m.project.tracks {
+            let l = Double(m.meterLevel(track: t.id))
+            if l > 0.001 { levels[t.name] = .number((l * 1000).rounded() / 1000) }
+        }
+        o["levels"] = .object(levels)
         if let t = m.selectedTrack { o["selectedTrack"] = .string(t.description) }
         if let c = m.selectedClip { o["selectedClip"] = .string(c.description) }
         // The session clips that sound now, per track.

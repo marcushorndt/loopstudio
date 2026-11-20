@@ -71,6 +71,13 @@ public final class AudioBank: @unchecked Sendable {
     /// The last warped buffer each clip played. It stands in while the new one is made.
     private var lastWarp: [ClipID: PCMBuffer] = [:]
     private var pending: [String: WarpJob] = [:]
+    /// The bytes the cached warps take. A two-minute stereo render is about 48 MB, so a count limit alone
+    /// would let a tempo sweep fill gigabytes.
+    private var warpBytes = 0
+    /// The most the cached warps may take. The warps of the latest plans stay even above it.
+    public var warpBudget = 1 << 30
+    /// The clips of the latest plan that wait for their warp: true when they play a stand-in, false when silent.
+    private var waiting: [ClipID: Bool] = [:], waitingAtTake: [ClipID: Bool] = [:]
     private let bufferLock = NSLock()
 
     /// A warp that a worker makes later. Unchecked: `make` only reads its captured buffers.
@@ -100,8 +107,9 @@ public final class AudioBank: @unchecked Sendable {
             return made
         }
         warpLock.lock(); defer { warpLock.unlock() }
-        if let hit = warped[key] { touch(key); lastWarp[clip] = hit; return hit }
+        if let hit = warped[key] { touch(key); lastWarp[clip] = hit; waiting[clip] = nil; return hit }
         if pending[key] == nil { pending[key] = WarpJob(key: key, make: make) }
+        waiting[clip] = lastWarp[clip] != nil
         return lastWarp[clip]
     }
 
@@ -111,7 +119,7 @@ public final class AudioBank: @unchecked Sendable {
         let copy = AudioBank()
         copy.defersWarps = true
         bufferLock.lock(); copy.buffers = buffers; bufferLock.unlock()
-        warpLock.lock(); copy.warped = warped; copy.used = used; copy.clock = clock; copy.lastWarp = lastWarp; warpLock.unlock()
+        warpLock.lock(); copy.warped = warped; copy.warpBytes = warpBytes; copy.used = used; copy.clock = clock; copy.lastWarp = lastWarp; warpLock.unlock()
         return copy
     }
 
@@ -121,8 +129,25 @@ public final class AudioBank: @unchecked Sendable {
         let jobs = Array(pending.values)
         pending = [:]
         previousTake = lastTake; lastTake = clock
+        waitingAtTake = waiting; waiting = [:]
         return jobs
     }
+
+    public struct WarpStats: Sendable {
+        public var cached: Int
+        public var megabytes: Double
+        /// Clips of the latest plan whose warp is not made yet: playing their last warp, or silent.
+        public var standIn: Int
+        public var silent: Int
+    }
+
+    public func warpStats() -> WarpStats {
+        warpLock.lock(); defer { warpLock.unlock() }
+        return WarpStats(cached: warped.count, megabytes: Double(warpBytes) / 1_048_576,
+                         standIn: waitingAtTake.values.filter { $0 }.count, silent: waitingAtTake.values.filter { !$0 }.count)
+    }
+
+    private static func bytes(_ b: PCMBuffer) -> Int { b.frames * max(1, b.channels) * MemoryLayout<Float>.size }
 
     /// Makes one deferred warp. Slow; call it on a worker.
     public func run(_ job: WarpJob) { _ = warped(key: job.key, make: job.make) }
@@ -134,12 +159,17 @@ public final class AudioBank: @unchecked Sendable {
         warpLock.unlock()
         let made = make()
         warpLock.lock()
+        if warped[key] == nil { warpBytes += Self.bytes(made) }
         warped[key] = made
         touch(key)
-        // Edits make old keys useless. The oldest half goes, so the warps the latest plans use stay.
-        if warped.count > 256 {
-            let old = used.filter { $0.value < previousTake }.sorted { $0.value < $1.value }.prefix(128).map(\.key)
-            for key in old { warped[key] = nil; used[key] = nil }
+        // Edits make old keys useless. The oldest go first, until the cache fits its budget; the warps the
+        // latest plans use stay.
+        if warpBytes > warpBudget || warped.count > 256 {
+            for key in used.filter({ $0.value < previousTake }).sorted(by: { $0.value < $1.value }).map(\.key) {
+                guard warpBytes > warpBudget || warped.count > 256 else { break }
+                if let gone = warped.removeValue(forKey: key) { warpBytes -= Self.bytes(gone) }
+                used[key] = nil
+            }
         }
         if lastWarp.count > 1_024 { lastWarp = [:] }
         warpLock.unlock()

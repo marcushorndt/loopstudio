@@ -315,6 +315,12 @@ final class KeyMonitor {
                 model.nudgeTempo(by: event.keyCode == 126 ? step : -step)
                 return nil
             }
+            // Play / Stop (Space, or the key it is bound to) works in the tempo field too: a tempo has no spaces.
+            if event.type == .keyDown, model.tempoFieldFocused, !event.isARepeat,
+               let b = AppAction.play.binding, b.matches(event), model.isEnabled(.play) {
+                model.perform(.play)
+                return nil
+            }
             // Typing in a text field keeps its keys. So do the Settings window, a plugin's editor and a sheet.
             if let window = NSApp.keyWindow {
                 if window.firstResponder is NSText { return event }

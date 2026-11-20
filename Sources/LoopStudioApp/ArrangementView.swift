@@ -424,18 +424,18 @@ private struct Lane: View {
             // mode it takes the clicks there; otherwise it only shows and the clips keep their drags.
             if let first = model.shownLanes(track).first, let target = model.project.automationTarget(first) {
                 let h = max(8, model.laneHeight(track) - ArrangementClip.headerHeight - 4)
-                Group {
-                    // The automation mode or the pen (B) make it editable there.
-                    if model.automationEdit || model.drawMode {
-                        AutomationEditor(target: target, points: model.automationPoints(track, first),
-                                         pixelsPerTick: model.pixelsPerBar / Double(model.barTicks),
-                                         width: width, height: h, tint: Theme.automationDot, pen: model.drawMode, penGrid: Tick.perQuarter,
-                                         backgroundOpacity: 0) { pts in
-                            model.apply(.setAutomation(track: track.id, target: first, points: pts))
-                        }
-                    } else {
-                        MainLaneCurve(target: target, points: model.automationPoints(track, first), ppt: model.pixelsPerBar / Double(model.barTicks))
-                            .allowsHitTesting(false)
+                let ppt = model.pixelsPerBar / Double(model.barTicks)
+                let points = model.automationPoints(track, first)
+                // A click on the curve adds a point, a click on a point removes it, a drag moves it. Beside the
+                // curve the clicks go to the clips. The automation mode (⌥A) and the pen (B) take the whole row.
+                let whole = model.automationEdit || model.drawMode
+                ZStack(alignment: .topLeading) {
+                    MainLaneCurve(target: target, points: points, ppt: ppt).allowsHitTesting(false)
+                    AutomationEditor(target: target, points: points, pixelsPerTick: ppt,
+                                     width: width, height: h, tint: Theme.automationDot, pen: model.drawMode, penGrid: Tick.perQuarter,
+                                     backgroundOpacity: 0,
+                                     hitShape: whole ? nil : AnyShape(CurveHitShape(target: target, points: points, ppt: ppt))) { pts in
+                        model.apply(.setAutomation(track: track.id, target: first, points: pts))
                     }
                 }
                 .frame(width: width, height: h)
@@ -788,6 +788,30 @@ private struct ClipGhosts: View {
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// The click area of a curve over clips: a band of 14 points around the line and a circle around each point.
+private struct CurveHitShape: Shape {
+    let target: AutomationTarget
+    let points: [AutomationPoint]
+    let ppt: Double
+
+    func path(in rect: CGRect) -> Path {
+        func y(_ v: Double) -> CGFloat { rect.height * (1 - CGFloat(target.position(v))) }
+        var line = Path()
+        var x: CGFloat = 0
+        while x <= rect.width + 4 {
+            let p = CGPoint(x: x, y: y(AutomationMath.value(points, at: Tick(Int64(Double(x) / ppt))) ?? target.def))
+            if x == 0 { line.move(to: p) } else { line.addLine(to: p) }
+            x += 4
+        }
+        var area = line.strokedPath(StrokeStyle(lineWidth: 14, lineCap: .round, lineJoin: .round))
+        for p in points {
+            let px = CGFloat(Double(p.tick.rawValue) * ppt)
+            area.addEllipse(in: CGRect(x: px - 8, y: y(p.value) - 8, width: 16, height: 16))
+        }
+        return area
     }
 }
 

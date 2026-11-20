@@ -34,6 +34,9 @@ struct AutomationEditor: View {
     var maxTick: Tick? = nil
     /// How strongly the editor's own background covers what lies under it (a lane shows the clips there).
     var backgroundOpacity: Double = 0.6
+    /// Where the editor takes clicks. `nil`: everywhere. Over clips only the curve does, so a click beside it
+    /// goes to the clips.
+    var hitShape: AnyShape? = nil
     let onChange: ([AutomationPoint]) -> Void
 
     @State private var draft: [AutomationPoint]?
@@ -129,7 +132,7 @@ struct AutomationEditor: View {
             }
         }
         .frame(width: width, height: height)
-        .contentShape(Rectangle())
+        .contentShape(hitShape ?? AnyShape(Rectangle()))
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { g in
                 if pen { draw(at: g.location); return }

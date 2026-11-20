@@ -270,6 +270,8 @@ struct KnobDial: View {
     /// The automated position (0...1): a thin red arc inside the main one, with a dot at its end. The
     /// needle keeps the setting, so the two can disagree, as they do while a curve plays.
     var automated: Double? = nil
+    /// The arc grows from the top (the middle of the range) to either side: for a value around 0, like a pitch.
+    var bipolar = false
 
     var body: some View {
         Canvas { ctx, size in
@@ -278,7 +280,9 @@ struct KnobDial: View {
             let from = Angle.degrees(135), span = 270.0
             var track = Path(); track.addArc(center: c, radius: r, startAngle: from, endAngle: .degrees(135 + span), clockwise: false)
             ctx.stroke(track, with: .color(.black.opacity(0.55)), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-            var arc = Path(); arc.addArc(center: c, radius: r, startAngle: from, endAngle: .degrees(135 + span * position), clockwise: false)
+            let base = bipolar ? 0.5 : 0
+            var arc = Path(); arc.addArc(center: c, radius: r, startAngle: .degrees(135 + span * min(base, position)),
+                                         endAngle: .degrees(135 + span * max(base, position)), clockwise: false)
             ctx.stroke(arc, with: .color(tint), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
             let a = Angle.degrees(135 + span * position).radians
             var needle = Path(); needle.move(to: c); needle.addLine(to: CGPoint(x: c.x + cos(a) * (r - lineWidth - 2), y: c.y + sin(a) * (r - lineWidth - 2)))

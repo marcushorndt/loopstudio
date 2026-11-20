@@ -31,13 +31,16 @@ struct WarpColumn: View {
                 modeSettings(a, w)
                 if a.warpMode.keepsPitch {
                     Divider()
-                    HStack {
-                        Text("Transpose").frame(width: 62, alignment: .leading)
-                        Stepper("\(w.transpose > 0 ? "+" : "")\(w.transpose) st", value: Binding(get: { w.transpose }, set: { v in edit(a) { $0.transpose = v } }),
-                                in: WarpSettings.ranges.transpose)
-                            .font(.system(size: 11, design: .monospaced))
+                    HStack(alignment: .top, spacing: 14) {
+                        PitchKnob(title: "Transpose", value: Double(w.transpose), range: -48...48, unit: "st") { v in edit(a) { $0.transpose = Int(v) } }
+                        PitchKnob(title: "Detune", value: w.detune, range: WarpSettings.ranges.detune, unit: "ct") { v in edit(a) { $0.detune = v } }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(Self.pitchText(w)).font(.system(size: 11, design: .monospaced))
+                            Text("Shift-drag: finer\nDouble-click: 0").font(.system(size: 9)).foregroundStyle(Theme.dim)
+                        }
+                        .padding(.top, 10)
                     }
-                    row("Detune", value: w.detune, range: WarpSettings.ranges.detune, format: "%+.0f ct") { v in edit(a) { $0.detune = v.rounded() } }
+                    .hint("Moves the pitch and keeps the length. Transpose in semitones, Detune in cents")
                 } else {
                     Text("The pitch follows the speed.").font(.caption).foregroundStyle(Theme.dim)
                 }
@@ -45,6 +48,13 @@ struct WarpColumn: View {
             Spacer()
         }
         .font(.system(size: 12))
+    }
+
+    /// The whole pitch change in one figure: "+3.25 st", "-0.12 st", "0 st".
+    static func pitchText(_ w: WarpSettings) -> String {
+        let total = Double(w.transpose) + w.detune / 100
+        if total == 0 { return "0 st" }
+        return String(format: "%+.2f st", total)
     }
 
     static func summary(_ mode: WarpMode) -> String {
@@ -171,5 +181,44 @@ extension AppModel {
         let beats = Double(a.length.rawValue) / Double(Tick.perQuarter)
         guard seconds > 0, beats > 0 else { return }
         apply(.setAssetTempo(id: asset.id, bpm: min(400, max(20, beats * 60 / seconds))))
+    }
+}
+
+/// A pitch knob in whole steps (semitones or cents). The dial and the figure follow the drag at once; the
+/// clip changes only when the drag ends, because each change starts a new offline render.
+struct PitchKnob: View {
+    let title: String
+    let value: Double
+    let range: ClosedRange<Double>
+    let unit: String
+    let commit: (Double) -> Void
+    @State private var dragged: Double?
+    @State private var start: Double?
+
+    private var shown: Double { dragged ?? value }
+
+    var body: some View {
+        VStack(spacing: 2) {
+            KnobDial(position: (shown - range.lowerBound) / (range.upperBound - range.lowerBound), tint: Theme.accent, bipolar: true)
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 2)
+                    .onChanged { g in
+                        if start == nil { start = value }
+                        // The whole range over 240 points; with Shift held, a quarter of that speed.
+                        let fine = NSEvent.modifierFlags.contains(.shift)
+                        let perPoint = (range.upperBound - range.lowerBound) / 240 / (fine ? 4 : 1)
+                        let v = ((start ?? value) - Double(g.translation.height) * perPoint).rounded()
+                        dragged = min(range.upperBound, max(range.lowerBound, v))
+                    }
+                    .onEnded { _ in
+                        if let d = dragged, d != value { commit(d) }
+                        dragged = nil; start = nil
+                    })
+                .simultaneousGesture(TapGesture(count: 2).onEnded { if value != 0 { commit(0) } })
+            Text("\(shown > 0 ? "+" : "")\(Int(shown)) \(unit)").font(.system(size: 10, design: .monospaced))
+            Text(title).font(.system(size: 9)).foregroundStyle(Theme.dim)
+        }
+        .frame(width: 58)
     }
 }

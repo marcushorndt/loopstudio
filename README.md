@@ -118,7 +118,8 @@ their own offline instances.
 the app's socket, so an agent edits the open project, drives the transport and launches scenes, with
 undo and autosave like a click. Without the app it works on project files. An assistant pane in the
 sidebar talks to Claude or an OpenAI model with the same tools. See `docs/mcp.md` and
-`docs/assistant.md`.
+`docs/assistant.md`. The server also serves skills for agents (`list_skills`, `get_skill`) from
+`skills/`, compiled into the binary.
 
 ## Keys
 
@@ -162,6 +163,7 @@ next open. `relative.loopstudio` in this repository is the sample project the co
 | `Sources/LinkBridge` | Ableton Link as a C++ target (git submodule). |
 | `Sources/RubberBandBridge` | Rubber Band Library as a C++ target (git submodule), for the Complex warp modes. |
 | `Tests/` | One test target per library. The engine tests include a malloc-hook soak test: zero allocations on the audio thread. |
+| `skills/` | The skills for agents, one `SKILL.md` per folder. The MCP server serves them; `Plugins/EmbedSkills` compiles them into the binary. |
 | `docs/` | `architecture.md` is the map of the code and the rules for the realtime path. `warp.md`, `midi.md`, `patcher.md`, `scripting.md`, `mcp.md`, `assistant.md` and `lemus-handover.md` cover one area each. `edge-cases-and-ideas.md` holds the rules for the edge cases. |
 | `scripts/` | `run-app.sh`, `install-app.sh`, `pack-release.sh` (a disk image with the app and the installed plugins), `make-icon.swift`. |
 | `Resources/` | The app icon. |

@@ -20,7 +20,7 @@ swift build -c release
 Add the server to Claude Code:
 
 ```
-claude mcp add loopstudio -- /Users/marcushorndt/Documents/repos/loopstudio/.build/release/loopstudio mcp
+claude mcp add loopstudio -- /path/to/loopstudio/.build/release/loopstudio mcp
 ```
 
 Or in a client config file (Claude Desktop and others):
@@ -29,7 +29,7 @@ Or in a client config file (Claude Desktop and others):
 {
   "mcpServers": {
     "loopstudio": {
-      "command": "/Users/marcushorndt/Documents/repos/loopstudio/.build/release/loopstudio",
+      "command": "/path/to/loopstudio/.build/release/loopstudio",
       "args": ["mcp"]
     }
   }
@@ -42,6 +42,8 @@ To open a project at start, add `"--project", "/path/to/MyProject.loopstudio"` t
 
 | Tool | Reads or changes | What it does |
 |---|---|---|
+| `list_skills` | reads | The skills for agents: name, description, last update. No project needed. |
+| `get_skill` | reads | The full `SKILL.md` text of one skill. |
 | `project_new` | creates | New project folder (`.loopstudio`). Never overwrites. |
 | `project_open` | reads | Open a project. Restores unsaved changes from the crash journal. |
 | `project_save` | writes | Write the project files, empty the journal. |
@@ -74,6 +76,10 @@ Every changing tool returns a **receipt**: the command, the revision before and 
 `command_apply` takes every edit the app can do: tracks and routing (`setOutput` to a bus or into an audio track, `setSends`, `setInputTrack`, `setNoInput`, `setMonitor`, `setSendsOnly`), clips and session slots, follow actions, devices and their parameters, MIDI notes, automation on tracks and in dummy clips, warping (`setAssetTempo`, `setClipWarp`), tempo, loop and launches. `command_examples` shows a valid JSON for each.
 
 Resources: `loopstudio://help/ui` (the words of the screen) and `loopstudio://help/patch` (the patch language on one page) always; `loopstudio://project/summary` and `loopstudio://project/full` when a project is open.
+
+## Skills
+
+The server serves skills for agents from `skills/<name>/SKILL.md`: `loopstudio-mcp` (the base: modes, order, names, traps), `loopstudio-make-music` (from an empty project to a checked bounce) and `loopstudio-patch-device` (the programmable device). The build compiles them into the binary, so the installed app and the `loopstudio` tool serve them with nothing beside them. In live mode the app answers, so the skills match the app's build. The server instructions tell an agent to call `list_skills` first and to load the matching skill with `get_skill` before a task.
 
 ## Example
 

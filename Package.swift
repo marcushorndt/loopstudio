@@ -48,7 +48,11 @@ let package = Package(
             linkerSettings: [.linkedFramework("Accelerate")]),
         .target(name: "LoopStudioEngine", dependencies: ["LoopStudioCore", "LinkBridge", "RubberBandBridge"], swiftSettings: audioThreadSettings),
         // Tool registry and MCP server: the one way for scripts and agents to drive the app.
-        .target(name: "LoopStudioControl", dependencies: ["LoopStudioCore", "LoopStudioProject", "LoopStudioEngine"]),
+        // EmbedSkills compiles skills/<name>/SKILL.md into it, so the app and the tool serve them (list_skills, get_skill).
+        .target(name: "LoopStudioControl", dependencies: ["LoopStudioCore", "LoopStudioProject", "LoopStudioEngine"],
+                plugins: ["EmbedSkills"]),
+        .executableTarget(name: "SkillEmbedder"),
+        .plugin(name: "EmbedSkills", capability: .buildTool(), dependencies: ["SkillEmbedder"]),
         .executableTarget(name: "loopstudio", dependencies: ["LoopStudioEngine", "LoopStudioProject", "LoopStudioCore", "LoopStudioControl"]),
         // The window app. Run it with scripts/run-app.sh.
         .executableTarget(name: "LoopStudioApp", dependencies: ["LoopStudioCore", "LoopStudioEngine", "LoopStudioProject", "LoopStudioControl"]),

@@ -72,11 +72,19 @@ extension AppModel {
         case .deleteSelection: deleteSelected()
         case .deleteTime: deleteTime()
         case .drawMode:
-            // The pen belongs to the piano roll: without an open MIDI clip the key does nothing.
-            guard drawMode || (detailTab == .clip && selectedClip.flatMap { project.findClip($0) }.map { if case .midi = $0.1 { true } else { false } } == true) else {
-                status = "Draw mode needs an open MIDI clip"; return
+            // The pen draws notes in a MIDI clip and steps in automation: in the arrangement's lanes and curves
+            // over the clips, and on a clip's automation page. Elsewhere the key does nothing.
+            let clip = detailTab == .clip ? selectedClip.flatMap { project.findClip($0) }?.1 : nil
+            let midiOpen = clip.map { if case .midi = $0 { true } else { false } } ?? false
+            let clipAutomation = clip != nil && detailOpen && clipPage == .automation
+            let arrangementLanes = viewMode == .arrangement && anyLanesShown
+            guard drawMode || midiOpen || clipAutomation || arrangementLanes else {
+                status = "Draw mode needs an open MIDI clip or open automation lanes"; return
             }
-            drawMode.toggle(); status = drawMode ? "Draw mode: click or drag to draw notes, click a note to delete it (Esc ends it)" : "Draw mode off"
+            drawMode.toggle()
+            status = !drawMode ? "Draw mode off"
+                : midiOpen && !clipAutomation ? "Draw mode: click or drag to draw notes, click a note to delete it (Esc ends it)"
+                : "Draw mode: drag over an automation curve to draw steps (Esc ends it)"
         case .splitAtPlayhead: splitAtPlayhead()
         case .deactivateClip: deactivateSelected()
         case .record: toggleRecordArm()

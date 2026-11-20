@@ -106,7 +106,7 @@ struct WarpEditor: View {
                     guard asset.frames > 0 else { return }
                     let frames = Double(asset.frames)
                     peaks.draw(in: ctx, from: max(0, shown.lowerBound), to: min(size.width, shown.upperBound), mid: size.height / 2 + 6,
-                               half: size.height * 0.4, color: tint.opacity(0.9)) { g.source(atBeat: Double($0 / ppb)) / frames }
+                               half: size.height * 0.4, color: tint.opacity(0.9), gainDb: clip.gainDb) { g.source(atBeat: Double($0 / ppb)) / frames }
                 }
                 ForEach(Array(shown.enumerated()), id: \.offset) { i, m in
                     let x = CGFloat(m.tick.quarters) * ppb

@@ -556,7 +556,7 @@ private struct ArrangementClip: View {
                 // Drawn through the clip's warp mapping, so a warped clip keeps its beats where they sound at any
                 // tempo. A looping clip dragged out past the file start shows the end of the file there.
                 WaveformView(peaks: peaks, color: tint.opacity(0.9),
-                             sourceAt: model.waveMap(a, asset, elapsed: (shownStart - clip.start).rawValue, length: shownLength))
+                             sourceAt: model.waveMap(a, asset, elapsed: (shownStart - clip.start).rawValue, length: shownLength), gainDb: a.gainDb)
                     .padding(.top, 16).padding(.bottom, 3)
             }
             if case .audio(let a) = clip, let env = a.gainEnvelope, !env.isEmpty {
@@ -574,8 +574,11 @@ private struct ArrangementClip: View {
         .overlay(alignment: .top) {
             Rectangle().fill(.clear).frame(height: Self.headerHeight).contentShape(Rectangle())
                 .onTapGesture {
-                    model.select(clip: clip.id, extend: NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command))
+                    let extend = NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command)
+                    model.select(clip: clip.id, extend: extend)
                     model.selectedTrack = track.id
+                    // The playhead goes to the clip start, so play starts with the clip.
+                    if !extend { model.seek(to: clip.start) }
                 }
                 // Measured in the window: the header moves with the drag, and a drag measured in it fed its own
                 // movement back, so the clip flickered and fell behind the pointer. While it is dragged the clip
@@ -775,7 +778,7 @@ private struct ClipGhosts: View {
                     switch clip {
                     case .audio(let a):
                         if let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
-                            WaveformView(peaks: peaks, color: tint.opacity(0.22), sourceAt: model.waveMap(a, asset, elapsed: 0, length: a.length))
+                            WaveformView(peaks: peaks, color: tint.opacity(0.22), sourceAt: model.waveMap(a, asset, elapsed: 0, length: a.length), gainDb: a.gainDb)
                         }
                     case .midi(let m):
                         MiniNotes(clip: m).opacity(0.25)

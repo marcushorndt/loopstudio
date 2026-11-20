@@ -74,8 +74,11 @@ final class WavePeaks: @unchecked Sendable {
     /// Draws the waveform from `x0` to `x1` in one-point columns. `fileAt(x)` is the file position (0 to 1)
     /// at an x of the canvas: the clip's warp mapping. Where a sample is wider than a point the waveform is
     /// a line through the samples, and from 6 points per sample every sample gets a dot, like in Live.
+    /// `gainDb` scales the waveform like the clip gain scales the sound; it stops at the edges.
     func draw(in ctx: GraphicsContext, from x0: CGFloat, to x1: CGFloat, mid: CGFloat, half: CGFloat, color: Color,
-              fileAt: (CGFloat) -> Double) {
+              gainDb: Double = 0, fileAt: (CGFloat) -> Double) {
+        let g = Float(pow(10, gainDb / 20))
+        func level(_ v: Float) -> CGFloat { CGFloat(min(1.08, max(-1.08, v * g))) }
         let n = Double(pcm.frames)
         guard n > 0, x1 > x0 else { return }
         var bars = Path(), line = Path(), dots = Path()
@@ -90,14 +93,14 @@ final class WavePeaks: @unchecked Sendable {
             let perPoint = (g - f) * n
             if perPoint < 1 {
                 // Samples wider than a point: a line through them.
-                let y = mid - CGFloat(sample(at: f)) * half
+                let y = mid - level(sample(at: f)) * half
                 if lineOpen { line.addLine(to: CGPoint(x: x, y: y)) } else { line.move(to: CGPoint(x: x, y: y)); lineOpen = true }
                 if perPoint > 0, perPoint <= 1.0 / 6 {
                     let first = (f * n).rounded(.up), last = g * n
                     var s = first
                     while s < last {
                         let dx = x + CGFloat((s - f * n) / perPoint)
-                        let dy = mid - CGFloat(sample(at: s / n)) * half
+                        let dy = mid - level(sample(at: s / n)) * half
                         dots.addEllipse(in: CGRect(x: dx - 2, y: dy - 2, width: 4, height: 4))
                         s += 1
                     }
@@ -105,7 +108,7 @@ final class WavePeaks: @unchecked Sendable {
             } else {
                 lineOpen = false
                 let r = range(f, min(1, g))
-                let top = mid - CGFloat(r.max) * half, bottom = mid - CGFloat(r.min) * half
+                let top = mid - level(r.max) * half, bottom = mid - level(r.min) * half
                 bars.addRect(CGRect(x: x, y: top, width: 1, height: max(1, bottom - top)))
             }
         }

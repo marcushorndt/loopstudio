@@ -260,7 +260,7 @@ struct SampleEditor: View {
             guard asset.frames > 0 else { return }
             let g = geometry, frames = Double(asset.frames)
             peaks.draw(in: ctx, from: max(0, shown.lowerBound), to: min(size.width, shown.upperBound), mid: size.height / 2,
-                       half: size.height * 0.45, color: tint.opacity(0.9)) { g.source(atBeat: Double($0 / ppb)) / frames }
+                       half: size.height * 0.45, color: tint.opacity(0.9), gainDb: clip.gainDb) { g.source(atBeat: Double($0 / ppb)) / frames }
         }
     }
 

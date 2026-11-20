@@ -271,7 +271,11 @@ struct TransportBar: View {
                 .onAppear { bpmText = String(format: "%.2f", model.bpm) }
                 .onChange(of: model.bpm) { if !bpmFocus { bpmText = String(format: "%.2f", model.bpm) } }
                 .onChange(of: model.tempoNudges) { bpmText = String(format: "%.2f", model.bpm) }
-                .onChange(of: bpmFocus) { _, focused in model.tempoFieldFocused = focused }
+                .onChange(of: bpmFocus) { _, focused in
+                    model.tempoFieldFocused = focused
+                    // A click into the field marks the whole tempo, so typing replaces it.
+                    if focused { DispatchQueue.main.async { (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil) } }
+                }
             Text("BPM").font(.system(size: 10)).foregroundStyle(Theme.dim)
         }
         .hint("Tempo. Click and type it, or press Up and Down: 1 BPM, with Shift 0.1 BPM")

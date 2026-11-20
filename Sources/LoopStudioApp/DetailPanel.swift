@@ -501,7 +501,7 @@ private struct ClipLanesPanel: View {
     @ViewBuilder
     private func laneWaveform(width: CGFloat) -> some View {
         if model.lanesWaveform, case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
-            WaveformView(peaks: peaks, color: tint.opacity(0.28), sourceAt: model.waveMap(a, asset, elapsed: 0, length: cycle))
+            WaveformView(peaks: peaks, color: tint.opacity(0.28), sourceAt: model.waveMap(a, asset, elapsed: 0, length: cycle), gainDb: a.gainDb)
         }
     }
 
@@ -616,7 +616,7 @@ private struct ClipEnvelopeView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                WaveformView(peaks: peaks, color: tint.opacity(0.45), sourceAt: sourceAt)
+                WaveformView(peaks: peaks, color: tint.opacity(0.45), sourceAt: sourceAt, gainDb: clip.gainDb)
                 AutomationEditor(target: Self.target, points: clip.gainEnvelope ?? [],
                                  pixelsPerTick: Double(geo.size.width) / Double(max(1, clip.length.rawValue)),
                                  width: geo.size.width, height: geo.size.height, tint: tint) { pts in

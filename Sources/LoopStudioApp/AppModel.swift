@@ -1002,7 +1002,11 @@ final class AppModel {
     func laneHeight(_ track: Track) -> CGFloat { laneHeights[track.id] ?? Self.clipRow }
     func setLaneHeight(_ track: TrackID, _ height: CGFloat) { laneHeights[track] = min(320, max(44, height.rounded())) }
 
-    func rowHeight(_ track: Track) -> CGFloat { laneHeight(track) + CGFloat(shownLanes(track).count) * Self.automationRow }
+    /// The first shown lane lies in the track row; only the lanes after it take rows of their own.
+    func rowHeight(_ track: Track) -> CGFloat { laneHeight(track) + CGFloat(max(0, shownLanes(track).count - 1)) * Self.automationRow }
+
+    /// Automation mode: the first lane's curve over a track's clips takes the clicks there.
+    var automationEdit = false
     /// Tracks in the order the views show them: normal and group tracks, then the busses (returns).
     /// The session keeps busses at the right edge, the arrangement keeps them at the bottom.
     var orderedTracks: [Track] {

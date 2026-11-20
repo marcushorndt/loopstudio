@@ -53,6 +53,15 @@ struct ArrangementView: View {
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain).hint("Show or hide automation lanes on all tracks (A)")
+                            Button { model.automationEdit.toggle() } label: {
+                                Image(systemName: "point.topleft.down.to.point.bottomright.curvepath").font(.system(size: 11))
+                                    .foregroundStyle(model.automationEdit ? Theme.automationDot : Theme.dim)
+                                    .frame(width: 22, height: 18)
+                                    .overlay(RoundedRectangle(cornerRadius: Theme.radius)
+                                        .stroke(model.automationEdit ? Theme.automationDot.opacity(0.7) : Theme.line, lineWidth: 1))
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).hint("Automation mode: the curve over the clips takes the clicks, so you edit it there. Clips still move by their headers. Off, the clips take the clicks.")
                         }
                         .padding(.horizontal, 8).frame(width: headerWidth, height: rulerHeight)
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -239,6 +248,7 @@ private struct ArrangementHeader: View {
             Spacer()
         }
         .padding(6).frame(height: model.laneHeight(track), alignment: .top)
+        .overlay(alignment: .bottomLeading) { MainLaneChooser(track: track).padding(.leading, 14).padding(.bottom, 3) }
         .overlay(alignment: .bottomTrailing) { automationDisclosure.padding(.trailing, 4).padding(.bottom, 3) }
         .frame(height: model.rowHeight(track), alignment: .top)
         .background(model.selectedTrack == track.id ? Theme.panelRaised : Theme.panel)
@@ -410,15 +420,28 @@ private struct Lane: View {
             ForEach(track.clips, id: \.id) { clip in
                 ArrangementClip(clip: clip, track: track, trackIndex: index, trackCount: count)
             }
-            // The first lane's curve also lies over the clips, under their headers, so the main automation
-            // shows where the sound is. It is edited in its lane below.
+            // The first lane lies in the track row, over the clips and under their headers. In the automation
+            // mode it takes the clicks there; otherwise it only shows and the clips keep their drags.
             if let first = model.shownLanes(track).first, let target = model.project.automationTarget(first) {
-                MainLaneCurve(target: target, points: model.automationPoints(track, first), ppt: model.pixelsPerBar / Double(model.barTicks))
-                    .frame(width: width, height: max(8, model.laneHeight(track) - ArrangementClip.headerHeight - 4))
-                    .offset(y: ArrangementClip.headerHeight + 2)
-                    .allowsHitTesting(false)
+                let h = max(8, model.laneHeight(track) - ArrangementClip.headerHeight - 4)
+                Group {
+                    if model.automationEdit {
+                        AutomationEditor(target: target, points: model.automationPoints(track, first),
+                                         pixelsPerTick: model.pixelsPerBar / Double(model.barTicks),
+                                         width: width, height: h, tint: Theme.automationDot, pen: model.drawMode, penGrid: Tick.perQuarter,
+                                         backgroundOpacity: 0) { pts in
+                            model.apply(.setAutomation(track: track.id, target: first, points: pts))
+                        }
+                    } else {
+                        MainLaneCurve(target: target, points: model.automationPoints(track, first), ppt: model.pixelsPerBar / Double(model.barTicks))
+                            .allowsHitTesting(false)
+                    }
+                }
+                .frame(width: width, height: h)
+                .offset(y: ArrangementClip.headerHeight + 2)
             }
-            ForEach(Array(model.shownLanes(track).enumerated()), id: \.element) { i, address in
+            // The lanes after the first, below the track row.
+            ForEach(Array(model.shownLanes(track).enumerated()).dropFirst(), id: \.element) { i, address in
                 if let target = model.project.automationTarget(address) {
                     // Under each lane a faint copy of the track's clips: where the sound is, under the curve.
                     ZStack(alignment: .topLeading) {
@@ -433,7 +456,7 @@ private struct Lane: View {
                     .frame(width: width, height: AppModel.automationRow, alignment: .topLeading)
                     .overlay(alignment: .topLeading) { ClipOverrideSpans(address: address) }
                     .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
-                    .offset(y: model.laneHeight(track) + CGFloat(i) * AppModel.automationRow)
+                    .offset(y: model.laneHeight(track) + CGFloat(i - 1) * AppModel.automationRow)
                 }
             }
         }
@@ -910,65 +933,102 @@ private struct ClipOverrideSpans: View {
 
 /// Header column of the automation lanes. Each lane has a dropdown that picks its parameter, a dot when that
 /// parameter holds points, and a close button. The last lane has a button that adds one more lane.
+/// The labels of a track's automation lanes below its header. The first lane lies in the track row and
+/// has its chooser in the header (`MainLaneChooser`); these are the lanes after it.
 private struct AutomationLabels: View {
     @Environment(AppModel.self) private var model
     let track: Track
 
     var body: some View {
         let lanes = model.shownLanes(track)
-        let automated = model.automatedTargets(track)
         VStack(spacing: 0) {
-            ForEach(Array(lanes.enumerated()), id: \.element) { i, address in
-                let target = model.project.automationTarget(address)
-                let hasPoints = automated.contains(address)
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 4) {
-                        // The same look as the other dropdowns of the app (`PillMenu`): a bordered field with
-                        // the up-down chevron, so it reads as a chooser and not as a fold button.
-                        LaneParameterMenu(track: track, index: i) {
-                            HStack(spacing: 5) {
-                                Circle().fill(hasPoints ? Theme.automationDot : Theme.dim.opacity(0.35)).frame(width: 6, height: 6)
-                                Text(target.map(LaneGroup.shortName) ?? "?")
-                                    .font(.system(size: 10, weight: hasPoints ? .semibold : .regular))
-                                    .foregroundStyle(hasPoints ? Theme.text : Theme.dim).lineLimit(1)
-                                Spacer(minLength: 4)
-                                Image(systemName: "chevron.up.chevron.down").font(.system(size: 7, weight: .semibold)).foregroundStyle(Theme.dim)
-                            }
-                            .padding(.horizontal, 6).frame(minWidth: 84, maxWidth: 130).frame(height: 18)
-                            .background(Theme.panelRaised.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius + 2))
-                            .overlay(RoundedRectangle(cornerRadius: Theme.radius + 2).strokeBorder(Theme.line, lineWidth: 1))
-                            .contentShape(Rectangle())
-                        }
-                        .fixedSize()
-                        .hint(hasPoints ? "\(target?.name ?? "This lane") holds automation. Click to show another parameter in this lane."
-                              : "\(target?.name ?? "This lane") has no automation yet: the dotted line is the default value. Click to show another parameter.")
-                        Spacer(minLength: 0)
-                        Button { model.setLane(track, address, shown: false) } label: {
-                            Image(systemName: "xmark").font(.system(size: 8)).frame(width: 16, height: 16).contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain).foregroundStyle(Theme.dim).hint("Close this lane")
+            ForEach(Array(lanes.enumerated()).dropFirst(), id: \.element) { i, address in
+                LaneChooser(track: track, index: i, address: address, showsDevice: true)
+                    .padding(.horizontal, 8).padding(.top, 4)
+                    .frame(height: AppModel.automationRow, alignment: .top)
+                    .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
+                    // The last lane has the same small button as the track label, with a plus: one more lane below.
+                    .overlay(alignment: .bottomTrailing) {
+                        if i == lanes.count - 1 { AddLaneButton(track: track).padding(.trailing, 4).padding(.bottom, 3) }
                     }
-                    if let device = target.flatMap(deviceName) {
-                        Text(device).font(.system(size: 9)).foregroundStyle(Theme.dim.opacity(0.8)).lineLimit(1).padding(.leading, 5).padding(.top, 2)
+            }
+        }
+    }
+}
+
+/// The chooser of the first lane, at the bottom of the track header: the parameter whose curve lies over
+/// the clips. With no lane below yet, the plus opens one.
+private struct MainLaneChooser: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+
+    var body: some View {
+        let lanes = model.shownLanes(track)
+        if let first = lanes.first {
+            HStack(spacing: 2) {
+                LaneChooser(track: track, index: 0, address: first, showsDevice: false)
+                if lanes.count == 1 { AddLaneButton(track: track) }
+            }
+        }
+    }
+}
+
+private struct AddLaneButton: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+
+    var body: some View {
+        Button { model.addLane(track) } label: {
+            Image(systemName: "plus").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim)
+                .padding(.horizontal, 4).frame(height: 14)
+                .background(Theme.panelRaised.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).hint("One more lane under this track, for another parameter")
+    }
+}
+
+/// One lane's parameter: a chooser in the look of the app's dropdowns, a dot when it holds automation, and
+/// a button that closes the lane.
+private struct LaneChooser: View {
+    @Environment(AppModel.self) private var model
+    let track: Track
+    let index: Int
+    let address: ParameterAddress
+    let showsDevice: Bool
+
+    var body: some View {
+        let target = model.project.automationTarget(address)
+        let hasPoints = model.automatedTargets(track).contains(address)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 4) {
+                LaneParameterMenu(track: track, index: index) {
+                    HStack(spacing: 5) {
+                        Circle().fill(hasPoints ? Theme.automationDot : Theme.dim.opacity(0.35)).frame(width: 6, height: 6)
+                        Text(target.map(LaneGroup.shortName) ?? "?")
+                            .font(.system(size: 10, weight: hasPoints ? .semibold : .regular))
+                            .foregroundStyle(hasPoints ? Theme.text : Theme.dim).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 7, weight: .semibold)).foregroundStyle(Theme.dim)
                     }
+                    .padding(.horizontal, 6).frame(minWidth: 84, maxWidth: 130).frame(height: 18)
+                    .background(Theme.panelRaised.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius + 2))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.radius + 2).strokeBorder(Theme.line, lineWidth: 1))
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 8).padding(.top, 4)
-                .frame(height: AppModel.automationRow, alignment: .top)
-                .overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) }
-                // The last lane has the same small button as the track label, with a plus: one more lane below.
-                .overlay(alignment: .bottomTrailing) {
-                    if i == lanes.count - 1 {
-                        Button { model.addLane(track) } label: {
-                            Image(systemName: "plus").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim)
-                                .padding(.horizontal, 4).frame(height: 14)
-                                .background(Theme.panelRaised.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.radius))
-                                .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain).hint("One more lane under this track, for another parameter")
-                        .padding(.trailing, 4).padding(.bottom, 3)
-                    }
+                .fixedSize()
+                .hint(index == 0 ? "\(target?.name ?? "This parameter") lies over the clips of this track. Click to show another parameter there. Turn on the automation mode to edit it over the clips."
+                      : hasPoints ? "\(target?.name ?? "This lane") holds automation. Click to show another parameter in this lane."
+                      : "\(target?.name ?? "This lane") has no automation yet: the dotted line is the default value. Click to show another parameter.")
+                if showsDevice { Spacer(minLength: 0) }
+                Button { model.setLane(track, address, shown: false) } label: {
+                    Image(systemName: "xmark").font(.system(size: 8)).frame(width: 16, height: 16).contentShape(Rectangle())
                 }
+                .buttonStyle(.plain).foregroundStyle(Theme.dim).hint(index == 0 ? "Close this lane; the next one moves up into the track" : "Close this lane")
+            }
+            if showsDevice, let device = target.flatMap(deviceName) {
+                Text(device).font(.system(size: 9)).foregroundStyle(Theme.dim.opacity(0.8)).lineLimit(1).padding(.leading, 5).padding(.top, 2)
             }
         }
     }

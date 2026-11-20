@@ -274,7 +274,9 @@ struct TransportBar: View {
                 .onChange(of: bpmFocus) { _, focused in
                     model.tempoFieldFocused = focused
                     // A click into the field marks the whole tempo, so typing replaces it.
-                    if focused { DispatchQueue.main.async { (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil) } }
+                    // The click that gave the focus still places the cursor when the button comes up, so the
+                    // key monitor marks it all after that release.
+                    if focused { AppModel.selectAllOnMouseUp = true; DispatchQueue.main.async { (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil) } }
                 }
             Text("BPM").font(.system(size: 10)).foregroundStyle(Theme.dim)
         }

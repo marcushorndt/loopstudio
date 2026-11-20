@@ -442,6 +442,8 @@ final class AppModel {
     @ObservationIgnored private var warpAgain = false
     /// The tempo field has the keyboard: Up and Down change the tempo (see `Shortcuts`).
     @ObservationIgnored var tempoFieldFocused = false
+    /// Set when a click focuses the tempo field: the release of that click marks the whole value.
+    nonisolated(unsafe) static var selectAllOnMouseUp = false
     /// The number segment (`StepSegment`) that has the keyboard: the key shortcuts leave its keys to it.
     @ObservationIgnored var focusedSegment: UUID?
     /// Counts the tempo steps of the arrow keys, so the focused field shows the new tempo.

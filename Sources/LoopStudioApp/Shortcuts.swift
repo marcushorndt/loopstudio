@@ -297,8 +297,12 @@ final class KeyMonitor {
         }
         // A click outside a text field ends the typing: the keys go back to the transport. Without this a
         // field (the assistant's prompt, the search) keeps the keyboard until another field takes it.
-        Self.flagsToken = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .leftMouseDown, .leftMouseDragged]) { [weak model] event in
+        Self.flagsToken = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak model] event in
             AppModel.heldModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if event.type == .leftMouseUp, AppModel.selectAllOnMouseUp {
+                AppModel.selectAllOnMouseUp = false
+                DispatchQueue.main.async { (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil) }
+            }
             // A click ends the focus of a number segment, so the arrows go back to the app. A click on a
             // segment gives it the focus again when the click ends.
             if event.type == .leftMouseDown, let model, MainActor.assumeIsolated({ model.focusedSegment != nil }) {

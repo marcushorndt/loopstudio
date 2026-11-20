@@ -151,6 +151,8 @@ Items marked **(design change)** changed `architecture.md`.
 13. **Panic key and `doctor`.** Cmd-period silences everything and resets every device. `loopstudio doctor` checks devices, permissions, plugins and disk speed, and prints a fix for each problem.
 14. **Reproducible renders.** Same project + same version = same bytes. A render report stores the plan hash, so you can prove a master was not changed.
 15. **Practice mode.** A loop with a gradual tempo ramp from 70% to 100%, with the key kept. A direct use of the tempo map and the warper.
+16. **A resonator device, after Live's Resonators.** Five parallel resonators: a root note and four intervals, each with its own gain, and a common decay, color and stereo width. A MIDI input sets the root note, so the device plays chords out of any sound (drums, noise, a voice). Our own DSP code (tuned comb filters or string models with damping), written new like the DX7, not a copy. Backlog, 20 Nov 2026.
+17. **Multi-voice pitch editing, after Melodyne's polyphonic mode (DNA).** The analysis finds the notes in a polyphonic audio clip, also the notes of a chord. The editor shows them as blobs on a piano-roll grid. Each note can then change on its own: pitch, timing, length, level and formant. Building blocks: a polyphonic pitch detector (for example a Basic Pitch type model, Apache 2.0), a spectral split of the partials of each note, and a resynthesis per note. The Rubber Band code already in the app can do the pitch and formant shift. This is research work: the split of overlapping partials is the hard part. Backlog, 20 Nov 2026.
 
 ## J. Changes this made to the architecture
 

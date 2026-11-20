@@ -491,7 +491,7 @@ private struct Lane: View {
             model.selectedTrack = track.id
             model.clearSelection()
             if v.location.y < model.laneHeight(track) {
-                model.seek(to: model.snap(xTick(v.location.x, model), alt: NSEvent.modifierFlags.contains(.option)))
+                model.seekFromClick(to: model.snap(xTick(v.location.x, model), alt: NSEvent.modifierFlags.contains(.option)))
             }
         })
         .contextMenu { LaneMenu(track: track) }
@@ -585,7 +585,7 @@ private struct ArrangementClip: View {
                     model.select(clip: clip.id, extend: extend)
                     model.selectedTrack = track.id
                     // The playhead goes to the clip start, so play starts with the clip.
-                    if !extend { model.seek(to: clip.start) }
+                    if !extend { model.seekFromClick(to: clip.start) }
                 }
                 // Measured in the window: the header moves with the drag, and a drag measured in it fed its own
                 // movement back, so the clip flickered and fell behind the pointer. While it is dragged the clip
@@ -608,7 +608,7 @@ private struct ArrangementClip: View {
                         model.moveClips(Array(model.selectedClips.union([clip.id])), deltaTicks: target.start.rawValue - clip.start.rawValue,
                                         trackShift: target.shift)
                     })
-                .hint("Header: click to mark the clip, drag to move it. ⌘ or Option skips the grid.")
+                .hint("Header: click to mark the clip (while stopped, the playhead goes to its start), drag to move it. ⌘ or Option skips the grid.")
         }
         .overlay(alignment: .bottom) {
             Rectangle().fill(.clear).frame(height: max(0, model.laneHeight(track) - 6 - Self.headerHeight)).contentShape(Rectangle())
@@ -627,11 +627,11 @@ private struct ArrangementClip: View {
                                               to: model.snap(bodyTick(g.location.x), alt: alt), tracks: [track.id])
                         } else {
                             model.selectedTrack = track.id
-                            model.seek(to: model.snap(bodyTick(g.location.x), alt: alt))
+                            model.seekFromClick(to: model.snap(bodyTick(g.location.x), alt: alt))
                         }
                         marking = false
                     })
-                .hint("Body: click to place the playhead, drag to mark a range. ⌘E splits the clip at its ends, Delete takes it out and leaves a gap, ⇧⌘Delete takes the time out of the arrangement. Option skips the grid.")
+                .hint("Body: click to place the playhead (while stopped; while playing, use the ruler), drag to mark a range. ⌘E splits the clip at its ends, Delete takes it out and leaves a gap, ⇧⌘Delete takes the time out of the arrangement. Option skips the grid.")
         }
         // A clip narrower than its two grips has no body to grab: the grips go, the clip can still be moved.
         .overlay(alignment: .leading) {

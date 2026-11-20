@@ -977,6 +977,13 @@ final class AppModel {
         if !session.isEmpty || !session.kept.isEmpty { session.clear(); rebuild() }
     }
 
+    /// A click in the tracks of the arrangement (on a clip, on empty space) places the playhead only while the
+    /// transport stands still. While it plays, such clicks only edit; the ruler still moves the playhead.
+    func seekFromClick(to tick: Tick) {
+        guard !transportPlaying else { return }
+        seek(to: tick)
+    }
+
     func seek(to tick: Tick) {
         engine.seek(to: frame(max(0, tick)))
         if !transportPlaying { playStart = max(0, tick) }

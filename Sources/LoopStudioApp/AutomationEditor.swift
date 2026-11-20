@@ -501,7 +501,7 @@ struct AutomationEditor: View {
             // selection goes and the playhead lands there.
             if !moved, range == nil, outerRange != nil {
                 model.rangeSelection = nil
-                model.seek(to: model.snap(Tick(Int64(max(0, press.x / pixelsPerTick))), alt: NSEvent.modifierFlags.contains(.option)))
+                model.seekFromClick(to: model.snap(Tick(Int64(max(0, press.x / pixelsPerTick))), alt: NSEvent.modifierFlags.contains(.option)))
                 return
             }
             guard moved, let draft else { return }

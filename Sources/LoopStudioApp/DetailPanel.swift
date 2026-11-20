@@ -121,7 +121,12 @@ private struct FoldableColumn<Content: View>: View {
                 }
                 .buttonStyle(.plain)
                 .hint("Fold \(title) to make room for the editor")
-                content().frame(width: width)
+                // A short inspector scrolls the column instead of cutting it at the top and the bottom.
+                ScrollView(.vertical) {
+                    content().frame(width: width, alignment: .topLeading)
+                }
+                .frame(width: width)
+                .scrollIndicators(.automatic)
             }
             .frame(maxHeight: .infinity, alignment: .top)
         }

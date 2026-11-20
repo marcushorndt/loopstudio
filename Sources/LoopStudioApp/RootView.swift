@@ -33,7 +33,8 @@ struct RootView: View {
                        maxHeight: model.detailOpen && model.viewMode == .session && !devicesShown ? nil : .infinity, alignment: .top)
                 .layoutPriority(1)
                 if model.detailOpen {
-                    DetailResizeHandle()
+                    // Above the view over it, so its grab area can reach over that view's bottom edge.
+                    DetailResizeHandle().zIndex(1)
                     // The device view is exactly one card high and does not resize; the clip view keeps the
                     // height the user dragged.
                     DetailPanel()
@@ -268,8 +269,11 @@ struct TransportBar: View {
                 .onSubmit { if let v = Double(bpmText.replacingOccurrences(of: ",", with: ".")) { model.setBPM(v) }; bpmFocus = false }
                 .onAppear { bpmText = String(format: "%.2f", model.bpm) }
                 .onChange(of: model.bpm) { if !bpmFocus { bpmText = String(format: "%.2f", model.bpm) } }
+                .onChange(of: model.tempoNudges) { bpmText = String(format: "%.2f", model.bpm) }
+                .onChange(of: bpmFocus) { _, focused in model.tempoFieldFocused = focused }
             Text("BPM").font(.system(size: 10)).foregroundStyle(Theme.dim)
         }
+        .hint("Tempo. Click and type it, or press Up and Down: 1 BPM, with Shift 0.1 BPM")
     }
 
     private func tile(_ symbol: String, on: Bool, tint: Color, action: @escaping () -> Void) -> some View {
@@ -334,9 +338,14 @@ struct DetailResizeHandle: View {
             // The device view has one height: the line is only a line.
             Rectangle().fill(Theme.line).frame(height: 1).frame(maxWidth: .infinity, minHeight: 7)
         } else {
+            // The grab area reaches 12 points up, over the bottom edge of the row above. That edge (the Master
+            // row in the arrangement) has its own height handle and draws a line too; without the overlap a drag
+            // on the line one sees resizes that row instead of the inspector.
             Rectangle().fill(Theme.line).frame(height: 1)
                 .frame(maxWidth: .infinity, minHeight: 7)
+                .padding(.top, 12)
                 .contentShape(Rectangle())
+                .padding(.top, -12)
                 .onHover { inside in if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() } }
                 .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { g in

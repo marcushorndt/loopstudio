@@ -435,6 +435,15 @@ final class AppModel {
     /// No fsync per edit, so a fader drag never waits for the disk; an app crash still keeps the file.
     @ObservationIgnored private var journal: Journal?
     @ObservationIgnored private var warpRounds = 0
+    /// A worker makes warps now. A render cannot stop half way, so a newer edit does not start a second
+    /// worker beside it: it sets `warpAgain`, and when the running render ends one rebuild asks for the
+    /// warps of the newest state. Holding a tempo key then never piles up renders of the steps between.
+    @ObservationIgnored private var warpRunning = false
+    @ObservationIgnored private var warpAgain = false
+    /// The tempo field has the keyboard: Up and Down change the tempo (see `Shortcuts`).
+    @ObservationIgnored var tempoFieldFocused = false
+    /// Counts the tempo steps of the arrow keys, so the focused field shows the new tempo.
+    var tempoNudges = 0
     @ObservationIgnored private(set) var plan: RenderPlan?
     @ObservationIgnored private var renderer: Renderer?
     @ObservationIgnored private var undoStack: [Command] = []
@@ -1355,6 +1364,12 @@ final class AppModel {
     func setLoop(start: Tick, end: Tick) {
         guard end > start else { return }
         apply(.setLoop(loop: LoopRegion(start: start, end: end, enabled: project.loop?.enabled ?? true)), key: "loop")
+    }
+
+    /// Up and Down in the tempo field: one BPM, or a tenth with Shift. Repeats fold into one undo step.
+    func nudgeTempo(by step: Double) {
+        setBPM(((bpm + step) * 100).rounded() / 100)
+        tempoNudges += 1
     }
 
     func setBPM(_ value: Double) {
@@ -2395,6 +2410,7 @@ final class AppModel {
     /// Time stretching is slow, so the plan does not wait for it: a clip keeps its last warped audio,
     /// a worker makes the new warps, and one more rebuild puts them in. A newer edit cancels the older work.
     private func startWarps(afterWarps: Bool = false) {
+        if warpRunning { warpAgain = true; warpTask?.cancel(); return }
         let jobs = bank.takePendingWarps()
         guard !jobs.isEmpty else { warpRounds = 0; return }
         // The cache can hold every warp of a plan, so a second round after the worker is rare and a third means a problem.
@@ -2403,6 +2419,7 @@ final class AppModel {
         guard warpRounds < 3 else { warpRounds = 0; status = "Some warped clips could not be prepared"; return }
         warpTask?.cancel()
         let bank = bank
+        warpRunning = true
         warpTask = Task { [weak self] in
             let worker = Task.detached(priority: .userInitiated) { () -> Bool in
                 for job in jobs {
@@ -2411,8 +2428,18 @@ final class AppModel {
                 }
                 return true
             }
+            // A cancel stops the worker after its current render; this waits for that render.
             let done = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
-            guard done, !Task.isCancelled, let self, self.bank === bank else { return }
+            guard let self else { return }
+            self.warpRunning = false
+            if self.warpAgain {
+                // The edits during the render asked for warps of every state in between: drop them, plan the newest.
+                self.warpAgain = false
+                _ = self.bank.takePendingWarps()
+                self.rebuild()
+                return
+            }
+            guard done, !Task.isCancelled, self.bank === bank else { return }
             self.rebuild(afterWarps: true)
         }
     }

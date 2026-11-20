@@ -307,6 +307,14 @@ final class KeyMonitor {
         }
         Self.token = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self, weak model] event in
             guard let self, let model else { return event }
+            // Up and Down in the tempo field step the tempo: 1 BPM, with Shift 0.1 BPM. A text field would
+            // only move the cursor with them.
+            if event.type == .keyDown, model.tempoFieldFocused, event.keyCode == 126 || event.keyCode == 125,
+               event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
+                let step = event.modifierFlags.contains(.shift) ? 0.1 : 1
+                model.nudgeTempo(by: event.keyCode == 126 ? step : -step)
+                return nil
+            }
             // Typing in a text field keeps its keys. So do the Settings window, a plugin's editor and a sheet.
             if let window = NSApp.keyWindow {
                 if window.firstResponder is NSText { return event }

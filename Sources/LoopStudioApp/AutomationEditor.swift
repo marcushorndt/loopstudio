@@ -12,7 +12,8 @@ struct AutomationMarking {
 /// An envelope editor. A click adds a point; a click on a point removes it (the curve then runs straight from
 /// its neighbour before to the one after); a drag on a point moves it; a drag on a segment moves the segment
 /// up or down; a drag on empty space, or a ⌘-drag anywhere, marks a stretch of time, like a range on a clip:
-/// the points inside are marked, a drag inside the stretch moves them all, Delete removes them, ⌘D puts a
+/// the points inside are marked, a drag inside the stretch moves the curve there up or down as a box (with new
+/// points on its edges, so the curve outside stays), a drag on a marked point moves them all, Delete removes them, ⌘D puts a
 /// copy right after it (again and again, to repeat a pattern). Everything snaps to a sixteenth; Option is free. Shift-click a
 /// point to change the shape of the segment after it. The diamond in the middle of a straight segment sets its
 /// slope: drag it up or down; double-click straightens.
@@ -54,6 +55,8 @@ struct AutomationEditor: View {
     @State private var segment: (index: Int, values: (Double, Double))?
     /// The marked points at the press of a group drag.
     @State private var groupStart: [Int: AutomationPoint]?
+    /// The marked stretch whose curve is being dragged up or down as a box, in ticks.
+    @State private var box: (lo: Int64, hi: Int64)?
     /// The pointer has moved since the press: a press without movement is a click, which adds a point.
     @State private var moved = false
     /// The values the pen has drawn in this drag, by cell, and the last cell, so a fast drag fills the cells between.
@@ -132,11 +135,11 @@ struct AutomationEditor: View {
             }
         }
         .frame(width: width, height: height)
-        .contentShape(hitShape ?? AnyShape(Rectangle()))
+        .contentShape(hitArea)
         .gesture(DragGesture(minimumDistance: 0)
             .onChanged { g in
                 if pen { draw(at: g.location); return }
-                if dragging == nil && bending == nil && segment == nil && band == nil { begin(at: g.startLocation) }
+                if dragging == nil && bending == nil && segment == nil && band == nil && box == nil { begin(at: g.startLocation) }
                 let dx = g.location.x - g.startLocation.x, dy = g.location.y - g.startLocation.y
                 if abs(dx) > 2 || abs(dy) > 2 { moved = true }
                 // A rise of the whole height moves a value over the whole range.
@@ -150,6 +153,10 @@ struct AutomationEditor: View {
                     working[s.index].value = target.value(atPosition: target.position(s.values.0) + dPos)
                     working[s.index + 1].value = target.value(atPosition: target.position(s.values.1) + dPos)
                     draft = working
+                    return
+                }
+                if let b = box {
+                    draft = boxed(points, lo: b.lo, hi: b.hi, dPos: dPos)
                     return
                 }
                 if band != nil, let start = bandStart {
@@ -227,6 +234,40 @@ struct AutomationEditor: View {
         marked = Set(next.indices.filter { (hi..<(hi + span)).contains(next[$0].tick.rawValue) })
         range = hi...(hi + span)
         onChange(next)
+    }
+
+    /// Where the editor takes clicks: everywhere, or its hit shape and the marked stretch.
+    private var hitArea: AnyShape {
+        guard let hitShape else { return AnyShape(Rectangle()) }
+        guard let range, range.upperBound > range.lowerBound else { return hitShape }
+        let rect = CGRect(x: x(Tick(range.lowerBound)), y: 0, width: x(Tick(range.upperBound)) - x(Tick(range.lowerBound)), height: height)
+        return AnyShape(HitUnion(base: hitShape, extra: rect))
+    }
+
+    /// The curve with the stretch lo...hi moved up or down by `dPos` of the height, like a box. The box gets a point
+    /// on each edge at the value the curve has there, and the curve outside keeps its values: one tick before the
+    /// box and one tick after it a point holds them, so the edges are steps.
+    private func boxed(_ list: [AutomationPoint], lo: Int64, hi: Int64, dPos: Double) -> [AutomationPoint] {
+        func value(_ t: Int64) -> Double { AutomationMath.value(list, at: Tick(t)) ?? target.def }
+        func shifted(_ v: Double) -> Double { target.value(atPosition: min(max(target.position(v) + dPos, 0), 1)) }
+        var outside = list.filter { $0.tick.rawValue < lo || $0.tick.rawValue > hi }
+        var inside = list.filter { (lo...hi).contains($0.tick.rawValue) }
+        if !inside.contains(where: { $0.tick.rawValue == lo }) {
+            var edge = AutomationPoint(tick: Tick(lo), value: value(lo))
+            // The box starts with the shape the curve had at its start.
+            if let before = list.last(where: { $0.tick.rawValue < lo }) { edge.curve = before.curve; edge.bend = before.bend }
+            inside.append(edge)
+        }
+        if !inside.contains(where: { $0.tick.rawValue == hi }) { inside.append(AutomationPoint(tick: Tick(hi), value: value(hi))) }
+        inside = inside.map { var q = $0; q.value = shifted(q.value); return q }
+        if let i = inside.firstIndex(where: { $0.tick.rawValue == hi }) { inside[i].curve = .linear; inside[i].bend = nil }
+        if lo > 0, !outside.contains(where: { $0.tick.rawValue == lo - 1 }) {
+            outside.append(AutomationPoint(tick: Tick(lo - 1), value: value(lo - 1)))
+        }
+        if maxTick.map({ hi < $0.rawValue }) ?? true, !outside.contains(where: { $0.tick.rawValue == hi + 1 }) {
+            outside.append(AutomationPoint(tick: Tick(hi + 1), value: value(hi + 1)))
+        }
+        return (outside + inside).sorted { $0.tick < $1.tick }
     }
 
     /// Removes the marked points. The curve then runs straight from the point before the stretch to the point after it.
@@ -358,11 +399,9 @@ struct AutomationEditor: View {
             draft = working
             return
         }
-        // A press inside the marked stretch drags every marked point, up, down or sideways.
-        if let range, !marked.isEmpty, range.contains(Int64(max(0, point.x / pixelsPerTick))),
-           let first = marked.sorted().first, working.indices.contains(first) {
-            dragging = first
-            groupStart = Dictionary(uniqueKeysWithValues: marked.filter { working.indices.contains($0) }.map { ($0, working[$0]) })
+        // A press inside the marked stretch, off its points, moves the curve there up or down as a box.
+        if let range, range.upperBound > range.lowerBound, range.contains(Int64(max(0, point.x / pixelsPerTick))) {
+            box = (range.lowerBound, range.upperBound)
             draft = working
             return
         }
@@ -433,6 +472,7 @@ struct AutomationEditor: View {
             band = nil
             bandStart = nil
             groupStart = nil
+            box = nil
             moved = false
             penPoints = [:]
             penLast = nil
@@ -448,6 +488,12 @@ struct AutomationEditor: View {
             return
         }
         if segment != nil, !moved { addPoint(at: press); return }
+        if let b = box {
+            guard moved, let draft else { return }
+            marked = Set(draft.indices.filter { (b.lo...b.hi).contains(draft[$0].tick.rawValue) })
+            onChange(draft)
+            return
+        }
         guard var draft else { return }
         if !moved, let b = bending, points.indices.contains(b.index) {
             if doubleClick(tick: points[b.index].tick, handle: true) { var next = points; next[b.index].bend = nil; onChange(next) }
@@ -479,4 +525,11 @@ struct AutomationEditor: View {
         }
         onChange(draft)
     }
+}
+
+/// A hit shape and a rectangle as one area.
+private struct HitUnion: Shape {
+    let base: AnyShape
+    let extra: CGRect
+    func path(in rect: CGRect) -> Path { base.path(in: rect).union(Path(extra)) }
 }

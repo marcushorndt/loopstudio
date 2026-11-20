@@ -809,10 +809,11 @@ private struct CurveHitShape: Shape {
             if x == 0 { line.move(to: p) } else { line.addLine(to: p) }
             x += 4
         }
+        // One union: a circle laid over the band in the other direction would cut a hole at the point.
         var area = line.strokedPath(StrokeStyle(lineWidth: 14, lineCap: .round, lineJoin: .round))
         for p in points {
             let px = CGFloat(Double(p.tick.rawValue) * ppt)
-            area.addEllipse(in: CGRect(x: px - 8, y: y(p.value) - 8, width: 16, height: 16))
+            area = area.union(Path(ellipseIn: CGRect(x: px - 8, y: y(p.value) - 8, width: 16, height: 16)))
         }
         return area
     }

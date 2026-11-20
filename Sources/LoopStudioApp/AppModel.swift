@@ -78,7 +78,7 @@ final class AppModel {
     var exporting = false
     var exportSheetOpen = false
     var exportOptions = ExportOptions()
-    private(set) var waveforms: [AssetID: [Float]] = [:]
+    private(set) var waveforms: [AssetID: WavePeaks] = [:]
     /// The live Session: launches, what plays from them, what the next Play starts. Rules and tests live in Core.
     private(set) var session = SessionPerformance()
     var simulation: SessionSimulation { session.simulation }
@@ -2061,6 +2061,30 @@ final class AppModel {
     @discardableResult
     /// The length of a clip's file in ticks: the period a looping clip goes round. Warped, at the source tempo;
     /// otherwise at the song tempo. `nil` without a file, or warped without a source tempo.
+    /// How a clip's beats (from the start of its file) map to file frames as the clip plays: through the
+    /// warp markers or the source tempo when it is warped, at the song tempo when it plays at its own speed.
+    func waveGeometry(_ a: AudioClip, _ asset: Asset) -> WarpGeometry {
+        let warped = a.warpMode != .off
+        return WarpGeometry(markers: warped ? a.warpMarkers : [], sourceTempo: warped ? (asset.sourceTempo ?? bpm) : bpm,
+                            assetRate: asset.sampleRate)
+    }
+
+    /// For a waveform drawn over `length` ticks from `offset` ticks into the file: the file position (0 to 1)
+    /// at a fraction of that width. A looping clip wraps at the end of the file. A warped clip does not move
+    /// with the song tempo, because its beats are the file's own.
+    func waveMap(_ a: AudioClip, _ asset: Asset, offset: Int64, length: Tick) -> (Double) -> Double {
+        let g = waveGeometry(a, asset)
+        let frames = Double(max(1, asset.frames))
+        let fileBeats = g.beat(atSource: frames)
+        let loop = a.loop && fileBeats > 0
+        let start = Double(offset) / Double(Tick.perQuarter), span = length.quarters
+        return { f in
+            var b = start + f * span
+            if loop { b = b.truncatingRemainder(dividingBy: fileBeats); if b < 0 { b += fileBeats } }
+            return g.source(atBeat: b) / frames
+        }
+    }
+
     func sourceTicks(of a: AudioClip) -> Tick? {
         guard let asset = project.asset(a.asset), asset.sampleRate > 0, asset.frames > 0 else { return nil }
         let tempo = a.warpMode == .off ? bpm : (asset.sourceTempo ?? 0)
@@ -2070,7 +2094,7 @@ final class AppModel {
 
     /// What an import makes before the project learns of it: the asset (hashed and copied into the package),
     /// its audio at the project rate, and its waveform.
-    struct Imported: Sendable { var asset: Asset; var pcm: PCMBuffer; var waveform: [Float] }
+    struct Imported: Sendable { var asset: Asset; var pcm: PCMBuffer; var waveform: WavePeaks }
 
     /// The heavy part of an import: the hash, the copy into the package, the decode and the waveform. No
     /// project state, so it can run on any thread.
@@ -2084,7 +2108,7 @@ final class AppModel {
             let loop = rule.shouldLoop(seconds: Double(pcm.frames) / max(1, pcm.sampleRate))
             asset.sourceTempo = TempoDetect.estimate(pcm, name: url.deletingPathExtension().lastPathComponent, loop: loop)?.bpm
         }
-        return Imported(asset: asset, pcm: pcm, waveform: peaks(of: pcm, bins: 1_000))
+        return Imported(asset: asset, pcm: pcm, waveform: WavePeaks(pcm))
     }
 
     /// Imports a file with the heavy work on a worker, so a long file does not freeze the window: the hash,
@@ -2141,7 +2165,7 @@ final class AppModel {
         do {
             let pcm = try AudioBank.decode(file, targetRate: sampleRate)
             bank.insert(pcm, for: asset.id)
-            waveforms[asset.id] = Self.peaks(of: pcm, bins: 1_000)
+            waveforms[asset.id] = WavePeaks(pcm)
         } catch {
             status = "Cannot read \(asset.name): \(error.localizedDescription)"
         }
@@ -2158,16 +2182,16 @@ final class AppModel {
         rebuild()
         Task { [weak self] in
             let results = await Task.detached(priority: .userInitiated) {
-                await withTaskGroup(of: (AssetID, String, PCMBuffer?, [Float], String?).self) { group in
+                await withTaskGroup(of: (AssetID, String, PCMBuffer?, WavePeaks?, String?).self) { group in
                     for (id, name, url) in jobs {
                         group.addTask {
                             do {
                                 let pcm = try AudioBank.decode(url, targetRate: rate)
-                                return (id, name, pcm, AppModel.peaks(of: pcm, bins: 1_000), nil)
-                            } catch { return (id, name, nil, [], error.localizedDescription) }
+                                return (id, name, pcm, WavePeaks(pcm), nil)
+                            } catch { return (id, name, nil, nil, error.localizedDescription) }
                         }
                     }
-                    var all: [(AssetID, String, PCMBuffer?, [Float], String?)] = []
+                    var all: [(AssetID, String, PCMBuffer?, WavePeaks?, String?)] = []
                     for await r in group { all.append(r) }
                     return all
                 }
@@ -2175,7 +2199,7 @@ final class AppModel {
             guard let self, self.bank === bank else { return } // another project opened meanwhile
             var failed: [String] = []
             for (id, name, pcm, peaks, error) in results {
-                if let pcm { bank.insert(pcm, for: id); self.waveforms[id] = peaks }
+                if let pcm { bank.insert(pcm, for: id); self.waveforms[id] = peaks ?? WavePeaks(pcm) }
                 if let error { failed.append("\(name): \(error)") }
             }
             if self.status.hasPrefix("Loading ") { self.status = "" }
@@ -2186,19 +2210,6 @@ final class AppModel {
 
     /// The overview waveform: the peak of both channels per bin. vDSP, so a one-hour file takes well
     /// under a second (the plain loop took two).
-    nonisolated private static func peaks(of pcm: PCMBuffer, bins: Int) -> [Float] {
-        let n = max(1, pcm.frames / bins)
-        let l = pcm.channel(0), r = pcm.channel(1)
-        return (0..<bins).map { b in
-            let from = b * n, count = min(pcm.frames, from + n) - from
-            guard count > 0 else { return 0 }
-            var pl: Float = 0, pr: Float = 0
-            vDSP_maxmgv(l + from, 1, &pl, vDSP_Length(count))
-            vDSP_maxmgv(r + from, 1, &pr, vDSP_Length(count))
-            return max(pl, pr)
-        }
-    }
-
     private func lengthTicks(of asset: Asset, from start: Tick) -> Tick {
         project.naturalLength(of: asset, from: start)
     }
@@ -2261,6 +2272,19 @@ final class AppModel {
 
     /// A tick on the arrangement grid while the grid switch (⌘4) is on, else the exact tick. `alt` (the Option
     /// key during a click or drag) does the opposite of the switch.
+    /// The grid of the sample editor: the loop, the start and the warp markers snap to it.
+    var sampleGrid: Bool = UserDefaults.standard.object(forKey: "sampleGrid") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(sampleGrid, forKey: "sampleGrid") }
+    }
+
+    /// True when a drag in the sample editor goes free of the grid: with the grid on while ⌘ or Option is
+    /// held, with the grid off unless one of them is held.
+    func freeOfGrid() -> Bool {
+        let flags = NSEvent.modifierFlags
+        let held = flags.contains(.option) || flags.contains(.command)
+        return sampleGrid ? held : !held
+    }
+
     func snap(_ tick: Tick, alt: Bool = false) -> Tick {
         guard snapNotes != alt else { return Tick(max(0, tick.rawValue)) }
         let grid = arrangementGrid

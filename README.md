@@ -129,7 +129,7 @@ right-click menus and the shortcut sheet (⌘/) read it. The most used:
 |---|---|
 | Space, ⇧Space | Play, pause (arrangement) |
 | ⌘. , ⇧⌘. | Stop and rewind, stop all clips |
-| R, ⌘K | Arm the selected track, metronome |
+| R, K | Arm the selected track, metronome |
 | ⌘1, ⌘2, Tab | Session, Arrangement, switch |
 | ⌘T, ⇧⌘T, ⌥⌘T | Audio track, MIDI track, return track |
 | ⌘G, ⇧⌘G | Group, ungroup (tracks or devices) |

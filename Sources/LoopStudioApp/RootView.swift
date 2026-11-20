@@ -145,7 +145,7 @@ struct TransportBar: View {
                 .hint("Arm recording (R). Space starts it.")
                 .midiLearnable(.record)
                 tile("metronome", on: model.metronomeOn, tint: Theme.accent) { model.toggleMetronome() }
-                    .hint("Metronome (⌘K)")
+                    .hint("Metronome (K)")
                     .midiLearnable(.metronome)
                 Button { model.toggleMIDILearn() } label: {
                     Text("MIDI").font(.system(size: 10, weight: .bold))

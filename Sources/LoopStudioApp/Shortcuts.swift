@@ -123,7 +123,7 @@ enum AppAction: String, CaseIterable, Identifiable {
         case .deactivateClip: KeyBinding("0", [])
         case .drawMode: KeyBinding("b", [])
         case .record: KeyBinding("r", [])
-        case .toggleMetronome: KeyBinding("k", .command)
+        case .toggleMetronome: KeyBinding("k", [])
         case .play: KeyBinding(" ", [])
         case .pause: KeyBinding(" ", .shift)
         case .stopRewind: KeyBinding(".", .command)
@@ -315,15 +315,12 @@ final class KeyMonitor {
                 model.nudgeTempo(by: event.keyCode == 126 ? step : -step)
                 return nil
             }
-            // Play / Stop (Space, or the key it is bound to) works in the tempo field too: a tempo has no spaces.
-            if event.type == .keyDown, model.tempoFieldFocused, !event.isARepeat,
-               let b = AppAction.play.binding, b.matches(event), model.isEnabled(.play) {
-                model.perform(.play)
-                return nil
-            }
+            // In the tempo field only the keys of a number stay in the field. Every other key (Space, the
+            // letters, Tab) works as it does outside, and a key with no shortcut is dropped, not typed.
+            let tempoKeys = model.tempoFieldFocused && !Self.isNumberKey(event)
             // Typing in a text field keeps its keys. So do the Settings window, a plugin's editor and a sheet.
             if let window = NSApp.keyWindow {
-                if window.firstResponder is NSText { return event }
+                if window.firstResponder is NSText, !tempoKeys { return event }
                 let id = window.identifier?.rawValue ?? ""
                 if window.sheetParent != nil || window.attachedSheet != nil || id.contains("Settings") || id.hasPrefix("loopstudio.") { return event }
             }
@@ -378,8 +375,18 @@ final class KeyMonitor {
                     return nil
                 }
             }
-            return event
+            return tempoKeys ? nil : event
         }
+    }
+
+    /// The keys a typed number needs: digits, the decimal point or comma, Delete, the left and right arrows,
+    /// Return, Enter and Escape. A key with Command, Option or Control is a menu shortcut (copy, paste) and
+    /// stays with the field too.
+    private static func isNumberKey(_ event: NSEvent) -> Bool {
+        if !event.modifierFlags.intersection([.command, .option, .control]).isEmpty { return true }
+        if [51, 117, 123, 124, 36, 76, 53].contains(event.keyCode) { return true }
+        let typed = event.charactersIgnoringModifiers ?? ""
+        return !typed.isEmpty && typed.allSatisfy { "0123456789.,".contains($0) }
     }
 }
 

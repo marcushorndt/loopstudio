@@ -195,9 +195,8 @@ private struct ClipPanel: View {
             PianoRoll(clip: m, tint: tint)
         case (let page, .audio(let a)):
             if let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
-                let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
                 if page == .gain {
-                    ClipEnvelopeView(clip: a, peaks: peaks, assetTicks: assetTicks, tint: tint)
+                    ClipEnvelopeView(clip: a, peaks: peaks, sourceAt: model.waveMap(a, asset, offset: a.offset.rawValue, length: a.length), tint: tint)
                         .overlay { clipLengthPlayhead(clip) }
                 } else {
                     SampleEditor(clip: a, asset: asset, peaks: peaks, tint: tint)
@@ -594,8 +593,8 @@ struct ClipLaneToggles: View {
 private struct ClipEnvelopeView: View {
     @Environment(AppModel.self) private var model
     let clip: AudioClip
-    let peaks: [Float]
-    let assetTicks: Double
+    let peaks: WavePeaks
+    let sourceAt: (Double) -> Double
     let tint: Color
 
     private static let target = AutomationTarget(
@@ -605,8 +604,7 @@ private struct ClipEnvelopeView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                WaveformView(peaks: peaks, color: tint.opacity(0.45),
-                             fraction: Double(clip.length.rawValue) / max(1, assetTicks), loop: clip.loop)
+                WaveformView(peaks: peaks, color: tint.opacity(0.45), sourceAt: sourceAt)
                 AutomationEditor(target: Self.target, points: clip.gainEnvelope ?? [],
                                  pixelsPerTick: Double(geo.size.width) / Double(max(1, clip.length.rawValue)),
                                  width: geo.size.width, height: geo.size.height, tint: tint) { pts in

@@ -43,10 +43,12 @@ struct WarpEditor: View {
     @Environment(AppModel.self) private var model
     let clip: AudioClip
     let asset: Asset
-    let peaks: [Float]
+    let peaks: WavePeaks
     let tint: Color
     /// Points per beat from an enclosing editor that zooms; `nil` fits the whole sample.
     var ppb: CGFloat? = nil
+    /// The part of the editor in view, from an enclosing editor that scrolls: only that part is drawn.
+    var visible: ClosedRange<CGFloat>? = nil
 
     @State private var dragIndex: Int?
     @State private var dragTick: Tick?
@@ -82,9 +84,11 @@ struct WarpEditor: View {
             ZStack(alignment: .topLeading) {
                 Canvas { ctx, size in
                     // Beat grid
-                    var b = 0
+                    let shown = visible ?? 0...size.width
+                    var b = max(0, Int(shown.lowerBound / ppb))
                     while Double(b) <= totalBeats {
                         let x = CGFloat(Double(b)) * ppb
+                        if x > shown.upperBound { break }
                         ctx.fill(Path(CGRect(x: x, y: 0, width: 1, height: size.height)), with: .color(Theme.text.opacity(b % 4 == 0 ? 0.14 : 0.06)))
                         b += 1
                     }
@@ -93,20 +97,10 @@ struct WarpEditor: View {
                     ctx.fill(Path(CGRect(x: 0, y: 0, width: x0, height: size.height)), with: .color(Theme.background.opacity(0.55)))
                     ctx.fill(Path(CGRect(x: x1, y: 0, width: max(0, size.width - x1), height: size.height)), with: .color(Theme.background.opacity(0.55)))
                     // Waveform, drawn through the warp mapping
-                    guard !peaks.isEmpty, asset.frames > 0 else { return }
-                    let mid = size.height / 2 + 6
-                    var path = Path()
-                    var x: CGFloat = 0
-                    while x < size.width {
-                        let frac = g.source(atBeat: Double(x / ppb)) / Double(asset.frames)
-                        if frac >= 1 { break }
-                        if frac >= 0 {
-                            let amp = CGFloat(peaks[min(peaks.count - 1, Int(frac * Double(peaks.count)))]) * (size.height * 0.4)
-                            path.addRect(CGRect(x: x, y: mid - max(0.5, amp), width: 1.2, height: max(1, amp * 2)))
-                        }
-                        x += 1.5
-                    }
-                    ctx.fill(path, with: .color(tint.opacity(0.9)))
+                    guard asset.frames > 0 else { return }
+                    let frames = Double(asset.frames)
+                    peaks.draw(in: ctx, from: max(0, shown.lowerBound), to: min(size.width, shown.upperBound), mid: size.height / 2 + 6,
+                               half: size.height * 0.4, color: tint.opacity(0.9)) { g.source(atBeat: Double($0 / ppb)) / frames }
                 }
                 ForEach(Array(shown.enumerated()), id: \.offset) { i, m in
                     let x = CGFloat(m.tick.quarters) * ppb
@@ -125,7 +119,7 @@ struct WarpEditor: View {
                 .onChanged { v in
                     if dragIndex == nil { dragIndex = nearest(x: v.startLocation.x, ppb: ppb) }
                     guard let i = dragIndex else { return }
-                    dragTick = clamped(i, beat: Double(v.location.x / ppb), free: NSEvent.modifierFlags.contains(.option))
+                    dragTick = clamped(i, beat: Double(v.location.x / ppb), free: model.freeOfGrid())
                 }
                 .onEnded { _ in
                     defer { dragIndex = nil; dragTick = nil }
@@ -149,7 +143,7 @@ struct WarpEditor: View {
         return nil
     }
 
-    /// A moved marker stays between its neighbours; it snaps to a sixteenth unless Option is held.
+    /// A moved marker stays between its neighbours; it snaps to a sixteenth on the grid (see `freeOfGrid`).
     private func clamped(_ i: Int, beat: Double, free: Bool) -> Tick {
         var raw = Int64((beat * Double(Tick.perQuarter)).rounded())
         if !free { raw = (raw + grid / 2) / grid * grid }

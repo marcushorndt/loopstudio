@@ -11,7 +11,7 @@ struct SampleEditor: View {
     @Environment(AppModel.self) private var model
     let clip: AudioClip
     let asset: Asset
-    let peaks: [Float]
+    let peaks: WavePeaks
     let tint: Color
 
     @State private var zoom: Double = 1
@@ -23,6 +23,8 @@ struct SampleEditor: View {
     /// A loop being marked or changed, before it is committed.
     @State private var draft: (offset: Tick, length: Tick)?
     @State private var dragMode: LoopDrag?
+    /// The width of the visible part: the waveform draws only there, so a deep zoom stays cheap.
+    @State private var viewportWidth: CGFloat = 800
 
     private enum LoopDrag { case mark(anchor: Tick), moveLoop(grab: Tick), left, right, start }
     private static let barHeight: CGFloat = 18
@@ -45,6 +47,7 @@ struct SampleEditor: View {
         GeometryReader { geo in
             let viewport = geo.size.width
             let ppb = viewport * zoom / totalBeats
+            let _ = updateViewport(viewport)
             let step = gridStep(ppb: ppb)
             ZStack(alignment: .topTrailing) {
                 ScrollView(.horizontal) {
@@ -92,13 +95,33 @@ struct SampleEditor: View {
         return q * 4
     }
 
-    private func setZoom(_ z: Double) { zoom = min(64, max(1, z)) }
+    /// The deepest zoom: 12 points per sample, but at most 2 million points of content. The drawing loses
+    /// precision beyond that, so a long file stops short of single samples.
+    private var maxZoom: Double {
+        let w = Double(max(1, viewportWidth))
+        return max(1, min(2_000_000 / w, Double(asset.frames) * 12 / w))
+    }
+
+    private func setZoom(_ z: Double) { zoom = min(maxZoom, max(1, z)) }
+
+    private func updateViewport(_ w: CGFloat) {
+        guard abs(w - viewportWidth) > 0.5 else { return }
+        DispatchQueue.main.async { viewportWidth = w }
+    }
+
+    /// The part of the content in view, with a margin, in content points.
+    private var visible: ClosedRange<CGFloat> { max(0, scrollX - 40)...(scrollX + viewportWidth + 40) }
 
     private var zoomButtons: some View {
         HStack(spacing: 2) {
             Button { setZoom(zoom / 1.5) } label: { Image(systemName: "minus.magnifyingglass") }.hint("Zoom out")
             Button { setZoom(zoom * 1.5) } label: { Image(systemName: "plus.magnifyingglass") }.hint("Zoom in. The grid gets finer as you zoom.")
             Button { setZoom(1) } label: { Image(systemName: "arrow.left.and.right.square") }.hint("Show the whole file")
+            Button { model.sampleGrid.toggle() } label: {
+                Image(systemName: "grid").foregroundStyle(model.sampleGrid ? Theme.accent : Theme.dim)
+            }
+            .hint(model.sampleGrid ? "Grid on: the loop, the start and the warp markers snap to it. ⌘ or Option drags free."
+                  : "Grid off: everything moves freely. ⌘ or Option snaps to the grid.")
         }
         .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Theme.dim)
         .padding(4).background(Theme.panel.opacity(0.85), in: RoundedRectangle(cornerRadius: 3))
@@ -138,7 +161,7 @@ struct SampleEditor: View {
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 1)
             .onChanged { v in
-                let free = NSEvent.modifierFlags.contains(.option)
+                let free = model.freeOfGrid()
                 let here = Double(v.location.x / ppb)
                 if dragMode == nil {
                     let x0 = CGFloat(clip.offset.quarters) * ppb, x1 = CGFloat((clip.offset + clip.length).quarters) * ppb
@@ -151,7 +174,7 @@ struct SampleEditor: View {
                 update(dragMode, beat: here, step: step, free: free)
             }
             .onEnded { _ in commitDraft() })
-        .hint("Loop bar. Drag to mark the loop, drag an edge to resize it, drag the middle to move it. Option drags free of the grid.")
+        .hint("Loop bar. Drag to mark the loop, drag an edge to resize it, drag the middle to move it. ⌘ or Option drags free of the grid; with the grid off they snap to it.")
     }
 
     // MARK: Waveform and start marker
@@ -160,7 +183,7 @@ struct SampleEditor: View {
     private func waveformArea(ppb: CGFloat, step: Int64) -> some View {
         ZStack(alignment: .topLeading) {
             if warped {
-                WarpEditor(clip: clip, asset: asset, peaks: peaks, tint: tint, ppb: ppb)
+                WarpEditor(clip: clip, asset: asset, peaks: peaks, tint: tint, ppb: ppb, visible: visible)
             } else {
                 waveform(ppb: ppb, step: step)
                 ClipPlayhead(clip: clip.id, period: clip.length) { CGFloat((clip.offset + $0).quarters) * ppb }
@@ -173,9 +196,11 @@ struct SampleEditor: View {
         Canvas { ctx, size in
             // The grid at the current step; bars stronger.
             let bar = model.barTicks
-            var t: Int64 = 0
+            let shown = visible
+            var t: Int64 = max(0, Int64(Double(shown.lowerBound / ppb) * Double(Tick.perQuarter)) / step * step)
             while Double(t) / Double(Tick.perQuarter) <= totalBeats {
                 let x = CGFloat(Double(t) / Double(Tick.perQuarter)) * ppb
+                if x > shown.upperBound { break }
                 let strong = t % bar == 0
                 ctx.fill(Path(CGRect(x: x, y: 0, width: 1, height: size.height)), with: .color(Theme.text.opacity(strong ? 0.14 : (t % Int64(Tick.perQuarter) == 0 ? 0.08 : 0.04))))
                 t += step
@@ -183,21 +208,10 @@ struct SampleEditor: View {
             let x0 = CGFloat(shownOffset.quarters) * ppb, x1 = CGFloat((shownOffset + shownLength).quarters) * ppb
             ctx.fill(Path(CGRect(x: 0, y: 0, width: x0, height: size.height)), with: .color(Theme.background.opacity(0.55)))
             ctx.fill(Path(CGRect(x: x1, y: 0, width: max(0, size.width - x1), height: size.height)), with: .color(Theme.background.opacity(0.55)))
-            guard !peaks.isEmpty, asset.frames > 0 else { return }
-            let mid = size.height / 2
-            var path = Path()
-            var x: CGFloat = 0
-            let g = geometry
-            while x < size.width {
-                let frac = g.source(atBeat: Double(x / ppb)) / Double(asset.frames)
-                if frac >= 1 { break }
-                if frac >= 0 {
-                    let amp = CGFloat(peaks[min(peaks.count - 1, Int(frac * Double(peaks.count)))]) * (size.height * 0.45)
-                    path.addRect(CGRect(x: x, y: mid - max(0.5, amp), width: 1.2, height: max(1, amp * 2)))
-                }
-                x += 1.5
-            }
-            ctx.fill(path, with: .color(tint.opacity(0.9)))
+            guard asset.frames > 0 else { return }
+            let g = geometry, frames = Double(asset.frames)
+            peaks.draw(in: ctx, from: max(0, shown.lowerBound), to: min(size.width, shown.upperBound), mid: size.height / 2,
+                       half: size.height * 0.45, color: tint.opacity(0.9)) { g.source(atBeat: Double($0 / ppb)) / frames }
         }
     }
 
@@ -214,13 +228,15 @@ struct SampleEditor: View {
                     .background(active ? Theme.text : tint, in: RoundedRectangle(cornerRadius: 2))
                     .offset(x: x, y: 2)
                     .contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 1)
+                    .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                         .onChanged { v in
                             dragMode = .start
-                            update(.start, beat: Double((x + v.translation.width) / ppb), step: step, free: NSEvent.modifierFlags.contains(.option))
+                            // From where the start was when the drag began: the flag moves with the drag, so its
+                            // own position here would add the movement again and run ahead of the pointer.
+                            update(.start, beat: clip.offset.quarters + Double(v.translation.width / ppb), step: step, free: model.freeOfGrid())
                         }
                         .onEnded { _ in commitDraft() })
-                    .hint("Start marker: where the clip begins in the file. Drag it; Option drags free of the grid.")
+                    .hint("Start marker: where the clip begins in the file. Drag it; ⌘ or Option drags free of the grid; with the grid off they snap to it.")
             }
         }
     }

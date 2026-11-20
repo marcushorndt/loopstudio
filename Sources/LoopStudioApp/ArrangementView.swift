@@ -123,7 +123,7 @@ struct ArrangementView: View {
                             .onChanged { g in
                                 if pinch == nil { pinch = (model.pixelsPerBar, g.startLocation.x, tracksX) }
                                 guard let p = pinch else { return }
-                                let zoom = min(420, max(24, p.pixelsPerBar * g.magnification))
+                                let zoom = min(4_000, max(24, p.pixelsPerBar * g.magnification))
                                 model.pixelsPerBar = zoom
                                 let x = p.x * zoom / p.pixelsPerBar
                                 tracksScroll.scrollTo(x: max(0, x - (p.x - p.scroll)))
@@ -480,6 +480,15 @@ private struct ArrangementClip: View {
     }
 
     /// The clip being dragged follows its own gesture; the rest of a marked group follows it.
+    /// Where a header drag puts the clip: its new start (on the grid unless ⌘ or Option is held) and the
+    /// number of track rows it moves.
+    private func moveTarget(_ t: CGSize) -> (start: Tick, shift: Int) {
+        let flags = NSEvent.modifierFlags
+        let start = model.snap(xTick(tickX(clip.start, model) + t.width, model), alt: flags.contains(.option) || flags.contains(.command))
+        let shift = model.rowIndex(atY: model.rowTop(trackIndex) + model.laneHeight(track) / 2 + t.height) - trackIndex
+        return (start, shift)
+    }
+
     private var shown: CGSize { drag != .zero ? drag : (model.selectedClips.contains(clip.id) ? model.groupDrag : .zero) }
 
     var body: some View {
@@ -498,13 +507,10 @@ private struct ArrangementClip: View {
             UnevenRoundedRectangle(topLeadingRadius: Theme.radius, topTrailingRadius: Theme.radius)
                 .fill(tint.opacity(selected ? 0.95 : 0.7)).frame(height: Self.headerHeight)
             if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
-                let assetTicks = Double(asset.frames) / max(1, asset.sampleRate) * model.bpm / 60 * Double(Tick.perQuarter)
-                // A looping clip dragged out past the file start shows the end of the file there.
-                let period = a.loop ? (model.sourceTicks(of: a)?.rawValue ?? 0) : 0
+                // Drawn through the clip's warp mapping, so a warped clip keeps its beats where they sound at any
+                // tempo. A looping clip dragged out past the file start shows the end of the file there.
                 let raw = a.offset.rawValue + (shownStart - clip.start).rawValue
-                let offset = period > 0 ? (raw % period + period) % period : raw
-                WaveformView(peaks: peaks, color: tint.opacity(0.9), fraction: Double(shownLength.rawValue) / max(1, assetTicks), loop: a.loop,
-                             start: Double(max(0, offset)) / max(1, assetTicks))
+                WaveformView(peaks: peaks, color: tint.opacity(0.9), sourceAt: model.waveMap(a, asset, offset: raw, length: shownLength))
                     .padding(.top, 16).padding(.bottom, 3)
             }
             if case .audio(let a) = clip, let env = a.gainEnvelope, !env.isEmpty {
@@ -525,21 +531,28 @@ private struct ArrangementClip: View {
                     model.select(clip: clip.id, extend: NSEvent.modifierFlags.contains(.shift) || NSEvent.modifierFlags.contains(.command))
                     model.selectedTrack = track.id
                 }
-                .gesture(DragGesture(minimumDistance: 4)
+                // Measured in the window: the header moves with the drag, and a drag measured in it fed its own
+                // movement back, so the clip flickered and fell behind the pointer. While it is dragged the clip
+                // shows where it will land: on the grid and on a track row.
+                .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
                     .onChanged { g in
                         if !model.selectedClips.contains(clip.id) { model.select(clip: clip.id, extend: false) }
-                        drag = g.translation
-                        model.groupDrag = g.translation
+                        let target = moveTarget(g.translation)
+                        let rows = model.arrangementTracks.count
+                        let dy = trackIndex < rows ? model.rowTop(min(rows - 1, max(0, trackIndex + target.shift))) - model.rowTop(trackIndex) : 0
+                        // Never exactly zero: zero means "no drag" to the other clips of the selection.
+                        let moved = CGSize(width: tickX(target.start, model) - tickX(clip.start, model) + 0.0001, height: dy)
+                        drag = moved
+                        model.groupDrag = moved
                     }
                     .onEnded { g in
                         drag = .zero
                         model.groupDrag = .zero
-                        let alt = NSEvent.modifierFlags.contains(.option)
-                        let start = model.snap(xTick(x + g.translation.width, model), alt: alt)
-                        let shift = model.rowIndex(atY: model.rowTop(trackIndex) + model.laneHeight(track) / 2 + g.translation.height) - trackIndex
-                        model.moveClips(Array(model.selectedClips.union([clip.id])), deltaTicks: start.rawValue - clip.start.rawValue, trackShift: shift)
+                        let target = moveTarget(g.translation)
+                        model.moveClips(Array(model.selectedClips.union([clip.id])), deltaTicks: target.start.rawValue - clip.start.rawValue,
+                                        trackShift: target.shift)
                     })
-                .hint("Header: click to mark the clip, drag to move it. Option skips the grid.")
+                .hint("Header: click to mark the clip, drag to move it. ⌘ or Option skips the grid.")
         }
         .overlay(alignment: .bottom) {
             Rectangle().fill(.clear).frame(height: max(0, model.laneHeight(track) - 6 - Self.headerHeight)).contentShape(Rectangle())

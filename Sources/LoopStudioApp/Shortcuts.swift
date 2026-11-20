@@ -277,6 +277,7 @@ final class KeyMonitor {
     /// One monitor for the app: the root view is rebuilt on a theme change, and a second monitor would act twice.
     private static var token: Any?
     private static var clickToken: Any?
+    private static var flagsToken: Any?
 
     /// Piano layout on the home row, like Live: A W S E D F T G Y H U J K.
     private static let piano: [String: Int] = ["a": 0, "w": 1, "s": 2, "e": 3, "d": 4, "f": 5, "t": 6, "g": 7, "y": 8, "h": 9, "u": 10, "j": 11, "k": 12, "o": 13, "l": 14, "p": 15]
@@ -294,6 +295,15 @@ final class KeyMonitor {
         }
         // A click outside a text field ends the typing: the keys go back to the transport. Without this a
         // field (the assistant's prompt, the search) keeps the keyboard until another field takes it.
+        Self.flagsToken = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .leftMouseDown, .leftMouseDragged]) { [weak model] event in
+            AppModel.heldModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            // A click ends the focus of a number segment, so the arrows go back to the app. A click on a
+            // segment gives it the focus again when the click ends.
+            if event.type == .leftMouseDown, let model, MainActor.assumeIsolated({ model.focusedSegment != nil }) {
+                event.window?.makeFirstResponder(nil)
+            }
+            return event
+        }
         Self.clickToken = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             guard let window = event.window, window.firstResponder is NSText,
                   let hit = window.contentView?.hitTest(event.locationInWindow) else { return event }
@@ -314,6 +324,13 @@ final class KeyMonitor {
                 let step = event.modifierFlags.contains(.shift) ? 0.1 : 1
                 model.nudgeTempo(by: event.keyCode == 126 ? step : -step)
                 return nil
+            }
+            // A focused number segment takes the arrows, the digits, Delete, Return and Escape; Space and
+            // the other keys still work as shortcuts.
+            if model.focusedSegment != nil, [123, 124, 125, 126, 51, 36, 76, 53].contains(event.keyCode)
+                || (event.characters.map { !$0.isEmpty && $0.allSatisfy { "0123456789.,-".contains($0) } } ?? false)
+                && event.modifierFlags.intersection([.command, .control]).isEmpty {
+                return event
             }
             // In the tempo field only the keys of a number stay in the field. Every other key (Space, the
             // letters, Tab) works as it does outside, and a key with no shortcut is dropped, not typed.

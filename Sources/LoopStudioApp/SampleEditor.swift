@@ -143,6 +143,19 @@ struct SampleEditor: View {
         .padding(.top, Self.barHeight + 4).padding(.trailing, 14)
     }
 
+    static func stepName(_ step: Int64) -> String {
+        let q = Int64(Tick.perQuarter)
+        switch step {
+        case q / 16: return "1/64"
+        case q / 8: return "1/32"
+        case q / 4: return "1/16"
+        case q / 2: return "1/8"
+        case q: return "1/4"
+        case q * 2: return "1/2"
+        default: return "1 bar"
+        }
+    }
+
     private func snapped(_ beat: Double, step: Int64, free: Bool) -> Tick {
         var raw = Int64((beat * Double(Tick.perQuarter)).rounded())
         if !free { raw = (raw + step / 2) / step * step }
@@ -246,6 +259,7 @@ struct SampleEditor: View {
                     .background(active ? Theme.text : tint, in: RoundedRectangle(cornerRadius: 2))
                     .offset(x: x, y: 2)
                     .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { resetStart() }
                     .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                         .onChanged { v in
                             dragMode = .start
@@ -254,15 +268,25 @@ struct SampleEditor: View {
                             update(.start, beat: clip.offset.quarters + Double(v.translation.width / ppb), step: step, free: model.freeOfGrid())
                         }
                         .onEnded { _ in commitDraft() })
-                    .hint("Start marker: where playback begins. With Loop on it moves on its own, before the loop (an intro) or inside it, but not past the loop end. ⌘ or Option drags free of the grid; with the grid off they snap to it.")
+                    .hint("Start marker: where playback begins. With Loop on it moves on its own, before the loop (an intro) or inside it, but not past the loop end. ⌘ or Option drags free of the grid; with the grid off they snap to it. Double-click resets it to the loop start, or without Loop to the file start.")
             }
         }
     }
 
     // MARK: Edits
 
+    /// The start marker back to the loop start, or without Loop to the file start.
+    private func resetStart() {
+        var c = clip
+        c.offset = clip.loop ? brace.offset : 0
+        guard c != clip else { return }
+        model.apply(.setClip(clip: .audio(c)))
+    }
+
     private func update(_ mode: LoopDrag?, beat: Double, step: Int64, free: Bool) {
         guard let mode else { return }
+        // Says what the drag does, so a held key that the app does not see shows at once.
+        model.status = free ? "Free of the grid" : "On the grid (\(Self.stepName(step))). Hold ⌘ or Option to drag free."
         let end = Tick(Int64((max(totalBeats, fileBeats) * Double(Tick.perQuarter)).rounded()))
         let at = snapped(beat, step: step, free: free)
         let minLength = Tick(free ? Int64(Tick.perQuarter) / 16 : step)

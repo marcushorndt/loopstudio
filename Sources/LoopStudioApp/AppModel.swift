@@ -442,6 +442,8 @@ final class AppModel {
     @ObservationIgnored private var warpAgain = false
     /// The tempo field has the keyboard: Up and Down change the tempo (see `Shortcuts`).
     @ObservationIgnored var tempoFieldFocused = false
+    /// The number segment (`StepSegment`) that has the keyboard: the key shortcuts leave its keys to it.
+    @ObservationIgnored var focusedSegment: UUID?
     /// Counts the tempo steps of the arrow keys, so the focused field shows the new tempo.
     var tempoNudges = 0
     @ObservationIgnored private(set) var plan: RenderPlan?
@@ -2283,6 +2285,10 @@ final class AppModel {
 
     /// A tick on the arrangement grid while the grid switch (⌘4) is on, else the exact tick. `alt` (the Option
     /// key during a click or drag) does the opposite of the switch.
+    /// The modifier keys of the last mouse or modifier event, from the app's own event monitor. A second
+    /// source beside `NSEvent.modifierFlags` for the grid keys of a drag.
+    nonisolated(unsafe) static var heldModifiers: NSEvent.ModifierFlags = []
+
     /// The grid of the sample editor: the loop, the start and the warp markers snap to it.
     var sampleGrid: Bool = UserDefaults.standard.object(forKey: "sampleGrid") as? Bool ?? true {
         didSet { UserDefaults.standard.set(sampleGrid, forKey: "sampleGrid") }
@@ -2291,7 +2297,7 @@ final class AppModel {
     /// True when a drag in the sample editor goes free of the grid: with the grid on while ⌘ or Option is
     /// held, with the grid off unless one of them is held.
     func freeOfGrid() -> Bool {
-        let flags = NSEvent.modifierFlags
+        let flags = NSEvent.modifierFlags.union(Self.heldModifiers)
         let held = flags.contains(.option) || flags.contains(.command)
         return sampleGrid ? held : !held
     }

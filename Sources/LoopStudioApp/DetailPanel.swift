@@ -230,11 +230,7 @@ private struct ClipPanel: View {
                 Toggle("Clip active", isOn: Binding(get: { !a.muted }, set: { set(a, muted: !$0) }))
                 Stepper("Length  \(beatsText(a.length))", onIncrement: { resize(a.id, a.start, a.length, by: 1) },
                         onDecrement: { resize(a.id, a.start, a.length, by: -1) })
-                // Where the clip starts in its file. The clip keeps its place; the sound slides under it.
-                Stepper("Start in file  \(MusicalLength.format(a.offset, ticksPerBar: model.barTicks))",
-                        onIncrement: { shiftOffset(a, by: Tick.perQuarter / 4) },
-                        onDecrement: { shiftOffset(a, by: -Tick.perQuarter / 4) })
-                    .hint("Moves the sound under the clip by a sixteenth. Drag the clip's left edge to trim the start instead.")
+                ClipFilePositions(clip: a)
             case .midi(let m):
                 Toggle("Loop", isOn: Binding(get: { m.loop }, set: { model.apply(.setClipLoop(clip: m.id, loop: $0)) }))
                 Stepper("Length  \(beatsText(m.length))", onIncrement: { resize(m.id, m.start, m.length, by: 4) },
@@ -257,7 +253,7 @@ private struct ClipPanel: View {
     private func soundColumn(_ a: AudioClip) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Sound")
-            slider("Gain", value: a.gainDb, range: -36...12, format: "%.1f dB") { set(a, gain: $0) }
+            slider("Gain", value: a.gainDb, range: -36...12, format: "%.1f dB", step: 0.5, fine: 0.1, reset: 0) { set(a, gain: $0) }
                 .contextMenu {
                     Button(model.clipPage == .gain ? "Hide Gain Envelope" : "Show Gain Envelope") {
                         model.clipPage = model.clipPage == .gain ? .content : .gain
@@ -267,18 +263,11 @@ private struct ClipPanel: View {
                     Divider()
                     Button("Reset Gain") { set(a, gain: 0) }
                 }
-            slider("Fade in", value: a.fadeInMs, range: 0...200, format: "%.1f ms") { set(a, fadeIn: $0) }
-            slider("Fade out", value: a.fadeOutMs, range: 0...200, format: "%.1f ms") { set(a, fadeOut: $0) }
+            slider("Fade in", value: a.fadeInMs, range: 0...200, format: "%.1f ms", step: 1, fine: 0.1, reset: AudioClip.defaultFadeMs) { set(a, fadeIn: $0) }
+            slider("Fade out", value: a.fadeOutMs, range: 0...200, format: "%.1f ms", step: 1, fine: 0.1, reset: AudioClip.defaultFadeMs) { set(a, fadeOut: $0) }
             Spacer()
         }
         .font(.system(size: 12))
-    }
-
-    private func shiftOffset(_ a: AudioClip, by ticks: Int64) {
-        var c = a
-        c.offset = Tick(max(0, a.offset.rawValue + ticks))
-        guard c.offset != a.offset else { return }
-        model.apply(.setClip(clip: .audio(c)), key: "offset\(a.id)")
     }
 
     private func set(_ a: AudioClip, gain: Double? = nil, fadeIn: Double? = nil, fadeOut: Double? = nil, muted: Bool? = nil) {
@@ -298,11 +287,20 @@ private struct ClipPanel: View {
         return bars == bars.rounded() ? "\(Int(bars)) bar" + (bars == 1 ? "" : "s") : String(format: "%.2f beats", beats)
     }
 
-    private func slider(_ label: String, value: Double, range: ClosedRange<Double>, format: String, set: @escaping (Double) -> Void) -> some View {
-        HStack {
+    /// A slider with its value as a field: click the value, then Up and Down step it (Shift: finer), type a
+    /// number, or drag up and down. A double-click on the value or the label sets the default.
+    private func slider(_ label: String, value: Double, range: ClosedRange<Double>, format: String, step: Double, fine: Double,
+                        reset: Double, set: @escaping (Double) -> Void) -> some View {
+        let clamp = { (v: Double) in min(range.upperBound, max(range.lowerBound, v)) }
+        return HStack {
             Text(label).frame(width: 52, alignment: .leading)
+                .onTapGesture(count: 2) { set(reset) }
             Slider(value: Binding(get: { value }, set: set), in: range).controlSize(.small)
-            Text(String(format: format, value)).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.dim).frame(width: 56, alignment: .trailing)
+            StepSegment(text: String(format: format, value), width: 62,
+                        step: { n, shift in set(clamp(((value + Double(n) * (shift ? fine : step)) / fine).rounded() * fine)) },
+                        typed: { buffer in if let v = Double(buffer.replacingOccurrences(of: ",", with: ".")) { set(clamp(v)) } },
+                        reset: { set(reset) })
+                .hint("Click, then Up or Down (Shift: finer), or type a number. Drag up or down. Double-click: the default.")
         }
     }
 }
@@ -635,5 +633,184 @@ struct ClipPlayhead: View {
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// The start marker and the loop of an audio clip as numbers, in bars:beats:sixteenths of the file. Each
+/// part steps on its own; a typed sixteenth can have decimals, so a value can sit between the grid lines.
+struct ClipFilePositions: View {
+    @Environment(AppModel.self) private var model
+    let clip: AudioClip
+
+    private var session: Bool { model.isSessionClip(clip.id) }
+    private var fileTicks: Tick {
+        guard let asset = model.project.asset(clip.asset) else { return clip.length }
+        return model.fileTicks(clip, asset)
+    }
+    private var region: (start: Tick, length: Tick) {
+        let r = clip.loopRegion(session: session)
+        return (r.start, r.length ?? Tick(max(1, fileTicks.rawValue - r.start.rawValue)))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("In the file").font(.caption).foregroundStyle(Theme.dim)
+            TickRow(title: "Start", value: clip.offset, minimum: 0, reset: { setStart(clip.loop ? region.start : 0) }, commit: setStart)
+                .hint("Start marker: where playback begins in the file. Click a part, then Up or Down. Double-click: back to the loop start, or without Loop to the file start.")
+            TickRow(title: "Loop start", value: region.start, minimum: 0, reset: { setLoopStart(0) }, commit: setLoopStart)
+                .disabled(!clip.loop)
+                .hint(clip.loop ? "Where the loop begins in the file. The start marker can sit before it (an intro) or inside it." : "Turn Loop on to set a loop.")
+            TickRow(title: "Loop length", value: region.length, minimum: Tick.perQuarter / 64, isLength: true,
+                    reset: { setLoopLength(Tick(max(1, fileTicks.rawValue - region.start.rawValue))) }, commit: setLoopLength)
+                .disabled(!clip.loop)
+                .hint(clip.loop ? "How long the loop is." : "Turn Loop on to set a loop.")
+        }
+    }
+
+    private func apply(_ c: AudioClip) {
+        guard c != clip else { return }
+        model.apply(.setClip(clip: .audio(c)), key: "positions\(clip.id)")
+    }
+
+    private func setStart(_ t: Tick) {
+        var c = clip
+        if clip.loop {
+            // A session loop without a start of its own starts at the start marker: pin it, so it stays.
+            if session && c.loopStart == nil { c.loopStart = region.start }
+            let end = region.start + region.length
+            c.offset = Tick(min(t.rawValue, end.rawValue - 1))
+        } else {
+            c.offset = t
+        }
+        apply(c)
+    }
+
+    private func setLoopStart(_ t: Tick) {
+        var c = clip
+        let length = region.length
+        c.loopStart = t
+        if !session { c.loopLength = length }
+        if c.offset >= t + length { c.offset = t }
+        apply(c)
+    }
+
+    private func setLoopLength(_ t: Tick) {
+        var c = clip
+        c.loopStart = region.start
+        if session { c.length = t } else { c.loopLength = t }
+        if c.offset >= region.start + t { c.offset = region.start }
+        apply(c)
+    }
+}
+
+/// One position or length: a title and three segments, bars, beats and sixteenths. Click a segment, then
+/// Up and Down step only it; type digits to set it; drag up and down; double-click for the default.
+/// A position counts from 1 like the ruler (1:1:1 is the file start); a length counts from 0.
+private struct TickRow: View {
+    @Environment(AppModel.self) private var model
+    let title: String
+    let value: Tick
+    let minimum: Int64
+    var isLength = false
+    let reset: () -> Void
+    let commit: (Tick) -> Void
+
+    private var units: [Int64] { [model.barTicks, Tick.perQuarter, Tick.perQuarter / 4] }
+    private var base: Int64 { isLength ? 0 : 1 }
+
+    /// Bars, beats and sixteenths, as shown; the sixteenths keep a part between the grid lines.
+    private var parts: (bars: Int64, beats: Int64, sixteenths: Double) {
+        let v = max(0, value.rawValue), u = units
+        let rest = v % max(1, u[0])
+        return (v / max(1, u[0]) + base, rest / u[1] + base, Double(rest % u[1]) / Double(u[2]) + Double(base))
+    }
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Text(title).frame(width: 72, alignment: .leading)
+            let p = parts
+            segment(0, String(p.bars))
+            Text(":").foregroundStyle(Theme.dim)
+            segment(1, String(p.beats))
+            Text(":").foregroundStyle(Theme.dim)
+            segment(2, p.sixteenths == p.sixteenths.rounded() ? String(Int(p.sixteenths))
+                    : String(format: "%.2f", p.sixteenths).replacingOccurrences(of: #"0+$"#, with: "", options: .regularExpression))
+        }
+        .font(.system(size: 11, design: .monospaced))
+    }
+
+    private func segment(_ i: Int, _ text: String) -> some View {
+        StepSegment(text: text, width: i == 2 ? 34 : 26,
+                    step: { n, _ in commit(Tick(max(minimum, value.rawValue + Int64(n) * units[i]))) },
+                    typed: { buffer in set(i, buffer) },
+                    reset: reset)
+    }
+
+    /// Sets one segment to a typed number and keeps the others.
+    private func set(_ i: Int, _ buffer: String) {
+        guard let n = Double(buffer.replacingOccurrences(of: ",", with: ".")), n >= Double(base) else { return }
+        let u = units, v = max(0, value.rawValue)
+        let bars = v / u[0], beats = (v % u[0]) / u[1], rest = v % u[1]
+        var t: Int64
+        switch i {
+        case 0: t = Int64(n.rounded(.down) - Double(base)) * u[0] + beats * u[1] + rest
+        case 1: t = bars * u[0] + Int64(n.rounded(.down) - Double(base)) * u[1] + rest
+        default: t = bars * u[0] + beats * u[1] + Int64(((n - Double(base)) * Double(u[2])).rounded())
+        }
+        t = max(minimum, t)
+        if t != value.rawValue { commit(Tick(t)) }
+    }
+}
+
+/// A number you click and then step with Up and Down (Shift passes `true`), set by typing, or drag up and
+/// down. While it has the focus the app's key shortcuts leave those keys to it.
+struct StepSegment: View {
+    @Environment(AppModel.self) private var model
+    let text: String
+    var width: CGFloat? = nil
+    let step: (Int, Bool) -> Void
+    let typed: (String) -> Void
+    let reset: () -> Void
+    @State private var id = UUID()
+    @State private var buffer = ""
+    @State private var dragged = 0
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Text(text)
+            .frame(width: width, alignment: .trailing)
+            .padding(.horizontal, 3).padding(.vertical, 1)
+            .background(focused ? Theme.accent.opacity(0.35) : Theme.panel, in: RoundedRectangle(cornerRadius: 3))
+            .overlay(RoundedRectangle(cornerRadius: 3).stroke(focused ? Theme.accent : Theme.line, lineWidth: 1))
+            .contentShape(Rectangle())
+            .focusable()
+            .focusEffectDisabled()
+            .focused($focused)
+            .onTapGesture(count: 2) { reset() }
+            .onTapGesture { focused = true }
+            .gesture(DragGesture(minimumDistance: 3)
+                .onChanged { g in
+                    focused = true
+                    let n = Int(-g.translation.height / 6)
+                    if n != dragged { step(n - dragged, NSEvent.modifierFlags.contains(.shift)); dragged = n }
+                }
+                .onEnded { _ in dragged = 0 })
+            .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+                buffer = ""
+                step(press.key == .upArrow ? 1 : -1, press.modifiers.contains(.shift))
+                return .handled
+            }
+            .onKeyPress(characters: CharacterSet(charactersIn: "0123456789.,-")) { press in
+                buffer += press.characters
+                typed(buffer)
+                return .handled
+            }
+            .onKeyPress(.delete) { buffer = String(buffer.dropLast()); if !buffer.isEmpty { typed(buffer) }; return .handled }
+            .onKeyPress(.return) { buffer = ""; focused = false; return .handled }
+            .onKeyPress(.escape) { buffer = ""; focused = false; return .handled }
+            .onChange(of: focused) { _, now in
+                buffer = ""
+                if now { model.focusedSegment = id } else if model.focusedSegment == id { model.focusedSegment = nil }
+            }
     }
 }

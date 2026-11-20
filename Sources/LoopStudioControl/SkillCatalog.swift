@@ -66,7 +66,11 @@ public struct SkillCatalog: Sendable {
 
     /// name, description and metadata.updated from the frontmatter (single-line values).
     public static func frontmatter(_ text: String) -> [String: String] {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map { $0.hasSuffix("\r") ? String($0.dropLast()) : String($0) }
+        let body = text.hasPrefix("\u{FEFF}") ? String(text.dropFirst()) : text
+        // "\r\n" is one Character in Swift, so split on any newline character. A "---" line may carry spaces.
+        let lines = body.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map { line in
+            line.trimmingCharacters(in: .whitespaces) == "---" ? "---" : String(line)
+        }
         guard lines.first == "---", let end = lines.dropFirst().firstIndex(of: "---") else { return [:] }
         var out: [String: String] = [:]
         var inMetadata = false

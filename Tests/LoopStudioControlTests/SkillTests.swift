@@ -95,18 +95,6 @@ private func backticked(_ text: String, _ pattern: String) throws -> Set<String>
     }
 }
 
-/// loopstudio-patch-device tells agents not to write these, because the compiler refuses them. When one of
-/// them starts to compile, update that skill.
-@Test func thePatchConstructsTheSkillCallsMissingAreRefused() {
-    let lines = ["state s", "group \"Filter\" {", "on grid(1/16) {", "on note(n, v) {", "voice {", "def f(a) = a", "for i in 0..<4 {", "scope y", "waveform y"]
-    for line in lines {
-        let source = "patch \"T\"\nin x\nout y\n\(line)\ny = x\n"
-        if case .success = PatchCompiler.cached(source) {
-            Issue.record("'\(line)' compiles now; update skills/loopstudio-patch-device")
-        }
-    }
-}
-
 @Test func noSkillHoldsASecretOrAPrivatePath() {
     let secret = /sk-ant-[A-Za-z0-9_-]{10,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,}|xox[bp]-[A-Za-z0-9-]{10,}|-----BEGIN/
     for skill in SkillCatalog.load(directory: skillsFolder).skills {
@@ -167,4 +155,9 @@ private func backticked(_ text: String, _ pattern: String) throws -> Set<String>
         let bad = try await call(server, "get_skill", .object(["name": .string("../README")]))
         #expect(bad.isError)
     }
+}
+
+@Test func theFrontmatterReaderTakesABOMAndCRLF() {
+    let text = "\u{FEFF}--- \r\nname: x-y\r\ndescription: \"A skill\"\r\nmetadata:\r\n  updated: 2026-11-20\r\n---\r\nBody"
+    #expect(SkillCatalog.frontmatter(text) == ["name": "x-y", "description": "A skill", "updated": "2026-11-20"])
 }

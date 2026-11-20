@@ -8,7 +8,7 @@ metadata:
 # Make music in loopstudio
 
 Read the skill `loopstudio-mcp` first. It explains the modes, the names and the counting rules.
-This skill gives the order of the steps. Every step returns a receipt; read it before the next step.
+This skill gives the order of the steps. Read the result of each step before the next step.
 
 ## 1. Set up the project
 
@@ -51,8 +51,10 @@ empty list on a clip with notes is refused; remove the clip with `clip_remove` i
 4. Place it: `sample_drop` with `track` and `asset`. Give `startTick` for the arrangement, or `slot`
    (from 0) for a session slot. Without `lengthTicks` the clip is as long as the sample at the song tempo.
    Short samples loop and long ones play once; `loop` overrides that.
-5. A file with a tempo in its name or a clear loop length follows the song tempo. When the tempo is
-   wrong, set it with `setAssetTempo` through `command_apply`.
+5. A file with a tempo in its name or a clear loop length follows the song tempo. The warp mode and the
+   clip length are fixed when you drop the sample. So check `sourceTempo` before `sample_drop`. When it
+   is null or wrong, set it first with `setAssetTempo` through `command_apply` (20 to 400 BPM).
+   For a clip that is already placed, also send `setClipWarp` and set the length with `clip_set`.
 
 ## 4. Session clips and follow actions
 
@@ -63,7 +65,8 @@ empty list on a clip with notes is refused; remove the clip with `clip_remove` i
 - Check the odds with `follow_simulate` (`track` id, `slot` from 0, `launches` 1000) before you tell
   the person how often a clip plays.
 - A bounce plays the arrangement. Session clips sound in a bounce only through saved launches:
-  `command_apply` with `setLaunches` (a track id, a slot from 0, a tick).
+  `command_apply` with `setLaunches` (a track id, a slot from 0, a tick). `setLaunches` replaces the
+  whole list, so send every launch in one call. A launch without a slot stops the track.
 
 ## 5. Effects, sends and the mix
 
@@ -86,7 +89,8 @@ empty list on a clip with notes is refused; remove the clip with `clip_remove` i
      straight to a hardware port (those are not in the master mix).
    - `warnings` lists plugins that did not load, assets that failed, and warps that were not ready.
      Report every warning.
-3. "nothing to render" means that no clip plays on an audible track in the range.
+3. "nothing to render" means that the range is empty: no clip plays on an audible track. With an
+   `endTick` or a tail, an empty range renders silence instead, so read `rmsDbPerSecond`.
 
 A bounce of a long song takes time, and the server answers nothing else meanwhile. Render a few bars
 with `startTick` and `endTick` while you work. Render the whole song once at the end.

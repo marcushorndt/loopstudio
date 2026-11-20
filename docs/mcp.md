@@ -71,7 +71,7 @@ To open a project at start, add `"--project", "/path/to/MyProject.loopstudio"` t
 | `clip_create`, `clip_set`, `clip_remove`, `notes_set` | changes | Named clip edits. A clip is an id, a name or `<track>/slot N`. |
 | `send_set`, `tempo_set`, `loop_set` | changes | Sends, the tempo at the start, the loop region. |
 
-Every changing tool returns a **receipt**: the command, the revision before and after, and the touched values read back from the project after the change ("Drums › Delay › Feedback: 0.40 to 0.55"). The receipt is the proof; the arguments are not. A name that matches several things is an error that lists them, so ask instead of guessing.
+Every named tool and patch tool returns a **receipt**: the command, the revision before and after, and the touched values read back from the project after the change ("Drums › Delay › Feedback: 0.40 to 0.55"). The receipt is the proof; the arguments are not. `command_apply` returns only `applied` and the new `revision`, so read the result back with `track_get` or `project_info`. A name that matches several things is an error that lists them, so ask instead of guessing.
 
 `command_apply` takes every edit the app can do: tracks and routing (`setOutput` to a bus or into an audio track, `setSends`, `setInputTrack`, `setNoInput`, `setMonitor`, `setSendsOnly`), clips and session slots, follow actions, devices and their parameters, MIDI notes, automation on tracks and in dummy clips, warping (`setAssetTempo`, `setClipWarp`), tempo, loop and launches. `command_examples` shows a valid JSON for each.
 

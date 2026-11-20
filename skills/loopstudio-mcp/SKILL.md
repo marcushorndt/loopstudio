@@ -36,7 +36,7 @@ in memory and its next autosave writes over your changes.
 3. Read before you change: `project_info`, `track_list`, `track_get`. In live mode, call `ui_state`
    when the person says "this", "the marked device" or "slot 2".
 4. Change with the named tools (section 4). Use `command_apply` for the rest.
-5. Read the receipt of every change (section 5).
+5. Read the result of every change (section 5).
 6. File mode: call `project_save` at the end. Live mode: the app autosaves; `project_save` writes at once.
 
 In file mode, `project_open` reports `recoveredCommands`. A number above 0 means that a crash left edits
@@ -55,7 +55,8 @@ apply. Tell the person, and save only when they agree. In live mode the app reco
 | A track position in a name (`"2"`) | `track_add` `index` |
 | A device position in a name | `device_add` and `device_move` `index` |
 | `clip_create` `slot`, and `"<track>/slot N"` | `sample_drop` `slot`, `follow_simulate` `slot` |
-| The slot rows of `ui_state` | `launch` `slot` and `scene`, the `setSlot` `index` |
+| The slot rows and `selectedScene` of `ui_state` | `launch` `slot` and `scene`, the `setSlot` `index` |
+| | `sessionPlaying` `slot` in `app_status` |
 
 ## 4. Name things, or use ids
 
@@ -66,8 +67,9 @@ The named tools take words:
 - A clip: its id, its name, or `"<track>/slot N"`.
 - A parameter: its key or its name from `effect_catalog`.
 
-When a name matches more than one thing, the tool returns an error that lists them. Ask the person which
-one they mean. Do not guess.
+When a track, device or clip name matches more than one thing, the tool returns an error that lists them.
+Ask the person which one they mean. Do not guess. A parameter name takes the first match, so use the key
+from `effect_catalog`. A track named with a number hides the position with that number; use the id.
 
 Some tools take only a track id (a UUID): `track_get`, `sample_drop`, `follow_simulate` and `launch`.
 Get the id from `track_list` first.
@@ -83,9 +85,15 @@ Give a `coalescingKey` to merge repeated edits (a fader move) into one undo step
 
 ## 5. Trust the receipt, not your arguments
 
-Every changing tool returns a receipt: the command, the revision before and after, and the touched values
-read back from the project after the change. Report the receipt values to the person. A rejected command
-returns `isError` with the reason, and nothing changes. Read the reason, correct the call, and try again.
+The named tools and the patch tools return a receipt: the command, the revision before and after, and
+the touched values read back from the project after the change. Report the receipt values to the person.
+
+Other changing tools return less. `command_apply` returns only `applied` and the new `revision`;
+`sample_drop` returns the clip id and its length. After such a call, read the result back with
+`track_get` or `project_info` before you report it.
+
+A rejected command returns `isError` with the reason, and nothing changes. Read the reason, correct the
+call, and try again.
 
 `undo` and `redo` step through the history and return `changed`. In live mode they share the history with
 the clicks of the person, so undo only your own changes, and only when the person asks.
@@ -95,7 +103,10 @@ the clicks of the person, so undo only your own changes, and only when the perso
 - `effect_catalog` lists every built-in effect and instrument with its parameter keys, ranges and
   defaults, the 808 pads with their notes, and the grooves. Read it before `device_add` or `param_set`.
 - `param_set` refuses a value outside the range. For a choice parameter, give the index of the choice.
-- An instrument goes to the front of a MIDI track and takes the place of the instrument there.
+- `device_add` puts a built-in instrument at the front of a MIDI track, or in the place of the built-in
+  instrument that is there. It does not remove an Audio Unit instrument. A MIDI track made in the app
+  starts with the Apple DLS Synth, and only the first instrument plays. Read the chain with `track_get`
+  and remove the other instrument with `device_remove`.
 - An Audio Unit goes in with `command_apply` and `insertDevice`. Its parameters exist only after the app
   has loaded the plugin. "The plugin has not reported its parameters yet" means: wait, then read again.
 - `audio_devices`, `midi_endpoints` and `io_resolve` only read. They show the sound cards, the MIDI ports

@@ -76,7 +76,9 @@ y     = x * level
 4. The steps run in order. When one step cannot run, the edit stops and nothing changes. The error names
    the step. Correct it and send the whole list again.
 5. All steps of one call are one undo step. The receipt holds the new `document` and the `program`, or
-   an `error` when the graph does not compile.
+   an `error` when the graph does not compile. Unlike `patch_write`, `patch_edit` puts a graph with an
+   error on the device. The device then passes the sound through unchanged. Correct the graph with the
+   next `patch_edit`, or call `undo`.
 
 Rules of the graph:
 
@@ -84,6 +86,7 @@ Rules of the graph:
   Several cables into one input add up.
 - A patch needs an Audio Out module.
 - A cable that closes a loop gets a delay of one frame. You do not need a delay module for feedback.
+  A cable from a module back into the same module is refused; put another module between them.
 - A step with `"in": "sub1"` runs inside the Sub `sub1`. Inside a Sub, an Inlet stands for Audio In and
   an Outlet for Audio Out.
 
@@ -91,11 +94,12 @@ Rules of the graph:
 
 - A text patch: each `param` line is a knob, and its key is the param name.
 - A graph: a Knob module is a knob with its id as the key. A module on the panel (`expose`) shows its
-  inputs without a cable as knobs with the key `module.port`. A knob inside a Sub carries the Sub id
-  first, such as `sub1.filter.cutoff`.
+  inputs without a cable as knobs with the key `module.port`. A Script module's params keep their own
+  names as keys, so the keys stay the same when `patch_edit` turns a text into a graph. A knob inside a
+  Sub carries the Sub id first, such as `sub1.filter.cutoff`.
 - Set a knob with `param_set` (track, device, the key, a value). Automation, macros and MIDI learn use
-  the same keys. A key belongs to a param name or a module id. When you rename a param, or remove a
-  module and add it again, the key changes and automation on the old key stops.
+  the same keys. A key belongs to a param name or a module id. When you rename a param, or add a
+  module again with another id, the key changes and automation on the old key stops.
 
 ## 5. Check the sound
 

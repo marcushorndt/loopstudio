@@ -509,8 +509,8 @@ private struct ArrangementClip: View {
             if case .audio(let a) = clip, let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                 // Drawn through the clip's warp mapping, so a warped clip keeps its beats where they sound at any
                 // tempo. A looping clip dragged out past the file start shows the end of the file there.
-                let raw = a.offset.rawValue + (shownStart - clip.start).rawValue
-                WaveformView(peaks: peaks, color: tint.opacity(0.9), sourceAt: model.waveMap(a, asset, offset: raw, length: shownLength))
+                WaveformView(peaks: peaks, color: tint.opacity(0.9),
+                             sourceAt: model.waveMap(a, asset, elapsed: (shownStart - clip.start).rawValue, length: shownLength))
                     .padding(.top, 16).padding(.bottom, 3)
             }
             if case .audio(let a) = clip, let env = a.gainEnvelope, !env.isEmpty {

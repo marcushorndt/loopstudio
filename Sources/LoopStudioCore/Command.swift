@@ -107,6 +107,8 @@ public enum Command: Codable, Sendable {
     case addAsset(asset: Asset)
     /// The tempo a loop was recorded at. `nil` means unknown.
     case setAssetTempo(id: AssetID, bpm: Double?)
+    /// The tempo the analysis found. It is shown beside the source tempo and is a way back to it.
+    case setAssetDetectedTempo(id: AssetID, bpm: Double?)
     /// Warp mode and markers of an audio clip. Markers pair a source frame with a tick, counted from the start of the audio.
     case setClipWarp(clip: ClipID, mode: WarpMode, markers: [WarpMarker])
     /// The settings of the warp modes (Beats' Preserve, grain sizes, Flux, Formants, Transpose). `nil`: the defaults.
@@ -588,6 +590,13 @@ extension Project {
             let old = assets[i].sourceTempo
             assets[i].sourceTempo = bpm
             return .setAssetTempo(id: id, bpm: old)
+
+        case .setAssetDetectedTempo(let id, let bpm):
+            guard let i = assets.firstIndex(where: { $0.id == id }) else { throw CommandError.assetNotFound(id) }
+            if let bpm { guard bpm.isFinite, (20...400).contains(bpm) else { throw CommandError.invalidValue("tempo \(bpm)") } }
+            let old = assets[i].detectedTempo
+            assets[i].detectedTempo = bpm
+            return .setAssetDetectedTempo(id: id, bpm: old)
 
         case .setClipWarp(let id, let mode, let markers):
             guard let (trackID, clip) = findClip(id) else { throw CommandError.clipNotFound(id) }

@@ -192,7 +192,7 @@ public enum ReadBack {
             pair("launches", nil, "\(launches.count)")
         case .setRandomSeed, .setDefaultFade, .setAutoLoop:
             pair("project › \(command.kind)", nil, "changed")
-        case .addAsset, .removeAsset, .setAssetTempo:
+        case .addAsset, .removeAsset, .setAssetTempo, .setAssetDetectedTempo:
             pair("assets", "\(before.assets.count)", "\(after.assets.count)")
         case .addPort, .removePort:
             pair("ports", "\(before.ports.count)", "\(after.ports.count)")

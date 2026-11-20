@@ -16,6 +16,9 @@ struct ClipPlan {
     var session = false
     /// Frames of one loop pass, from `sourceOffset`. 0: a looping clip repeats the whole source.
     var loopLength: Int64 = 0
+    /// The source frame where playback begins, when it is not the loop start: the start marker. It can lie
+    /// before the loop (an intro) or inside it. `nil`: at `sourceOffset`.
+    var playStart: Int64? = nil
 }
 
 /// One envelope, in frames. Active inside [start, end).
@@ -485,9 +488,20 @@ public struct RenderPlan {
                         continue
                     }
                     guard let pcm = warpedAudio(c, raw: raw, startTick: c.start, project: project, bank: bank, trackName: t.name, warnings: &warnings) else { continue }
-                    clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: offsetFrames, loop: c.loop,
-                                          gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut),
-                                          envelope: envelope(c, from: c.start, start: start, end: end)))
+                    var plan = ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: offsetFrames, loop: c.loop,
+                                        gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut),
+                                        envelope: envelope(c, from: c.start, start: start, end: end))
+                    if c.loop, c.ownLoop {
+                        // A loop of its own: playback begins at the start marker and then repeats the loop.
+                        let region = c.loopRegion(session: false)
+                        let from = max(0, map.frame(at: c.start + region.start, sampleRate: rate).rawValue - start)
+                        let to = region.length.map { max(0, map.frame(at: c.start + region.start + $0, sampleRate: rate).rawValue - start) }
+                            ?? Int64(pcm.frames)
+                        plan.sourceOffset = from
+                        plan.loopLength = max(1, to - from)
+                        plan.playStart = offsetFrames
+                    }
+                    clips.append(plan)
                     endFrame = max(endFrame, end)
                 }
             }
@@ -513,12 +527,17 @@ public struct RenderPlan {
                     }
                     // A session clip plays from its start offset and loops its own length, like the clip shows.
                     guard let pcm = warpedAudio(c, raw: raw, startTick: e.startTick, project: project, bank: bank, trackName: t.name, warnings: &warnings) else { continue }
+                    // The loop: the clip length from the start marker, or the clip's own loop. Playback begins at
+                    // the start marker either way.
+                    let region = c.loopRegion(session: true)
                     let offsetFrames = max(0, map.frame(at: e.startTick + c.offset, sampleRate: rate).rawValue - start)
-                    let passFrames = max(0, map.frame(at: e.startTick + c.length, sampleRate: rate).rawValue - start)
-                    clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: offsetFrames, loop: c.loop,
+                    let loopFrom = max(0, map.frame(at: e.startTick + region.start, sampleRate: rate).rawValue - start)
+                    let loopTo = max(0, map.frame(at: e.startTick + region.start + (region.length ?? c.length), sampleRate: rate).rawValue - start)
+                    clips.append(ClipPlan(pcm: pcm, start: start, end: end, sourceOffset: loopFrom, loop: c.loop,
                                           gain: dB(c.gainDb), fadeIn: max(0, fadeIn), fadeOut: max(0, fadeOut),
                                           envelope: envelope(c, from: e.startTick, start: start, end: end), session: true,
-                                          loopLength: c.loop ? passFrames : 0))
+                                          loopLength: c.loop ? max(1, loopTo - loopFrom) : 0,
+                                          playStart: loopFrom == offsetFrames ? nil : offsetFrames))
                 }
             }
             if t.kind == .midi || t.kind == .group || t.kind == .returnTrack { /* summing nodes or not rendered yet */ }
@@ -621,7 +640,8 @@ public struct RenderPlan {
     /// `nil` when one rendered pass can simply repeat (no warp, no loop, a constant tempo, or too many passes).
     /// `pass` is the musical length of one pass: the clip length for a session clip, the source for an arrangement clip.
     static func passStarts(_ c: AudioClip, pass: Tick, from start: Tick, to end: Tick, project: Project) -> [Tick]? {
-        guard c.warpMode != .off, c.loop, pass.rawValue > 0, end > start,
+        // A loop of its own plays as one render: the passes assume the loop starts at the start marker.
+        guard c.warpMode != .off, c.loop, !c.ownLoop, pass.rawValue > 0, end > start,
               constantTempo(project.tempoMap, from: start, to: end) == nil else { return nil }
         let count = (end.rawValue - start.rawValue + pass.rawValue - 1) / pass.rawValue
         // Every pass holds a stretched copy of the source, so the count is kept small.

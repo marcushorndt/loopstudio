@@ -49,6 +49,8 @@ struct WarpEditor: View {
     var ppb: CGFloat? = nil
     /// The part of the editor in view, from an enclosing editor that scrolls: only that part is drawn.
     var visible: ClosedRange<CGFloat>? = nil
+    /// A playhead period that never wraps: the clip's own loop does the wrapping (`AudioClip.playTick`).
+    static let noPeriod = Tick(1 << 60)
 
     @State private var dragIndex: Int?
     @State private var dragTick: Tick?
@@ -108,7 +110,9 @@ struct WarpEditor: View {
                     Image(systemName: "triangle.fill").font(.system(size: 8)).rotationEffect(.degrees(180))
                         .foregroundStyle(i == dragIndex ? Theme.text : Theme.accent).offset(x: x - 4, y: 0)
                 }
-                ClipPlayhead(clip: clip.id, period: clip.length) { CGFloat((clip.offset + $0).quarters) * ppb }
+                ClipPlayhead(clip: clip.id, period: Self.noPeriod) {
+                    CGFloat(clip.playTick(after: $0, session: model.isSessionClip(clip.id), fileTicks: model.fileTicks(clip, asset)).quarters) * ppb
+                }
                 if shown.isEmpty {
                     Text("Double-click to add a warp marker.").font(.caption).foregroundStyle(Theme.dim)
                         .padding(6).offset(y: h - 26)

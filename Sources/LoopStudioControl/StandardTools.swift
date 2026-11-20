@@ -154,6 +154,7 @@ public enum StandardTools {
                let pcm = try? AudioBank.decode(file, targetRate: project.sampleRate) {
                 let loop = project.autoLoop.shouldLoop(seconds: Double(pcm.frames) / max(1, pcm.sampleRate))
                 imported.sourceTempo = TempoDetect.estimate(pcm, name: source.deletingPathExtension().lastPathComponent, loop: loop)?.bpm
+                imported.detectedTempo = imported.sourceTempo
             }
             try await session.apply(.addAsset(asset: imported))
             project = try await session.project()
@@ -596,6 +597,7 @@ public enum StandardTools {
             ("setMonitor", .setMonitor(id: TrackID(uuid(7)), mode: .auto)),
             ("setSendsOnly", .setSendsOnly(id: track.id, sendsOnly: true)),
             ("setAssetTempo", .setAssetTempo(id: AssetID(uuid(8)), bpm: 92)),
+            ("setAssetDetectedTempo (the tempo the analysis found; shown beside the source tempo)", .setAssetDetectedTempo(id: AssetID(uuid(8)), bpm: 90)),
             ("setClipWarp (mode: off, beats, tones, texture, repitch, complex, complexPro; markers pin source frames to ticks, empty follows the source tempo)",
              .setClipWarp(clip: ClipID(uuid(4)), mode: .beats, markers: [WarpMarker(sourceFrame: 48_000, tick: 960)])),
             ("setClipWarpSettings (every field optional; preserve: transients, quarter, eighth, sixteenth, thirtySecond; transientLoop: off, forward, backAndForth; transientEnvelope, flux, formants 0-100; tonesGrainMs 5-200; textureGrainMs 10-500; transpose -48..48 semitones; detune -50..50 cents; settings null resets)",

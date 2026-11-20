@@ -974,7 +974,11 @@ public final class Renderer {
         var f = from
         while f < to {
             let p = f - clip.start
-            var s = clip.sourceOffset + (clip.loop && clip.loopLength > 0 ? p % clip.loopLength : p)
+            // From the start marker; at the loop end, back to the loop start.
+            var s = (clip.playStart ?? clip.sourceOffset) + p
+            if clip.loop, clip.loopLength > 0, s >= clip.sourceOffset + clip.loopLength {
+                s = clip.sourceOffset + (s - clip.sourceOffset) % clip.loopLength
+            }
             if clip.loop { s %= total } else if s >= total { break } // a one-shot ends with its audio
 
             var g = clip.gain

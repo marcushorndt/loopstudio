@@ -669,3 +669,43 @@ private struct Route {
     #expect(writer.ring.startFrame == 0)
     _ = writer.finish()
 }
+
+@Test func aStartMarkerBeforeItsLoopPlaysAnIntroThenRepeatsTheLoop() throws {
+    var rig = Rig()
+    // Every sample holds its own position, so the output shows which source frame plays.
+    let a = rig.asset(seconds: 1) { Float($0) / 48_000 }
+    let t = rig.track("T")
+    var c = rig.project.makeAudioClip(asset: a, start: 0, length: Tick(3840))
+    c.fadeInMs = 0; c.fadeOutMs = 0; c.loop = true
+    c.offset = 0                 // the start marker at the file start
+    c.loopStart = Tick(960)      // the loop from 0.5 s
+    c.loopLength = Tick(480)     // for 0.25 s
+    try Command.insertClip(track: t, clip: .audio(c)).apply(to: &rig.project)
+    let out = rig.render()
+    func source(at f: Int) -> Int { Int((out.left[f] * 48_000).rounded()) }
+    #expect(source(at: 10_000) == 10_000, "the intro plays from the start marker")
+    #expect(source(at: 30_000) == 30_000, "then into the loop")
+    #expect(source(at: 36_000) == 24_000, "at the loop end, back to the loop start")
+    #expect(source(at: 40_000) == 28_000)
+    #expect(source(at: 90_000) == 24_000 + (90_000 - 24_000) % 12_000)
+
+    // Inside the loop, the start marker only changes where the first pass begins.
+    c.offset = Tick(1200)
+    try Command.setClip(clip: .audio(c)).apply(to: &rig.project)
+    let inside = rig.render()
+    #expect(Int((inside.left[0] * 48_000).rounded()) == 30_000)
+    #expect(Int((inside.left[6_000] * 48_000).rounded()) == 24_000)
+}
+
+@Test func playTickFollowsTheStartMarkerAndTheLoop() {
+    var c = AudioClip(asset: AssetID(), length: Tick(3840), offset: 0, loop: true)
+    c.loopStart = Tick(960); c.loopLength = Tick(480)
+    #expect(c.playTick(after: Tick(500), session: false, fileTicks: Tick(1920)) == Tick(500))
+    #expect(c.playTick(after: Tick(1440), session: false, fileTicks: Tick(1920)) == Tick(960))
+    // Without a loop of its own, a timeline clip repeats the whole file and a session clip its own length.
+    var plain = AudioClip(asset: AssetID(), length: Tick(960), offset: Tick(480), loop: true)
+    #expect(plain.playTick(after: Tick(1500), session: false, fileTicks: Tick(1920)) == Tick(60))
+    #expect(plain.playTick(after: Tick(1000), session: true, fileTicks: Tick(1920)) == Tick(520))
+    plain.loop = false
+    #expect(plain.playTick(after: Tick(1500), session: false, fileTicks: Tick(1920)) == Tick(1980))
+}

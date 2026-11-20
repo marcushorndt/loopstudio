@@ -2072,17 +2072,27 @@ final class AppModel {
     /// For a waveform drawn over `length` ticks from `offset` ticks into the file: the file position (0 to 1)
     /// at a fraction of that width. A looping clip wraps at the end of the file. A warped clip does not move
     /// with the song tempo, because its beats are the file's own.
-    func waveMap(_ a: AudioClip, _ asset: Asset, offset: Int64, length: Tick) -> (Double) -> Double {
-        let g = waveGeometry(a, asset)
-        let frames = Double(max(1, asset.frames))
-        let fileBeats = g.beat(atSource: frames)
-        let loop = a.loop && fileBeats > 0
-        let start = Double(offset) / Double(Tick.perQuarter), span = length.quarters
+    /// Maps a fraction of a drawn clip to the file position (0 to 1) that sounds there. `elapsed` is the
+    /// time from the clip start to the drawn left edge (negative while the start is dragged out), `length`
+    /// the drawn length. It follows the start marker, the loop and the warp.
+    func waveMap(_ a: AudioClip, _ asset: Asset, elapsed: Int64, length: Tick) -> (Double) -> Double {
+        let g = waveGeometry(a, asset); let frames = Double(max(1, asset.frames))
+        let fileTicks = Tick.quarters(g.beat(atSource: frames)), session = isSessionClip(a.id)
+        let start = Double(elapsed), span = Double(length.rawValue)
         return { f in
-            var b = start + f * span
-            if loop { b = b.truncatingRemainder(dividingBy: fileBeats); if b < 0 { b += fileBeats } }
-            return g.source(atBeat: b) / frames
+            let t = a.playTick(after: Tick(Int64(start + f * span)), session: session, fileTicks: fileTicks)
+            return g.source(atBeat: t.quarters) / frames
         }
+    }
+
+    /// True for a clip in a session slot, false for one on the timeline.
+    func isSessionClip(_ id: ClipID) -> Bool {
+        project.tracks.contains { $0.slots.contains { $0?.clip.id == id } }
+    }
+
+    /// The length of the clip's file in its own ticks (through the warp, or at the song tempo).
+    func fileTicks(_ a: AudioClip, _ asset: Asset) -> Tick {
+        Tick.quarters(waveGeometry(a, asset).beat(atSource: Double(max(1, asset.frames))))
     }
 
     func sourceTicks(of a: AudioClip) -> Tick? {
@@ -2107,6 +2117,7 @@ final class AppModel {
             // The tempo makes a dropped file follow the project tempo (see Project.autoWarp).
             let loop = rule.shouldLoop(seconds: Double(pcm.frames) / max(1, pcm.sampleRate))
             asset.sourceTempo = TempoDetect.estimate(pcm, name: url.deletingPathExtension().lastPathComponent, loop: loop)?.bpm
+            asset.detectedTempo = asset.sourceTempo
         }
         return Imported(asset: asset, pcm: pcm, waveform: WavePeaks(pcm))
     }

@@ -3,9 +3,10 @@ import SwiftUI
 
 /// The sample page of an audio clip, like Live's: a loop bar above the waveform, a start marker, and zoom.
 ///
-/// The loop bar shows the part of the file the clip plays as a brace. Drag in the bar to mark a new loop;
-/// drag a brace edge to resize it, its middle to move it. The start marker below is the same start, as a
-/// flag you can drag on its own. Everything snaps to the grid, which gets finer as you zoom in; Option
+/// The loop bar shows the loop as a brace, or without Loop the part of the file the clip plays. Drag in the
+/// bar to mark a new loop; drag a brace edge to resize it, its middle to move it. The start marker below is
+/// where playback begins. With Loop on it moves on its own: before the loop it plays an intro, then the
+/// loop repeats; the brace moves past it without taking it along. Everything snaps to the grid, which gets finer as you zoom in; Option
 /// drags free. Zoom with a pinch, ⌘ and the scroll wheel, or the buttons.
 struct SampleEditor: View {
     @Environment(AppModel.self) private var model
@@ -22,6 +23,8 @@ struct SampleEditor: View {
     @State private var wheel = WheelZoom()
     /// A loop being marked or changed, before it is committed.
     @State private var draft: (offset: Tick, length: Tick)?
+    /// The start marker while it is dragged on a looping clip.
+    @State private var startDraft: Tick?
     @State private var dragMode: LoopDrag?
     /// The width of the visible part: the waveform draws only there, so a deep zoom stays cheap.
     @State private var viewportWidth: CGFloat = 800
@@ -37,11 +40,23 @@ struct SampleEditor: View {
         WarpGeometry(markers: clip.warpMarkers, sourceTempo: warped ? (asset.sourceTempo ?? model.bpm) : model.bpm, assetRate: asset.sampleRate)
     }
     private var fileBeats: Double { geometry.beat(atSource: Double(asset.frames)) }
-    private var totalBeats: Double { max(4, fileBeats, (clip.offset + clip.length).quarters) }
+    private var totalBeats: Double { max(4, fileBeats, (clip.offset + clip.length).quarters, (brace.offset + brace.length).quarters) }
 
-    /// The loop as drawn: the draft while a drag runs.
-    private var shownOffset: Tick { draft?.offset ?? clip.offset }
-    private var shownLength: Tick { draft?.length ?? clip.length }
+    private var session: Bool { model.isSessionClip(clip.id) }
+    private var fileTicks: Tick { Tick(Int64((fileBeats * Double(Tick.perQuarter)).rounded())) }
+
+    /// The brace: the loop when the clip loops, otherwise the part of the file it plays.
+    private var brace: (offset: Tick, length: Tick) {
+        guard clip.loop else { return (clip.offset, clip.length) }
+        let r = clip.loopRegion(session: session)
+        return (r.start, r.length ?? Tick(max(1, fileTicks.rawValue - r.start.rawValue)))
+    }
+
+    /// The brace as drawn: the draft while a drag runs.
+    private var shownOffset: Tick { draft?.offset ?? brace.offset }
+    private var shownLength: Tick { draft?.length ?? brace.length }
+    /// The start marker as drawn.
+    private var shownStart: Tick { clip.loop ? (startDraft ?? clip.offset) : (draft?.offset ?? clip.offset) }
 
     var body: some View {
         GeometryReader { geo in
@@ -164,17 +179,18 @@ struct SampleEditor: View {
                 let free = model.freeOfGrid()
                 let here = Double(v.location.x / ppb)
                 if dragMode == nil {
-                    let x0 = CGFloat(clip.offset.quarters) * ppb, x1 = CGFloat((clip.offset + clip.length).quarters) * ppb
+                    let b = brace
+                    let x0 = CGFloat(b.offset.quarters) * ppb, x1 = CGFloat((b.offset + b.length).quarters) * ppb
                     let x = v.startLocation.x
                     if abs(x - x0) <= Self.grab { dragMode = .left }
                     else if abs(x - x1) <= Self.grab { dragMode = .right }
-                    else if x > x0 && x < x1 { dragMode = .moveLoop(grab: Tick(Int64(Double(x / ppb) * Double(Tick.perQuarter))) - clip.offset) }
+                    else if x > x0 && x < x1 { dragMode = .moveLoop(grab: Tick(Int64(Double(x / ppb) * Double(Tick.perQuarter))) - b.offset) }
                     else { dragMode = .mark(anchor: snapped(Double(x / ppb), step: step, free: free)) }
                 }
                 update(dragMode, beat: here, step: step, free: free)
             }
             .onEnded { _ in commitDraft() })
-        .hint("Loop bar. Drag to mark the loop, drag an edge to resize it, drag the middle to move it. ⌘ or Option drags free of the grid; with the grid off they snap to it.")
+        .hint("Loop bar. Drag to mark the loop, drag an edge to resize it, drag the middle to move it. The start marker stays where it is. ⌘ or Option drags free of the grid; with the grid off they snap to it.")
     }
 
     // MARK: Waveform and start marker
@@ -186,7 +202,9 @@ struct SampleEditor: View {
                 WarpEditor(clip: clip, asset: asset, peaks: peaks, tint: tint, ppb: ppb, visible: visible)
             } else {
                 waveform(ppb: ppb, step: step)
-                ClipPlayhead(clip: clip.id, period: clip.length) { CGFloat((clip.offset + $0).quarters) * ppb }
+                ClipPlayhead(clip: clip.id, period: WarpEditor.noPeriod) {
+                    CGFloat(clip.playTick(after: $0, session: session, fileTicks: fileTicks).quarters) * ppb
+                }
             }
             startMarker(ppb: ppb, step: step)
         }
@@ -218,7 +236,7 @@ struct SampleEditor: View {
     /// The flag at the clip's start in the file. Drag it to move the start; the length stays.
     private func startMarker(ppb: CGFloat, step: Int64) -> some View {
         GeometryReader { geo in
-            let x = CGFloat(shownOffset.quarters) * ppb
+            let x = CGFloat(shownStart.quarters) * ppb
             let active = dragMode != nil && { if case .start? = dragMode { true } else { false } }()
             ZStack(alignment: .topLeading) {
                 Rectangle().fill(active ? Theme.text : tint).frame(width: 1.5, height: geo.size.height).offset(x: x - 0.75)
@@ -236,7 +254,7 @@ struct SampleEditor: View {
                             update(.start, beat: clip.offset.quarters + Double(v.translation.width / ppb), step: step, free: model.freeOfGrid())
                         }
                         .onEnded { _ in commitDraft() })
-                    .hint("Start marker: where the clip begins in the file. Drag it; ⌘ or Option drags free of the grid; with the grid off they snap to it.")
+                    .hint("Start marker: where playback begins. With Loop on it moves on its own, before the loop (an intro) or inside it, but not past the loop end. ⌘ or Option drags free of the grid; with the grid off they snap to it.")
             }
         }
     }
@@ -248,31 +266,50 @@ struct SampleEditor: View {
         let end = Tick(Int64((max(totalBeats, fileBeats) * Double(Tick.perQuarter)).rounded()))
         let at = snapped(beat, step: step, free: free)
         let minLength = Tick(free ? Int64(Tick.perQuarter) / 16 : step)
+        let b = brace
         switch mode {
         case .mark(let anchor):
-            let a = min(anchor, at), b = max(anchor, at)
-            draft = (a, max(minLength, b - a))
+            let a = min(anchor, at), e = max(anchor, at)
+            draft = (a, max(minLength, e - a))
         case .moveLoop(let grab):
             let raw = Tick(Int64(beat * Double(Tick.perQuarter))) - grab
             let start = free ? max(0, raw) : Tick(max(0, (raw.rawValue + step / 2) / step * step))
-            draft = (min(start, max(0, end - clip.length)), clip.length)
+            draft = (min(start, max(0, end - b.length)), b.length)
         case .left:
-            let endTick = clip.offset + clip.length
+            let endTick = b.offset + b.length
             let start = min(at, endTick - minLength)
             draft = (start, endTick - start)
         case .right:
-            draft = (clip.offset, max(minLength, at - clip.offset))
+            draft = (b.offset, max(minLength, at - b.offset))
         case .start:
-            draft = (min(at, max(0, end - clip.length)), clip.length)
+            if clip.loop {
+                // On a looping clip the start moves on its own, up to just before the loop end.
+                startDraft = min(at, Tick(max(0, (b.offset + b.length - minLength).rawValue)))
+            } else {
+                draft = (min(at, max(0, end - clip.length)), clip.length)
+            }
         }
     }
 
     private func commitDraft() {
-        defer { dragMode = nil; draft = nil }
-        guard let draft, draft.offset != clip.offset || draft.length != clip.length else { return }
+        defer { dragMode = nil; draft = nil; startDraft = nil }
         var c = clip
-        c.offset = draft.offset
-        c.length = draft.length
+        if let start = startDraft {
+            // A session loop without a start of its own starts at the start marker: pin it, so it stays.
+            if session && c.loopStart == nil { c.loopStart = brace.offset }
+            c.offset = start
+        } else if let draft {
+            if clip.loop {
+                c.loopStart = draft.offset
+                if session { c.length = draft.length } else { c.loopLength = draft.length }
+                // The start marker may sit before the loop or inside it, never past its end.
+                if c.offset >= draft.offset + draft.length { c.offset = draft.offset }
+            } else {
+                c.offset = draft.offset
+                c.length = draft.length
+            }
+        }
+        guard c != clip else { return }
         model.apply(.setClip(clip: .audio(c)))
     }
 }

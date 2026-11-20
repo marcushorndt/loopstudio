@@ -85,9 +85,22 @@ struct WarpColumn: View {
             Button("Detect") { model.detectTempo(of: a) }
                 .hint("Find the tempo from the file name, the loop length or the beats")
             Button("Fit") { model.fitTempo(a) }
-                .hint("Set the source tempo so this clip's audio fills the clip length once")
+                .hint("Round the source tempo so the whole file is a whole number of bars, the count closest to the song tempo. Use it when a loop drifts against the grid.")
+            Button("Play as recorded") { if let t = asset?.sourceTempo { model.setBPM(t) } }
+                .disabled(asset?.sourceTempo == nil)
+                .hint("Set the song tempo to the source tempo: the clip then plays at the speed it was recorded at, unstretched.")
         }
         .controlSize(.small)
+        if let asset, let found = asset.detectedTempo {
+            HStack(spacing: 4) {
+                Text(String(format: "Detected: %.2f BPM", found)).font(.caption).foregroundStyle(Theme.dim)
+                if let t = asset.sourceTempo, abs(t - found) > 0.005 {
+                    Button("Back to it") { model.apply(.setAssetTempo(id: asset.id, bpm: found)) }
+                        .controlSize(.mini)
+                        .hint("Set the source tempo back to the tempo the analysis found")
+                }
+            }
+        }
         if asset?.sourceTempo == nil, a.warpMarkers.count < 2 {
             Text("No tempo yet: Detect, or enter it.").font(.caption).foregroundStyle(.orange)
         }
@@ -163,24 +176,34 @@ extension AppModel {
         guard let asset = project.asset(a.asset), let pcm = bank.buffer(for: asset.id) else { return }
         let loop = autoLoopSeconds(asset)
         if let e = TempoDetect.estimate(pcm, name: asset.name, loop: loop) {
-            apply(.setAssetTempo(id: asset.id, bpm: e.bpm))
+            apply(.batch(commands: [.setAssetTempo(id: asset.id, bpm: e.bpm), .setAssetDetectedTempo(id: asset.id, bpm: e.bpm)]))
             status = String(format: "%@: %.2f BPM, from the %@", asset.name, e.bpm,
                             e.method == .name ? "file name" : e.method == .loopLength ? "loop length" : "beats")
         } else if let heard = TempoDetect.onsetTempo(pcm), heard.confidence > 0.15 {
-            apply(.setAssetTempo(id: asset.id, bpm: heard.bpm))
+            apply(.batch(commands: [.setAssetTempo(id: asset.id, bpm: heard.bpm), .setAssetDetectedTempo(id: asset.id, bpm: heard.bpm)]))
             status = String(format: "%@: perhaps %.2f BPM (the beat is not clear)", asset.name, heard.bpm)
         } else {
             status = "\(asset.name): no tempo found"
         }
     }
 
-    /// Makes the whole sample span the clip length: sets the source tempo that does it.
+    /// Rounds the source tempo so the whole file is a whole number of bars: of the counts that give a tempo
+    /// from 20 to 400 BPM, the one closest to the song tempo. A loop then ends on a bar line and does not
+    /// drift; the tempo moves only as far as that needs.
     func fitTempo(_ a: AudioClip) {
-        guard let asset = project.asset(a.asset), asset.sampleRate > 0 else { return }
+        guard let asset = project.asset(a.asset), asset.sampleRate > 0, asset.frames > 0 else { return }
         let seconds = Double(asset.frames) / asset.sampleRate
-        let beats = Double(a.length.rawValue) / Double(Tick.perQuarter)
-        guard seconds > 0, beats > 0 else { return }
-        apply(.setAssetTempo(id: asset.id, bpm: min(400, max(20, beats * 60 / seconds))))
+        let beatsPerBar = Double(barTicks) / Double(Tick.perQuarter)
+        var best: (bars: Int, bpm: Double)?
+        for bars in 1...4_096 {
+            let tempo = Double(bars) * beatsPerBar * 60 / seconds
+            if tempo > 400 { break }
+            guard tempo >= 20 else { continue }
+            if best == nil || abs(log2(tempo / bpm)) < abs(log2(best!.bpm / bpm)) { best = (bars, tempo) }
+        }
+        guard let best else { status = "\(asset.name): too short or too long to fit whole bars"; return }
+        apply(.setAssetTempo(id: asset.id, bpm: best.bpm))
+        status = String(format: "%@: %d bar%@ at %.2f BPM", asset.name, best.bars, best.bars == 1 ? "" : "s", best.bpm)
     }
 }
 

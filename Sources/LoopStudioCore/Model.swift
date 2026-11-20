@@ -13,6 +13,9 @@ public struct Asset: Hashable, Codable, Sendable, Identifiable {
     public var channels: Int
     /// Tempo the loop was recorded at, if known (file metadata or analysis).
     public var sourceTempo: Double?
+    /// The tempo the analysis found (the file name, the loop length or the beats). It stays when the source
+    /// tempo is changed by hand or by Fit, so the clip panel can show it and go back to it.
+    public var detectedTempo: Double?
 
     public init(id: AssetID = AssetID(), sha256: String, name: String, frames: Int64,
                 sampleRate: Double, channels: Int, sourceTempo: Double? = nil) {
@@ -249,9 +252,15 @@ public struct AudioClip: Hashable, Codable, Sendable, Identifiable {
     /// Position on the timeline. In a session slot this is 0 and unused.
     public var start: Tick
     public var length: Tick
-    /// Where in the (warped) source the clip starts playing.
+    /// Where in the (warped) source the clip starts playing: the start marker.
     public var offset: Tick
     public var loop: Bool
+    /// Start of the loop, in the same ticks as `offset`. Playback begins at `offset` and runs into the loop, so
+    /// the start can sit before the loop (an intro) or inside it. `nil`: the loop starts at `offset` in a
+    /// session slot and at the file start on the timeline. See `loopRegion`.
+    public var loopStart: Tick?
+    /// Length of the loop. `nil`: the clip length in a session slot, up to the end of the file on the timeline.
+    public var loopLength: Tick?
     public var gainDb: Double
     public var fadeInMs: Double
     public var fadeOutMs: Double
@@ -294,6 +303,27 @@ public struct AudioClip: Hashable, Codable, Sendable, Identifiable {
 public extension AudioClip {
     /// The warp settings in force: the clip's own, or the defaults.
     var warp: WarpSettings { warpSettings ?? WarpSettings() }
+
+    /// True when the loop has a start or a length of its own, apart from the start marker.
+    var ownLoop: Bool { loopStart != nil || loopLength != nil }
+
+    /// The part of the file that repeats: its start and its length (`nil`: up to the end of the file).
+    /// `session`: the clip sits in a session slot, where the clip length is the loop length.
+    func loopRegion(session: Bool) -> (start: Tick, length: Tick?) {
+        (loopStart ?? (session ? offset : 0), loopLength ?? (session ? length : nil))
+    }
+
+    /// The tick in the file that sounds `elapsed` after the clip starts: from the start marker on, and once
+    /// it reaches the loop end, round the loop. `fileTicks` is the length of the file in the same ticks.
+    func playTick(after elapsed: Tick, session: Bool, fileTicks: Tick) -> Tick {
+        var t = offset.rawValue + elapsed.rawValue
+        guard loop else { return Tick(t) }
+        let r = loopRegion(session: session)
+        let start = r.start.rawValue, length = r.length?.rawValue ?? (fileTicks.rawValue - start)
+        guard length > 0 else { return Tick(t) }
+        if t >= start + length || t < 0 { t = start + ((t - start) % length + length) % length }
+        return Tick(t)
+    }
 }
 
 public extension Array where Element == MIDINote {
@@ -643,7 +673,10 @@ public enum Clip: Hashable, Sendable, Identifiable {
         var clip = with(start: newStart, length: Tick(end - newStart.rawValue))
         switch clip {
         case .audio(var c):
-            if let period, c.loop, period.rawValue > 0 {
+            if let period, c.loop, c.ownLoop, period.rawValue > 0 {
+                // A loop of its own: the start moves through the intro and round the loop, like playback.
+                c.offset = c.playTick(after: Tick(d), session: false, fileTicks: period)
+            } else if let period, c.loop, period.rawValue > 0 {
                 let p = period.rawValue
                 c.offset = Tick(((c.offset.rawValue + d) % p + p) % p)
             } else {

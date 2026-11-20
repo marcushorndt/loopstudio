@@ -196,7 +196,7 @@ private struct ClipPanel: View {
         case (let page, .audio(let a)):
             if let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                 if page == .gain {
-                    ClipEnvelopeView(clip: a, peaks: peaks, sourceAt: model.waveMap(a, asset, offset: a.offset.rawValue, length: a.length), tint: tint)
+                    ClipEnvelopeView(clip: a, peaks: peaks, sourceAt: model.waveMap(a, asset, elapsed: 0, length: a.length), tint: tint)
                         .overlay { clipLengthPlayhead(clip) }
                 } else {
                     SampleEditor(clip: a, asset: asset, peaks: peaks, tint: tint)

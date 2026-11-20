@@ -217,6 +217,10 @@ struct AutomationEditor: View {
             else { model.automationMarking = AutomationMarking(editor: editorID, delete: deleteMarked, duplicate: duplicateMarked) }
         }
         .onDisappear { if model.automationMarking?.editor == editorID { model.automationMarking = nil } }
+        // A click elsewhere in the tracks, or a new arrangement selection, ends the marking: over the clips the
+        // editor never sees those clicks itself.
+        .onChange(of: model.trackClicks) { marked = []; range = nil }
+        .onChange(of: outerRange) { marked = []; range = nil }
     }
 
     /// A copy of the marked stretch right after it: the points from its start up to its end move by its length
@@ -499,9 +503,15 @@ struct AutomationEditor: View {
         if let b = box {
             // A click without a move in the arrangement's selection does what a click on the clip does: the
             // selection goes and the playhead lands there.
-            if !moved, range == nil, outerRange != nil {
-                model.rangeSelection = nil
-                model.seekFromClick(to: model.snap(Tick(Int64(max(0, press.x / pixelsPerTick))), alt: NSEvent.modifierFlags.contains(.option)))
+            // A click without a move ends the marking, and in the arrangement's selection it does what a click
+            // on the clip does: the selection goes and the playhead (while playing, the insert marker) lands there.
+            if !moved {
+                marked = []
+                range = nil
+                if outerRange != nil {
+                    model.rangeSelection = nil
+                    model.seekFromClick(to: model.snap(Tick(Int64(max(0, press.x / pixelsPerTick))), alt: NSEvent.modifierFlags.contains(.option)))
+                }
                 return
             }
             guard moved, let draft else { return }
@@ -515,8 +525,7 @@ struct AutomationEditor: View {
             if doubleClick(tick: points[b.index].tick, handle: true) { var next = points; next[b.index].bend = nil; onChange(next) }
             return
         }
-        if !moved, groupStart != nil { return }
-        if !moved, groupStart == nil, let i = dragging, points.indices.contains(i), draft[i].curve == points[i].curve {
+        if !moved, let i = dragging, points.indices.contains(i), draft[i].curve == points[i].curve {
             // A click on a point removes it; the segment that now spans the gap runs straight.
             var next = points
             next.remove(at: i)

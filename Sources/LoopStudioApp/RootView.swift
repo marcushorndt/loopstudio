@@ -148,6 +148,8 @@ struct TransportBar: View {
                 tile("metronome", on: model.metronomeOn, tint: Theme.accent) { model.toggleMetronome() }
                     .hint("Metronome (K)")
                     .midiLearnable(.metronome)
+                tile("pencil", on: model.drawMode, tint: Theme.track(2)) { model.perform(.drawMode) }
+                    .hint("Draw mode (B): the pen draws notes in a MIDI clip and steps on automation curves. Esc ends it.")
                 Button { model.toggleMIDILearn() } label: {
                     Text("MIDI").font(.system(size: 10, weight: .bold))
                         .frame(width: 36, height: 28)

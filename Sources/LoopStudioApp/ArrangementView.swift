@@ -631,7 +631,7 @@ private struct ArrangementClip: View {
                         }
                         marking = false
                     })
-                .hint("Body: click to place the playhead (while stopped; while playing, use the ruler), drag to mark a range. ⌘E splits the clip at its ends, Delete takes it out and leaves a gap, ⇧⌘Delete takes the time out of the arrangement. Option skips the grid.")
+                .hint("Body: click to place the playhead (while playing, the insert marker: Space or Stop goes there), drag to mark a range. ⌘E splits the clip at its ends, Delete takes it out and leaves a gap, ⇧⌘Delete takes the time out of the arrangement. Option skips the grid.")
         }
         // A clip narrower than its two grips has no body to grab: the grips go, the clip can still be moved.
         .overlay(alignment: .leading) {
@@ -692,6 +692,15 @@ private struct Playhead: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !model.transportPlaying)) { _ in
             Rectangle().fill(.white).frame(width: 1.5, height: height)
                 .offset(x: tickX(model.currentTick, model))
+        }
+        // The insert marker of a click while playing: a dashed line where Space or Stop will go.
+        .overlay(alignment: .topLeading) {
+            if model.transportPlaying, let m = model.insertMarker {
+                Path { p in p.move(to: CGPoint(x: 0.75, y: 0)); p.addLine(to: CGPoint(x: 0.75, y: height)) }
+                    .stroke(Theme.text.opacity(0.7), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                    .frame(width: 2, height: height)
+                    .offset(x: tickX(m, model))
+            }
         }
         .allowsHitTesting(false)
     }

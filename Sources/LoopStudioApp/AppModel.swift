@@ -726,12 +726,15 @@ final class AppModel {
 
     /// Where Space started playback. Stopping with Space returns here.
     private var playStart: Tick = 0
+    /// Where a click in the tracks put the start while the song played, like Live's insert marker: Space or
+    /// Stop goes there, and the next play starts there. The playhead runs on meanwhile.
+    private(set) var insertMarker: Tick?
 
     /// Space: play from the cursor, or stop and return to where playback began.
     func togglePlay() {
         if transportPlaying {
             pause()
-            seek(to: playStart)
+            seek(to: insertMarker ?? playStart)
         } else {
             playStart = currentTick
             if recordArmed { startRecording() } else { play() }
@@ -971,28 +974,34 @@ final class AppModel {
     func stop() {
         if transportPlaying {
             pause()
+            if let m = insertMarker { seek(to: m) }
         } else {
             engine.seek(to: 0)
         }
         if !session.isEmpty || !session.kept.isEmpty { session.clear(); rebuild() }
     }
 
-    /// A click in the tracks of the arrangement (on a clip, on empty space) places the playhead only while the
-    /// transport stands still. While it plays, such clicks only edit; the ruler still moves the playhead.
+    /// A click in the tracks of the arrangement (on a clip, on empty space) places the playhead while the
+    /// transport stands still. While it plays, the playhead runs on and the click sets the insert marker, where
+    /// Space or Stop goes and the next play starts. The ruler moves the playhead at once.
     func seekFromClick(to tick: Tick) {
-        guard !transportPlaying else { return }
+        trackClicks &+= 1
+        guard !transportPlaying else { insertMarker = max(0, tick); return }
         seek(to: tick)
     }
 
     func seek(to tick: Tick) {
         engine.seek(to: frame(max(0, tick)))
         if !transportPlaying { playStart = max(0, tick) }
+        insertMarker = nil
         seekRevision &+= 1
     }
 
     /// Counts the seeks. The playhead redraws on it while the transport stands still; while it runs, the
     /// playhead follows the clock on its own.
     private(set) var seekRevision = 0
+    /// Counts the clicks in the arrangement's tracks: an automation curve drops its marking on the next one.
+    private(set) var trackClicks = 0
 
     var arrangementOverridden: Bool { !session.isEmpty || !session.kept.isEmpty }
 

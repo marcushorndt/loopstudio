@@ -438,6 +438,14 @@ private struct Lane: View {
                     }
                 }
                 .frame(width: width, height: h)
+                .overlay(alignment: .topLeading) {
+                    // Which parameter lies over the clips.
+                    Text(LaneGroup.shortName(target)).font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.automationDot)
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(Theme.background.opacity(0.75), in: RoundedRectangle(cornerRadius: 3))
+                        .padding(.leading, 4).padding(.top, 2)
+                        .allowsHitTesting(false)
+                }
                 .offset(y: ArrangementClip.headerHeight + 2)
             }
             // The lanes after the first, below the track row.
@@ -790,8 +798,14 @@ private struct MainLaneCurve: View {
 
     var body: some View {
         Canvas { ctx, size in
-            guard !points.isEmpty else { return }
             func y(_ v: Double) -> CGFloat { size.height * (1 - CGFloat(target.position(v))) }
+            // No points yet: the default value as a dotted line, like in a lane.
+            guard !points.isEmpty else {
+                let line = Path { p in p.move(to: CGPoint(x: 0, y: y(target.def))); p.addLine(to: CGPoint(x: size.width, y: y(target.def))) }
+                ctx.stroke(line, with: .color(.black.opacity(0.45)), style: StrokeStyle(lineWidth: 3, dash: [4, 3]))
+                ctx.stroke(line, with: .color(Theme.automationDot.opacity(0.8)), style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
+                return
+            }
             var path = Path()
             var x: CGFloat = 0
             while x <= size.width {

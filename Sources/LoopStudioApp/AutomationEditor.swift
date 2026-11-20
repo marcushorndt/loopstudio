@@ -60,6 +60,8 @@ struct AutomationEditor: View {
     @State private var groupStart: [Int: AutomationPoint]?
     /// The marked stretch whose curve is being dragged up or down as a box, in ticks.
     @State private var box: (lo: Int64, hi: Int64)?
+    /// The up/down pointer is on: a box or a segment is in hand, which only moves up or down.
+    @State private var upDown = false
     /// The pointer has moved since the press: a press without movement is a click, which adds a point.
     @State private var moved = false
     /// The values the pen has drawn in this drag, by cell, and the last cell, so a fast drag fills the cells between.
@@ -145,6 +147,8 @@ struct AutomationEditor: View {
                 if dragging == nil && bending == nil && segment == nil && band == nil && box == nil { begin(at: g.startLocation) }
                 let dx = g.location.x - g.startLocation.x, dy = g.location.y - g.startLocation.y
                 if abs(dx) > 2 || abs(dy) > 2 { moved = true }
+                if (box != nil || segment != nil) && !upDown { upDown = true; NSCursor.resizeUpDown.push() }
+                if upDown { NSCursor.resizeUpDown.set() }
                 // A rise of the whole height moves a value over the whole range.
                 let dPos = -Double(dy) / Double(height)
                 if let b = bending, var working = draft, working.indices.contains(b.index) {
@@ -476,6 +480,7 @@ struct AutomationEditor: View {
             bandStart = nil
             groupStart = nil
             box = nil
+            if upDown { NSCursor.pop(); upDown = false }
             moved = false
             penPoints = [:]
             penLast = nil

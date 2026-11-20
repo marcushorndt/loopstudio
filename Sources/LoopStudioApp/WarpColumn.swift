@@ -6,6 +6,7 @@ import SwiftUI
 /// and the pitch. Every change is one command, so it undoes and the assistant can make it too.
 struct WarpColumn: View {
     @Environment(AppModel.self) private var model
+    @FocusState private var sourceFocused: Bool
     let clip: AudioClip
 
     var body: some View {
@@ -77,6 +78,13 @@ struct WarpColumn: View {
                 if let asset, v >= 20, v <= 400 { model.apply(.setAssetTempo(id: asset.id, bpm: v)) }
             }), format: .number.precision(.fractionLength(0...3)))
             .textFieldStyle(.roundedBorder).frame(width: 66)
+            .focused($sourceFocused)
+            // A drag up or down: 1 BPM per step, with Shift 0.1 BPM. A click types.
+            .dragsValue(focus: $sourceFocused) { n, fine in
+                if let asset, let t = asset.sourceTempo {
+                    model.apply(.setAssetTempo(id: asset.id, bpm: min(400, max(20, t + Double(n) * (fine ? 0.1 : 1)))))
+                }
+            }
             Button("÷2") { if let t = asset?.sourceTempo, let asset { model.apply(.setAssetTempo(id: asset.id, bpm: t / 2)) } }
             Button("×2") { if let t = asset?.sourceTempo, let asset { model.apply(.setAssetTempo(id: asset.id, bpm: t * 2)) } }
         }

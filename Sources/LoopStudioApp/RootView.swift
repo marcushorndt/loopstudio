@@ -271,16 +271,18 @@ struct TransportBar: View {
                 .onAppear { bpmText = String(format: "%.2f", model.bpm) }
                 .onChange(of: model.bpm) { if !bpmFocus { bpmText = String(format: "%.2f", model.bpm) } }
                 .onChange(of: model.tempoNudges) { bpmText = String(format: "%.2f", model.bpm) }
+                // A drag up or down changes the tempo: 1 BPM per step, with Shift 0.1 BPM. A click types.
+                .dragsValue(focus: $bpmFocus) { n, fine in model.setBPM(model.bpm + Double(n) * (fine ? 0.1 : 1)) }
                 .onChange(of: bpmFocus) { _, focused in
                     model.tempoFieldFocused = focused
                     // A click into the field marks the whole tempo, so typing replaces it.
                     // The click that gave the focus still places the cursor when the button comes up, so the
                     // key monitor marks it all after that release.
-                    if focused { AppModel.selectAllOnMouseUp = true; DispatchQueue.main.async { (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil) } }
+                    if focused { DispatchQueue.main.async { (NSApp.keyWindow?.firstResponder as? NSText)?.selectAll(nil) } }
                 }
             Text("BPM").font(.system(size: 10)).foregroundStyle(Theme.dim)
         }
-        .hint("Tempo. Click and type it, or press Up and Down: 1 BPM, with Shift 0.1 BPM")
+        .hint("Tempo. Drag up or down to change it, click to type it, or press Up and Down: 1 BPM, with Shift 0.1 BPM")
     }
 
     private func tile(_ symbol: String, on: Bool, tint: Color, action: @escaping () -> Void) -> some View {

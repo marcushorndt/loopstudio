@@ -805,6 +805,7 @@ struct StepSegment: View {
                     if n != dragged { step(n - dragged, NSEvent.modifierFlags.contains(.shift)); dragged = n }
                 }
                 .onEnded { _ in dragged = 0 })
+            .upDownCursorWhilePressed()
             .onKeyPress(keys: [.upArrow, .downArrow]) { press in
                 buffer = ""
                 step(press.key == .upArrow ? 1 : -1, press.modifiers.contains(.shift))

@@ -1006,6 +1006,7 @@ private struct NumberField: View {
             .onChange(of: focused) { _, now in if !now { apply() } }
             .onAppear { text = Self.format(value) }
             .onChange(of: value) { if !focused { text = Self.format(value) } }
+            .dragsValue(focus: $focused) { n, fine in commit(value + Double(n) * (fine ? 0.01 : (abs(value) >= 10 ? 1 : 0.1))) }
     }
 
     private static func format(_ v: Double) -> String { v == v.rounded() && abs(v) < 1e9 ? String(Int(v)) : String(format: "%.4g", v) }

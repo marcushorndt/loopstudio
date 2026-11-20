@@ -623,6 +623,7 @@ struct MIDILatencyField: View {
                 .onChange(of: focused) { _, now in if !now { apply() } }
                 .onAppear { text = Self.format(ms) }
                 .onChange(of: ms) { if !focused { text = Self.format(ms) } }
+                .dragsValue(focus: $focused) { n, fine in commit(max(-500, min(500, ms + Double(n) * (fine ? 0.1 : 1)))) }
             Text("ms").font(.system(size: 9)).foregroundStyle(Theme.dim)
         }
     }

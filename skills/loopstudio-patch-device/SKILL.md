@@ -2,7 +2,7 @@
 name: loopstudio-patch-device
 description: Write and change the programmable Patch device of loopstudio through the MCP. A text patch (patch_check, then patch_write) or a modular graph (patch_modules, then patch_edit), its knobs, and the limits of the language. Use it when the person asks for a custom effect, a tremolo, a filter, a delay or any sound that no built-in device makes.
 metadata:
-  updated: 2026-11-20
+  updated: 2026-11-21
 ---
 
 # The Patch device
@@ -32,8 +32,9 @@ or a graph of modules with cables. Its knobs come from the patch. Read the skill
    count, or the error with its `line`. Correct the line and check again.
 3. Put it on the device with `patch_write` (`track`, `device`, `source`). The tool compiles first. A text
    with an error is refused and the device keeps its old program.
-4. A good text replaces the program at once while the song plays. Delay lines with the same name keep
-   their content. The device takes the name from the `patch` line.
+4. A good text replaces the program at once while the song plays. A delay line keeps its content only
+   when its name and its length stay the same. When you change the length (`2 s` to `3 s`), the line
+   starts empty and the echo stops. The device takes the name from the `patch` line.
 
 For the full language, read the resource `loopstudio://help/patch` or the description of `patch_check`.
 
@@ -95,8 +96,11 @@ Rules of the graph:
 - A text patch: each `param` line is a knob, and its key is the param name.
 - A graph: a Knob module is a knob with its id as the key. A module on the panel (`expose`) shows its
   inputs without a cable as knobs with the key `module.port`. A Script module's params keep their own
-  names as keys, so the keys stay the same when `patch_edit` turns a text into a graph. A knob inside a
-  Sub carries the Sub id first, such as `sub1.filter.cutoff`.
+  names as keys, so the keys stay the same when `patch_edit` turns a text into a graph. Exception: when
+  two Scripts have a param with the same name, the compiler puts the module id before one of the keys,
+  such as `script2.cutoff`. A knob inside a Sub carries the Sub id first, such as `sub1.filter.cutoff`.
+- Do not guess a key. Read the keys from `knobs` in the `program` of the `patch_edit` receipt or of
+  `patch_read`.
 - Set a knob with `param_set` (track, device, the key, a value). Automation, macros and MIDI learn use
   the same keys. A key belongs to a param name or a module id. When you rename a param, or add a
   module again with another id, the key changes and automation on the old key stops.

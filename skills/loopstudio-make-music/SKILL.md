@@ -2,7 +2,7 @@
 name: loopstudio-make-music
 description: Build a piece of music in loopstudio through the MCP, from an empty project to a checked bounce. Tracks, built-in instruments, MIDI notes, samples, session clips with follow actions, effects and sends, the mix, and a render_bounce check of peak, clipping and silence. Use it when the person asks you to make, sketch or arrange a track, beat or loop.
 metadata:
-  updated: 2026-11-20
+  updated: 2026-11-21
 ---
 
 # Make music in loopstudio
@@ -28,7 +28,10 @@ This skill gives the order of the steps. Read the result of each step before the
    that session slot.
 4. Write the notes: `notes_set` with the clip (its id, its name or `"Bass/slot 1"`). `tick` and
    `length` count from the clip start. Pitch 60 is C3.
-5. Check the receipt. It lists the notes as the project holds them now.
+5. Check the notes. The receipt gives only the number of notes in the clip. The project changes notes
+   of one pitch that overlap: a note that runs into the next one ends there, and of two notes at the same
+   tick only the later one in the list stays. To see the stored pitches, ticks and lengths, call
+   `track_get` with the track id and read the clip.
 
 Instrument facts that change the notes you write:
 

@@ -137,7 +137,8 @@ struct Knob: View {
         .accessibilityAdjustableAction { direction in
             guard !param.isSwitch else { onChange(value >= 0.5 ? 0 : 1); return }
             // A continuous knob moves a fiftieth of its travel; a stepped one, one step.
-            let step = param.choices.isEmpty ? 0.02 : 1 / Double(max(1, param.choices.count - 1))
+            let step = param.step.map { $0 / (param.max - param.min) }
+                ?? (param.choices.isEmpty ? 0.02 : 1 / Double(max(1, param.choices.count - 1)))
             let position = param.position(value) + (direction == .increment ? step : -step)
             onChange(param.clamp(param.value(atPosition: min(max(position, 0), 1))))
         }

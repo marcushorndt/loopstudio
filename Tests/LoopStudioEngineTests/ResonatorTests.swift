@@ -87,3 +87,13 @@ private func single(_ extra: [String: Double] = [:]) -> DSPEffect {
     let fall = 20 * log10(early / max(late, 1e-12))
     #expect(fall > 45 && fall < 75)
 }
+
+/// The interval knobs move in whole semitones: a drag, a typed value and the text under the knob.
+@Test func theIntervalKnobsMoveInSemitones() throws {
+    let pitch = try #require(BuiltInEffects.spec("resonator")?.params.first { $0.key == "r2.pitch" })
+    #expect(pitch.value(atPosition: 0.6) == 5)       // -24 + 0.6 * 48 = 4.8
+    #expect(pitch.clamp(7.4) == 7)
+    #expect(pitch.format(7) == "+7 st" && pitch.format(-12) == "-12 st" && pitch.format(0) == "0 st")
+    let fine = try #require(BuiltInEffects.spec("resonator")?.params.first { $0.key == "fine" })
+    #expect(fine.clamp(12.5) == 12.5, "Fine stays continuous")
+}

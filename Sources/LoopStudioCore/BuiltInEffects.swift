@@ -20,6 +20,8 @@ public struct EffectParam: Sendable, Hashable {
     /// lines the other tracks up by). A knob turn rebuilds the plan; automation and macros cannot move it,
     /// or the compensation would be wrong between rebuilds.
     public var fixed = false
+    /// A knob that moves in steps of this size (an interval in whole semitones); nil for a continuous one.
+    public var step: Double?
 
     public init(_ key: String, _ name: String, _ min: Double, _ max: Double, _ def: Double,
                 unit: String = "", choices: [String] = [], log: Bool = false, fixed: Bool = false) {
@@ -28,7 +30,13 @@ public struct EffectParam: Sendable, Hashable {
         syncKey = key + "Sync"; divisionKey = key + "Division"
     }
 
-    public func clamp(_ v: Double) -> Double { Swift.min(Swift.max(v, min), max) }
+    public func clamp(_ v: Double) -> Double { Swift.min(Swift.max(snap(v), min), max) }
+
+    /// The value on the knob's step, when it has one.
+    public func snap(_ v: Double) -> Double {
+        guard let step, step > 0 else { return v }
+        return min + ((v - min) / step).rounded() * step
+    }
 
     /// A switch: two choices, off and on.
     public var isSwitch: Bool { choices == ["Off", "On"] }
@@ -59,11 +67,16 @@ public struct EffectParam: Sendable, Hashable {
         let q = Swift.min(Swift.max(p, 0), 1)
         if logarithmic, min > 0 { return min * pow(max / min, q) }
         let v = min + q * (max - min)
-        return choices.isEmpty ? v : v.rounded()
+        return choices.isEmpty ? snap(v) : v.rounded()
     }
 
     public func format(_ v: Double) -> String {
         if !choices.isEmpty { return choices[Swift.min(Swift.max(0, Int(v.rounded())), choices.count - 1)] }
+        if let step, step >= 1 {
+            let n = Int(snap(v).rounded())
+            let text = min < 0 && n > 0 ? "+\(n)" : "\(n)"
+            return unit.isEmpty ? text : "\(text) \(unit)"
+        }
         let a = abs(v)
         let text = a >= 1000 ? String(format: "%.0f", v) : (a >= 100 ? String(format: "%.0f", v) : (a >= 10 ? String(format: "%.1f", v) : String(format: "%.2f", v)))
         return unit.isEmpty ? text : "\(text) \(unit)"
@@ -257,7 +270,10 @@ public enum BuiltInEffects {
         let intervals: [Double] = [7, 12, 15, 19], gains: [Double] = [0.8, 0.6, 0.5, 0.4]
         for k in 2...5 {
             params.append(EffectParam("r\(k).on", "On", 0, 1, 1, choices: ["Off", "On"]))
-            params.append(EffectParam("r\(k).pitch", "Pitch", -24, 24, intervals[k - 2], unit: "st"))
+            // Whole semitones, as in Live: the Fine knob tunes all five in cents.
+            var pitch = EffectParam("r\(k).pitch", "Pitch", -24, 24, intervals[k - 2], unit: "st")
+            pitch.step = 1
+            params.append(pitch)
             params.append(EffectParam("r\(k).gain", "Gain", 0, 1, gains[k - 2]))
         }
         params += [

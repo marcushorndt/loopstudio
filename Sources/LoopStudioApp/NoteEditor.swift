@@ -8,6 +8,10 @@ import SwiftUI
 /// change its pitch (in semitones; with Option free), sideways to move it in time, and its right end to make it
 /// longer or shorter. A double click puts a note on the nearest semitone. Delete silences the marked note, or
 /// brings it back. The page shows the file's own time line.
+///
+/// Zoom as in the piano roll: a pinch or Command and scroll zooms in time around the pointer, Option and scroll
+/// (or a pinch with Option) zooms the rows. A plain scroll moves the view once it is zoomed. The buttons in the
+/// strip zoom in, out and back to the whole file.
 struct NoteEditor: View {
     @Environment(AppModel.self) private var model
     let clip: AudioClip
@@ -16,6 +20,16 @@ struct NoteEditor: View {
     /// A drag in progress: the note, what the drag does, and the change so far.
     @State private var drag: Drag?
     @FocusState private var focused: Bool
+    /// The view: 1 shows the whole file and every note row; more zooms in. `startSeconds` is the time at the
+    /// left edge, `pitchOffset` the rows hidden below the view.
+    @State private var zoom = 1.0
+    @State private var rowZoom = 1.0
+    @State private var startSeconds = 0.0
+    @State private var pitchOffset = 0.0
+    @State private var pinchStart: (zoom: Double, rows: Double)?
+    @State private var wheel = NoteWheel()
+    /// The last layout and pointer, for the wheel and the pinch. A class: writing it does not redraw.
+    @State private var geometry = NoteGeometry()
 
     struct Drag {
         var key: String
@@ -52,8 +66,13 @@ struct NoteEditor: View {
         }
         .onAppear { model.analyzeNotes(clip) }
         .onChange(of: source) { model.analyzeNotes(clip) }
-        .onChange(of: clip.id) { model.selectedAudioNote = nil }
-        .onDisappear { model.selectedAudioNote = nil }
+        .onChange(of: clip.id) {
+            model.selectedAudioNote = nil
+            zoom = 1; rowZoom = 1; startSeconds = 0; pitchOffset = 0
+        }
+        .onHover { wheel.inside = $0 }
+        .onAppear { wheel.install(scrolled) }
+        .onDisappear { model.selectedAudioNote = nil; wheel.remove() }
     }
 
     private func message(_ text: String) -> some View {
@@ -62,13 +81,17 @@ struct NoteEditor: View {
 
     // MARK: Layout
 
-    private struct Layout {
+    /// `lo...hi`: the rows in view. `base`: the pitch at the bottom edge. `left`: where second 0 lies.
+    struct Layout {
         let lo: Int, hi: Int
+        let base: Double
         let row: CGFloat
         let left: CGFloat
         let pps: CGFloat
         let height: CGFloat
-        func y(_ pitch: Double) -> CGFloat { height - (CGFloat(pitch - Double(lo)) + 0.5) * row }
+        /// The whole file and every note row at zoom 1: for the zoom and the scroll limits.
+        var seconds = 1.0, fitPPS: CGFloat = 1, fitRow: CGFloat = 1, allLo = 0, rows = 1
+        func y(_ pitch: Double) -> CGFloat { height - (CGFloat(pitch - base) + 0.5) * row }
         func x(_ seconds: Double) -> CGFloat { left + CGFloat(seconds) * pps }
     }
 
@@ -81,9 +104,72 @@ struct NoteEditor: View {
         var l = Int(lo.rounded(.down)) - 2, h = Int(hi.rounded(.up)) + 2
         // At least two octaves, so a few notes do not fill the page with fat rows.
         if h - l < 24 { let pad = (24 - (h - l)) / 2; l -= pad; h = l + 24 }
-        let row = size.height / CGFloat(h - l + 1)
-        let seconds = Double(model.project.asset(edit.source)?.frames ?? Int64(analysis.frames * analysis.hop)) / analysis.sampleRate
-        return Layout(lo: l, hi: h, row: row, left: gutter, pps: (size.width - gutter - 4) / CGFloat(max(0.1, seconds)), height: size.height)
+        let rows = h - l + 1
+        let fitRow = size.height / CGFloat(rows)
+        let seconds = max(0.1, Double(model.project.asset(edit.source)?.frames ?? Int64(analysis.frames * analysis.hop)) / analysis.sampleRate)
+        let fitPPS = (size.width - gutter - 4) / CGFloat(seconds)
+        let pps = fitPPS * CGFloat(zoom), row = fitRow * CGFloat(rowZoom)
+        let start = min(max(0, startSeconds), seconds - seconds / zoom)
+        let shown = Double(rows) / rowZoom
+        let base = Double(l) + min(max(0, pitchOffset), Double(rows) - shown)
+        var layout = Layout(lo: max(l, Int(base.rounded(.down)) - 1), hi: min(h, Int((base + shown).rounded(.up)) + 1), base: base,
+                            row: row, left: gutter - CGFloat(start) * pps, pps: pps, height: size.height)
+        layout.seconds = seconds; layout.fitPPS = fitPPS; layout.fitRow = fitRow; layout.allLo = l; layout.rows = rows
+        geometry.layout = layout
+        geometry.width = size.width
+        return layout
+    }
+
+    // MARK: Zoom
+
+    /// The deepest time zoom: about 50 ms across the view.
+    private func maxZoom(_ l: Layout) -> Double { max(1, min(400, l.seconds / 0.05)) }
+
+    /// Zooms in time to `target`; the time under `x` stays under it.
+    private func zoomTime(to target: Double, at x: CGFloat) {
+        guard let l = geometry.layout else { return }
+        let z = min(maxZoom(l), max(1, target))
+        let at = Double((x - l.left) / l.pps)
+        zoom = z
+        startSeconds = min(max(0, at - Double((x - gutter) / (l.fitPPS * CGFloat(z)))), l.seconds - l.seconds / z)
+    }
+
+    /// Zooms the rows to `target`; the pitch under `y` stays under it.
+    private func zoomRows(to target: Double, at y: CGFloat) {
+        guard let l = geometry.layout else { return }
+        let z = min(8, max(1, target))
+        let at = l.base + Double((l.height - y) / l.row) - 0.5
+        rowZoom = z
+        let base = at - Double((l.height - y) / (l.fitRow * CGFloat(z))) + 0.5
+        pitchOffset = min(max(0, base - Double(l.allLo)), Double(l.rows) - Double(l.rows) / z)
+    }
+
+    /// A scroll over the page: Command zooms in time, Option zooms the rows, a plain scroll moves a zoomed view.
+    /// Returns false when the page has nothing to do with it.
+    private func scrolled(_ dx: CGFloat, _ dy: CGFloat, _ command: Bool, _ option: Bool) -> Bool {
+        guard let l = geometry.layout else { return false }
+        let p = geometry.pointer
+        if command { zoomTime(to: zoom * pow(1.01, Double(dy != 0 ? dy : dx)), at: p.x); return true }
+        if option { zoomRows(to: rowZoom * pow(1.01, Double(dy != 0 ? dy : dx)), at: p.y); return true }
+        guard zoom > 1 || rowZoom > 1 else { return false }
+        if zoom > 1 { startSeconds = min(max(0, startSeconds - Double(dx / l.pps)), l.seconds - l.seconds / zoom) }
+        if rowZoom > 1 {
+            pitchOffset = min(max(0, pitchOffset + Double(dy / l.row)), Double(l.rows) - Double(l.rows) / rowZoom)
+        }
+        return true
+    }
+
+    private var zoomButtons: some View {
+        HStack(spacing: 2) {
+            Button { zoomTime(to: zoom / 1.5, at: geometry.centre) } label: { Image(systemName: "minus.magnifyingglass") }
+                .help("Zoom out. Command and scroll, or a pinch, zoom in time; Option and scroll zooms the rows.")
+            Button { zoomTime(to: zoom * 1.5, at: geometry.centre) } label: { Image(systemName: "plus.magnifyingglass") }
+                .help("Zoom in. Command and scroll, or a pinch, zoom in time; Option and scroll zooms the rows.")
+            Button { zoom = 1; rowZoom = 1; startSeconds = 0; pitchOffset = 0 } label: { Image(systemName: "arrow.left.and.right.square") }
+                .help("Show the whole file and every note")
+                .disabled(zoom == 1 && rowZoom == 1)
+        }
+        .buttonStyle(.borderless)
     }
 
     /// The note's change with the drag in progress on top.
@@ -115,16 +201,19 @@ struct NoteEditor: View {
             // Rows: the black keys darker, a line under every C, its name in the gutter.
             for p in l.lo...l.hi {
                 let y = l.y(Double(p))
-                let rect = CGRect(x: l.left, y: y - l.row / 2, width: size.width - l.left, height: l.row)
+                let rect = CGRect(x: gutter, y: y - l.row / 2, width: size.width - gutter, height: l.row)
                 if [1, 3, 6, 8, 10].contains(((p % 12) + 12) % 12) { ctx.fill(Path(rect), with: .color(Theme.background.opacity(0.55))) }
                 if p % 12 == 0 {
-                    ctx.fill(Path(CGRect(x: l.left, y: y + l.row / 2 - 0.5, width: size.width - l.left, height: 0.5)), with: .color(Theme.line))
+                    ctx.fill(Path(CGRect(x: gutter, y: y + l.row / 2 - 0.5, width: size.width - gutter, height: 0.5)), with: .color(Theme.line))
                 }
                 if p % 12 == 0 || l.row >= 11 {
                     ctx.draw(Text(BuiltInEffects.noteNames[safe: p] ?? "").font(.system(size: min(10, max(8, l.row - 1)))).foregroundStyle(Theme.dim),
-                             at: CGPoint(x: l.left - 4, y: y), anchor: .trailing)
+                             at: CGPoint(x: gutter - 4, y: y), anchor: .trailing)
                 }
             }
+            // The notes stay right of the gutter when the view is moved.
+            var ctx = ctx
+            ctx.clip(to: Path(CGRect(x: gutter, y: 0, width: size.width - gutter, height: size.height)))
             for n in analysis.notes {
                 let c = change(n, edit)
                 let s = span(n, c, analysis, l)
@@ -159,12 +248,23 @@ struct NoteEditor: View {
         }
         .contentShape(Rectangle())
         .gesture(dragGesture(analysis, edit, l))
+        // A pinch zooms in time around the fingers; with Option held it zooms the rows.
+        .simultaneousGesture(MagnifyGesture()
+            .onChanged { g in
+                if pinchStart == nil { pinchStart = (zoom, rowZoom) }
+                guard let start = pinchStart else { return }
+                if NSEvent.modifierFlags.contains(.option) { zoomRows(to: start.rows * g.magnification, at: g.startLocation.y) }
+                else { zoomTime(to: start.zoom * g.magnification, at: g.startLocation.x) }
+            }
+            .onEnded { _ in pinchStart = nil })
         .focusable()
         .focusEffectDisabled()
         .focused($focused)
         .onHover { inside in if !inside { NSCursor.arrow.set() } }
         .onContinuousHover { phase in
-            guard drag == nil, case .active(let p) = phase else { return }
+            guard case .active(let p) = phase else { return }
+            geometry.pointer = p
+            guard drag == nil else { return }
             switch hit(p, analysis, edit, l) {
             case let (_, stretch)? where stretch: NSCursor.resizeLeftRight.set()
             case _?: NSCursor.openHand.set()
@@ -267,6 +367,7 @@ struct NoteEditor: View {
             }
             Spacer(minLength: 8)
             if model.pendingNoteEdits[clip.id] != nil { ProgressView().controlSize(.mini) }
+            zoomButtons
             Toggle("Keep Formants", isOn: Binding(get: { edit.keepFormants }, set: { on in
                 var e = edit
                 e.keepFormants = on
@@ -306,6 +407,39 @@ struct NoteEditor: View {
                 .textFieldStyle(.roundedBorder).frame(width: 52).multilineTextAlignment(.trailing)
             Text(unit).foregroundStyle(Theme.dim)
         }
+    }
+}
+
+/// The last layout of the Notes page and the pointer over it.
+@MainActor
+final class NoteGeometry {
+    var layout: NoteEditor.Layout?
+    var pointer = CGPoint.zero
+    /// The middle of the note area, where the buttons zoom.
+    var width: CGFloat = 0
+    var centre: CGFloat { 34 + (width - 34) / 2 }
+}
+
+/// Every scroll over the Notes page goes to it: a zoom with Command or Option, a move without.
+@MainActor
+final class NoteWheel {
+    var inside = false
+    private var token: Any?
+
+    func install(_ handle: @escaping (CGFloat, CGFloat, Bool, Bool) -> Bool) {
+        guard token == nil else { return }
+        token = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, self.inside else { return event }
+            let k: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 8
+            let used = handle(event.scrollingDeltaX * k, event.scrollingDeltaY * k,
+                              event.modifierFlags.contains(.command), event.modifierFlags.contains(.option))
+            return used ? nil : event
+        }
+    }
+
+    func remove() {
+        if let token { NSEvent.removeMonitor(token) }
+        token = nil
     }
 }
 

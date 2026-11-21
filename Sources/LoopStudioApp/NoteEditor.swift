@@ -66,6 +66,8 @@ struct NoteEditor: View {
                                 playhead(analysis, size: geo.size)
                             }
                             .clipped()
+                            // A click here gives the page the keys: 0 then mutes notes here, never the clip.
+                            .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in model.noteEditorFocus = true })
                         }
                     }
                 }

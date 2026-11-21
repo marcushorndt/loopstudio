@@ -285,6 +285,8 @@ struct PianoRoll: View {
                 }
             }
             .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: Theme.radius))
+            // A click in the roll gives it the keys: 0 then mutes notes here, never the clip.
+            .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in model.noteEditorFocus = true })
         }
     }
 

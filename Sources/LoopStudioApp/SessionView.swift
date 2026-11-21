@@ -324,6 +324,8 @@ private struct SlotCell: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: Theme.radius))
+            // A deactivated clip goes grey, as in the arrangement.
+            .saturation(slot.clip.isDeactivated ? 0 : 1).opacity(slot.clip.isDeactivated ? 0.5 : 1)
             .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(look.frame(tint: tint, selected: selected), lineWidth: selected || look.frameLit ? 1.5 : 1))
             .frame(height: slotHeight)
             .hint(state == .ready ? "\(model.clipName(slot.clip)): played when the transport stopped. Play starts it again."

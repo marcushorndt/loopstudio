@@ -161,8 +161,11 @@ final class AppModel {
     var lastClipOnTrack: [TrackID: ClipID] = [:]
     /// All marked clips. `selectedClip` is the one the clip panel shows.
     var selectedClips: Set<ClipID> = [] {
-        didSet { if !selectedClips.isEmpty { trackFocused = false } }
+        didSet { if !selectedClips.isEmpty { trackFocused = false }; noteEditorFocus = false }
     }
+    /// The last click was in the piano roll or on the Notes page of the open clip: 0 mutes the marked notes
+    /// there and never the clip. A click on a clip or a track ends it.
+    @ObservationIgnored var noteEditorFocus = false
     /// Notes marked in the piano roll of the selected clip. Delete removes them instead of the clip.
     var selectedNotes: Set<MIDINote> = []
     /// Counts the arrow-key moves of the marked notes: the piano roll scrolls after each one to keep them in view.
@@ -1704,6 +1707,7 @@ final class AppModel {
 
     /// A click on a track header or a mixer strip: the track is selected and the clips are not.
     func focusTrack(_ id: TrackID) {
+        noteEditorFocus = false
         selectedTrack = id
         selectedClip = nil
         selectedClips = []

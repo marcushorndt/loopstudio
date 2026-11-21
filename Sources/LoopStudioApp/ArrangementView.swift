@@ -509,6 +509,11 @@ private struct Lane: View {
     }
 }
 
+extension Clip {
+    /// An audio clip switched off with 0 or "Deactivate Clip": it is drawn grey.
+    var isDeactivated: Bool { if case .audio(let a) = self { return a.muted }; return false }
+}
+
 private struct ArrangementClip: View {
     @Environment(AppModel.self) private var model
     let clip: Clip
@@ -581,6 +586,8 @@ private struct ArrangementClip: View {
                 .padding(.horizontal, 6).padding(.top, 3).lineLimit(1)
         }
         .frame(width: w, height: model.laneHeight(track) - 6)
+        // A deactivated clip goes grey, as in Live: it stays in place but does not play.
+        .saturation(clip.isDeactivated ? 0 : 1).opacity(clip.isDeactivated ? 0.5 : 1)
         .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(selected ? Theme.text : tint.opacity(0.55), lineWidth: selected ? 1.5 : 1))
         // The header: a click marks the clip, a drag moves it. The body: a click places the playhead, a drag
         // marks a time range in the clip. Both honour the grid; Option does the opposite.

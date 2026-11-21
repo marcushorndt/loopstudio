@@ -40,9 +40,10 @@ extension AppModel {
         case .groupTracks: selectedTrack != nil || deviceFocused
         case .ungroup: rackToUngroup != nil
         case .duplicateTrack: selectedTrack != nil
-        case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .noteOtherGridLeft, .noteOtherGridRight: markedMIDIClip != nil
+        case .noteOctaveUp, .noteOctaveDown, .noteLonger, .noteShorter, .noteOtherGridLeft, .noteOtherGridRight:
+            markedMIDIClip != nil || markedAudioClip != nil
         // Shift and an arrow: the same keys move marked notes an octave or a step, so they come first.
-        case .extendUp, .extendDown, .extendLeft, .extendRight: viewMode == .session && markedMIDIClip == nil
+        case .extendUp, .extendDown, .extendLeft, .extendRight: viewMode == .session && markedMIDIClip == nil && markedAudioClip == nil
         case .exportAudio: !exporting
         default: true
         }
@@ -66,6 +67,10 @@ extension AppModel {
             // duplicates the track, as ⌘D does in Live.
             if let marking = automationMarking { marking.duplicate() }
             else if !selectedNotes.isEmpty { copySelection(); pasteClipboard() }
+            // On the Notes page ⌘D must not copy the clip behind it. Audio notes have no copies yet.
+            else if markedAudioClip != nil || (noteEditorFocus && detailTab == .clip && clipPage == .notes) {
+                status = "Audio notes cannot be duplicated yet."
+            }
             else if let id = selectedDevice, let (track, _) = deviceLocation(id) { duplicateDevice(track.id, id) }
             else if trackFocused, selectedClips.isEmpty, selectedClip == nil, selectedScene == nil, let t = selectedTrack { duplicateTrack(t) }
             else { duplicateSelection() }
@@ -293,9 +298,7 @@ extension AppModel {
     func moveSelection(rows: Int, tracks: Int) {
         // Marked notes in the open clip take the arrow keys: up and down transpose, left and right move in time.
         if markedAudioClip != nil {
-            // Shift (the extend keys come here in the arrangement): an octave, or longer and shorter.
-            if NSEvent.modifierFlags.contains(.shift) { nudgeAudioNotes(pitch: -rows * 12, length: Int64(tracks) * noteStep) }
-            else { nudgeAudioNotes(pitch: -rows, time: Int64(tracks) * noteStep) }
+            nudgeAudioNotes(pitch: -rows, time: Int64(tracks) * noteStep)
             return
         }
         if markedMIDIClip != nil {
@@ -762,6 +765,12 @@ extension AppModel {
 
     func deactivateSelected() {
         if markedMIDIClip != nil { toggleMarkedNotesMute(); return }
+        if let a = markedAudioClip { toggleNoteMute(a, keys: selectedAudioNotes); return }
+        // In a note editor without marked notes, 0 does not reach the clip behind it.
+        if noteEditorFocus, detailTab == .clip, selectedClip != nil {
+            status = "Mark notes to mute them: click one, or drag a box around several."
+            return
+        }
         var ids = selectedClips
         if let c = selectedClip { ids.insert(c) }
         let clips = ids.compactMap { project.findClip($0)?.1 }.compactMap { clip -> AudioClip? in

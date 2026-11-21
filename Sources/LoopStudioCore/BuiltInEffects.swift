@@ -199,6 +199,7 @@ public enum BuiltInEffects {
         overdrive,
         liveCut,
         granulator,
+        resonator,
         compressor,
         limiter,
         multiband,
@@ -227,6 +228,54 @@ public enum BuiltInEffects {
         spec.view = "granulator"
         spec.groups = [EffectGroup("Buffer", ["record", "position", "feedback"]), EffectGroup("Grain", ["sizeMs", "density", "window", "sprayMs"]),
                        EffectGroup("Pitch", ["pitch", "pitchSpread", "reverse"], row: 1), EffectGroup("Out", ["panSpread", "level", "mix"], row: 1)]
+        return spec
+    }()
+
+    /// The note names for a MIDI note number, C-2 to G8, as the knobs and menus show them.
+    public static let noteNames: [String] = (0...127).map { n in
+        ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][n % 12] + String(n / 12 - 2)
+    }
+
+    /// Resonator, after Live's Resonators: five tuned resonators side by side, played by the sound that runs
+    /// through. Resonator I sits on the root note, II to V on intervals above or below it, each with its own
+    /// level. Decay is how long a resonance rings, Color how bright it stays (a low-pass in each loop), Width
+    /// how far II to V spread from the middle. Harmonic rings with every partial; Hollow keeps the odd ones and
+    /// sounds an octave lower, like a clarinet or a closed pipe. With MIDI on, the notes of the track (after its
+    /// instrument, or the keys played into it) set the root; without a note the Note knob does.
+    static let resonator: EffectSpec = {
+        var note = EffectParam("note", "Note", 0, 127, 48, choices: noteNames)
+        note.rotary = true
+        var params: [EffectParam] = [
+            EffectParam("mode", "Mode", 0, 1, 0, choices: ["Harmonic", "Hollow"]),
+            note,
+            EffectParam("fine", "Fine", -50, 50, 0, unit: "ct"),
+            EffectParam("midi", "MIDI", 0, 1, 1, choices: ["Off", "On"]),
+            EffectParam("decay", "Decay", 0.05, 30, 2.5, unit: "s", log: true),
+            EffectParam("color", "Color", 0, 1, 0.5),
+            EffectParam("r1.gain", "Gain", 0, 1, 1),
+        ]
+        let intervals: [Double] = [7, 12, 15, 19], gains: [Double] = [0.8, 0.6, 0.5, 0.4]
+        for k in 2...5 {
+            params.append(EffectParam("r\(k).on", "On", 0, 1, 1, choices: ["Off", "On"]))
+            params.append(EffectParam("r\(k).pitch", "Pitch", -24, 24, intervals[k - 2], unit: "st"))
+            params.append(EffectParam("r\(k).gain", "Gain", 0, 1, gains[k - 2]))
+        }
+        params += [
+            EffectParam("width", "Width", 0, 1, 0.5),
+            EffectParam("gain", "Gain", -24, 24, 0, unit: "dB"),
+            EffectParam("mix", "Dry/Wet", 0, 1, 0.5),
+        ]
+        var spec = EffectSpec(id: "resonator", name: "Resonator", params: params)
+        spec.groups = [
+            EffectGroup("Tuning", ["mode", "note", "fine", "midi"]),
+            EffectGroup("Ring", ["decay", "color"]),
+            EffectGroup("Out", ["width", "gain", "mix"]),
+            EffectGroup("I", ["r1.gain"], row: 1),
+            EffectGroup("II", ["r2.on", "r2.pitch", "r2.gain"], row: 1),
+            EffectGroup("III", ["r3.on", "r3.pitch", "r3.gain"], row: 1),
+            EffectGroup("IV", ["r4.on", "r4.pitch", "r4.gain"], row: 1),
+            EffectGroup("V", ["r5.on", "r5.pitch", "r5.gain"], row: 1),
+        ]
         return spec
     }()
 

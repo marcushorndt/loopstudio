@@ -106,6 +106,7 @@ public class DSPEffect: @unchecked Sendable {
         case "overdrive": effect = OverdriveDSP(spec: spec, sampleRate: sampleRate)
         case "livecut": effect = LiveCutDSP(spec: spec, sampleRate: sampleRate)
         case "granulator": effect = GranulatorDSP(spec: spec, sampleRate: sampleRate)
+        case "resonator": effect = ResonatorDSP(spec: spec, sampleRate: sampleRate)
         // A patch without a program: the starter. The renderer gives a device its own program (`PatchDSP`).
         case "patch":
             guard case .success(let program) = PatchCompiler.cached(PatchExamples.starter) else { return nil }

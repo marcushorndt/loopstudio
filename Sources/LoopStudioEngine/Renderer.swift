@@ -143,9 +143,11 @@ public final class Renderer {
         var allRacks: [RackRuntime] = []
         var fanouts: [MIDIFanout?] = []
         /// The hosted music effects among `slots`, at any depth; a bypassed slot does not run and takes no notes.
-        func musicEffects(_ slots: [Slot], into out: inout [AudioUnitEffect]) {
+        func musicEffects(_ slots: [Slot], into out: inout [any MIDIReceiver]) {
             for s in slots where !s.bypassed {
                 if let u = s.unit, u.acceptsMIDI, !u.isInstrument { out.append(u) }
+                // A built-in effect that listens to notes (the Resonator's root).
+                if let e = s.effect, !(e is DSPInstrument), let m = e as? any MIDIReceiver { out.append(m) }
                 if let r = s.rack { for c in r.chains { musicEffects(c.slots, into: &out) } }
             }
         }
@@ -246,7 +248,7 @@ public final class Renderer {
         }
         for node in plan.nodes {
             built.append(slots(for: node.effects))
-            var effects: [AudioUnitEffect] = []
+            var effects: [any MIDIReceiver] = []
             musicEffects(built[built.count - 1], into: &effects)
             fanouts.append(effects.isEmpty ? nil : MIDIFanout(effects))
             instruments.append(node.instrument.map { Slot(effect: nil, unit: $0, bypassed: false, auto: node.instrumentAuto, params: [:]) })
@@ -1024,12 +1026,13 @@ struct MacroLink {
     var last = Double.nan
 }
 
-/// The hosted music effects (`aumf`) of one node, at any depth of its chain. They get every MIDI message
-/// the node's instrument gets: notes, controls and program changes from clips and from live input.
+/// The hosted music effects (`aumf`) of one node, at any depth of its chain, and the built-in effects that
+/// listen to notes. They get every MIDI message the node's instrument gets: notes, controls and program
+/// changes from clips and from live input.
 final class MIDIFanout: MIDIReceiver {
-    let units: [AudioUnitEffect]
+    let units: [any MIDIReceiver]
 
-    init(_ units: [AudioUnitEffect]) { self.units = units }
+    init(_ units: [any MIDIReceiver]) { self.units = units }
 
     func sendMIDI(_ status: UInt8, _ data1: UInt8, _ data2: UInt8, sampleOffset: Int) {
         for u in units { u.sendMIDI(status, data1, data2, sampleOffset: sampleOffset) }

@@ -6,8 +6,9 @@ import SwiftUI
 /// The Notes page of an audio clip, after Melodyne: every note the analysis found in the file is a blob at its
 /// pitch, as long as it sounds and as thick as it is loud, also the notes of a chord. Drag a blob up or down to
 /// change its pitch (in semitones; with Option free), sideways to move it in time, and its right end to make it
-/// longer or shorter. A double click puts a note on the nearest semitone. Delete silences the marked note, or
-/// brings it back. The page shows the file's own time line.
+/// longer or shorter. A double click puts a note on the nearest semitone. A drag over empty space marks the notes
+/// in its box (with Shift it adds them), Shift-click marks one more; a drag of a marked note moves them all.
+/// Delete silences the marked notes, or brings them back. The page shows the file's own time line.
 ///
 /// Zoom as in the piano roll: a pinch or Command and scroll zooms in time around the pointer, Option and scroll
 /// (or a pinch with Option) zooms the rows. A plain scroll moves the view once it is zoomed. The buttons in the
@@ -27,12 +28,16 @@ struct NoteEditor: View {
     @State private var startSeconds = 0.0
     @State private var pitchOffset = 0.0
     @State private var pinchStart: (zoom: Double, rows: Double)?
+    /// A box drag over empty space: its corners, and the notes marked before it (Shift adds to them).
+    @State private var marquee: (from: CGPoint, to: CGPoint, base: Set<String>)?
     @State private var wheel = NoteWheel()
     /// The last layout and pointer, for the wheel and the pinch. A class: writing it does not redraw.
     @State private var geometry = NoteGeometry()
 
     struct Drag {
         var key: String
+        /// The notes the drag moves: the marked ones when the grabbed note is among them.
+        var keys: Set<String> = []
         var stretching: Bool
         /// The direction a move took after the first pixels: a move changes pitch or time, not both.
         var vertical: Bool?
@@ -54,7 +59,13 @@ struct NoteEditor: View {
                     if analysis.notes.isEmpty {
                         message("No notes found. The file holds no clear pitches (drums, noise or speech).")
                     } else {
-                        GeometryReader { geo in canvas(analysis, size: geo.size) }
+                        GeometryReader { geo in
+                            ZStack(alignment: .topLeading) {
+                                canvas(analysis, size: geo.size)
+                                playhead(analysis, size: geo.size)
+                            }
+                            .clipped()
+                        }
                     }
                 }
             } else if model.notesInProgress.contains(source) {
@@ -67,12 +78,12 @@ struct NoteEditor: View {
         .onAppear { model.analyzeNotes(clip) }
         .onChange(of: source) { model.analyzeNotes(clip) }
         .onChange(of: clip.id) {
-            model.selectedAudioNote = nil
+            model.markAudioNotes([], primary: nil)
             zoom = 1; rowZoom = 1; startSeconds = 0; pitchOffset = 0
         }
         .onHover { wheel.inside = $0 }
         .onAppear { wheel.install(scrolled) }
-        .onDisappear { model.selectedAudioNote = nil; wheel.remove() }
+        .onDisappear { model.markAudioNotes([], primary: nil); wheel.remove() }
     }
 
     private func message(_ text: String) -> some View {
@@ -118,6 +129,22 @@ struct NoteEditor: View {
         geometry.layout = layout
         geometry.width = size.width
         return layout
+    }
+
+    /// The playhead: where the clip plays in the file now, through its start marker, loop and warp.
+    @ViewBuilder
+    private func playhead(_ analysis: NoteAnalysis, size: CGSize) -> some View {
+        if let asset = model.project.asset(clip.asset), asset.sampleRate > 0 {
+            let l = layout(analysis, model.noteEdit(clip), size: size)
+            let session = model.isSessionClip(clip.id)
+            let fileTicks = model.fileTicks(clip, asset)
+            let warp = model.waveGeometry(clip, asset)
+            ClipPlayhead(clip: clip.id, period: WarpEditor.noPeriod) { elapsed in
+                let beat = clip.playTick(after: elapsed, session: session, fileTicks: fileTicks).quarters
+                let x = l.x(warp.source(atBeat: beat) / asset.sampleRate)
+                return x < gutter ? -10 : x // not over the note names
+            }
+        }
     }
 
     // MARK: Zoom
@@ -175,7 +202,7 @@ struct NoteEditor: View {
     /// The note's change with the drag in progress on top.
     private func change(_ n: DetectedNote, _ edit: NoteEdit) -> NoteChange {
         var c = edit.change(n.key) ?? NoteChange(key: n.key)
-        if let d = drag, d.key == n.key {
+        if let d = drag, d.keys.contains(n.key) {
             c.pitch += d.pitch
             c.shift += d.shift
             c.stretch *= d.stretch
@@ -195,7 +222,7 @@ struct NoteEditor: View {
     private func canvas(_ analysis: NoteAnalysis, size: CGSize) -> some View {
         let edit = model.noteEdit(clip)
         let l = layout(analysis, edit, size: size)
-        let selected = model.selectedAudioNote
+        let selected = model.selectedAudioNotes
         let loudest = max(1e-6, analysis.notes.flatMap(\.level).max() ?? 1)
         return Canvas { ctx, size in
             // Rows: the black keys darker, a line under every C, its name in the gutter.
@@ -217,7 +244,7 @@ struct NoteEditor: View {
             for n in analysis.notes {
                 let c = change(n, edit)
                 let s = span(n, c, analysis, l)
-                let isSelected = n.key == selected
+                let isSelected = selected.contains(n.key)
                 // The blob: its centre follows the pitch frame by frame, its thickness the level.
                 var top: [CGPoint] = [], bottom: [CGPoint] = []
                 let step = max(1, Int(Double(n.frames) / Double(max(1, s.x1 - s.x0)) * 2))
@@ -244,6 +271,11 @@ struct NoteEditor: View {
                     ctx.stroke(Path { $0.move(to: CGPoint(x: old.x0, y: old.y)); $0.addLine(to: CGPoint(x: old.x1, y: old.y)) },
                                with: .color(Theme.dim.opacity(0.6)), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
                 }
+            }
+            if let m = marquee {
+                let box = CGRect(x: min(m.from.x, m.to.x), y: min(m.from.y, m.to.y), width: abs(m.to.x - m.from.x), height: abs(m.to.y - m.from.y))
+                ctx.fill(Path(box), with: .color(Theme.text.opacity(0.08)))
+                ctx.stroke(Path(box), with: .color(Theme.text.opacity(0.6)), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
             }
         }
         .contentShape(Rectangle())
@@ -288,15 +320,48 @@ struct NoteEditor: View {
 
     // MARK: Editing
 
+    /// The notes whose blob touches a box.
+    private func notes(in box: CGRect, _ analysis: NoteAnalysis, _ edit: NoteEdit, _ l: Layout) -> Set<String> {
+        Set(analysis.notes.filter { n in
+            let s = span(n, change(n, edit), analysis, l)
+            return CGRect(x: s.x0, y: s.y - l.row / 2, width: max(1, s.x1 - s.x0), height: l.row).intersects(box)
+        }.map(\.key))
+    }
+
     private func dragGesture(_ analysis: NoteAnalysis, _ edit: NoteEdit, _ l: Layout) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { v in
-                if drag == nil {
+                let shift = NSEvent.modifierFlags.contains(.shift)
+                if drag == nil, marquee == nil {
                     focused = true
-                    guard let (key, stretching) = hit(v.startLocation, analysis, edit, l) else { model.selectedAudioNote = nil; return }
-                    model.selectedAudioNote = key
-                    drag = Drag(key: key, stretching: stretching)
+                    guard let (key, stretching) = hit(v.startLocation, analysis, edit, l) else {
+                        // Empty space: a box marks the notes it touches.
+                        marquee = (v.startLocation, v.location, shift ? model.selectedAudioNotes : [])
+                        if !shift { model.markAudioNotes([], primary: nil) }
+                        return
+                    }
+                    var marked = model.selectedAudioNotes
+                    if shift {
+                        // Shift-click adds a note to the marked ones, or takes it out.
+                        if marked.contains(key) { marked.remove(key) } else { marked.insert(key) }
+                        model.markAudioNotes(marked, primary: key)
+                        guard marked.contains(key) else { return }
+                    } else if !marked.contains(key) {
+                        marked = [key]
+                        model.markAudioNotes(marked, primary: key)
+                    } else {
+                        model.markAudioNotes(marked, primary: key)
+                    }
+                    drag = Drag(key: key, keys: marked, stretching: stretching)
                     (stretching ? NSCursor.resizeLeftRight : NSCursor.closedHand).set()
+                }
+                if let m = marquee {
+                    marquee = (m.from, v.location, m.base)
+                    let box = CGRect(x: min(m.from.x, v.location.x), y: min(m.from.y, v.location.y),
+                                     width: abs(v.location.x - m.from.x), height: abs(v.location.y - m.from.y))
+                    let inside = box.width < 2 && box.height < 2 ? [] : notes(in: box, analysis, edit, l)
+                    model.markAudioNotes(m.base.union(inside), primary: nil)
+                    return
                 }
                 guard var d = drag else { return }
                 let dx = v.translation.width, dy = v.translation.height
@@ -316,21 +381,27 @@ struct NoteEditor: View {
                 drag = d
             }
             .onEnded { _ in
+                if marquee != nil { marquee = nil; return }
                 defer { drag = nil; NSCursor.openHand.set() }
-                guard let d = drag, let n = analysis.notes.first(where: { $0.key == d.key }) else { return }
-                var c = edit.change(d.key) ?? NoteChange(key: d.key)
+                guard let d = drag else { return }
                 if d.moved {
-                    c.pitch += d.pitch
-                    c.shift += d.shift
-                    c.stretch *= d.stretch
-                    if c.pitch == edit.change(d.key)?.pitch ?? 0, c.shift == edit.change(d.key)?.shift ?? 0,
-                       c.stretch == edit.change(d.key)?.stretch ?? 1 { return }
-                    model.changeNote(clip, c)
-                } else if NSApp.currentEvent?.clickCount == 2 {
+                    // Every marked note takes the same change: up or down, sideways, longer or shorter.
+                    let changes: [NoteChange] = d.keys.sorted().compactMap { key in
+                        var c = edit.change(key) ?? NoteChange(key: key)
+                        let old = c
+                        c.pitch += d.pitch
+                        c.shift += d.shift
+                        c.stretch *= d.stretch
+                        return c == old ? nil : c
+                    }
+                    model.changeNotes(clip, changes)
+                } else if NSApp.currentEvent?.clickCount == 2, let n = analysis.notes.first(where: { $0.key == d.key }) {
                     // A double click tunes the note: to the semitone nearest to where it sounds now.
+                    var c = edit.change(d.key) ?? NoteChange(key: d.key)
                     c.pitch = (n.pitch + c.pitch).rounded() - n.pitch
                     if abs(c.pitch) < 0.005 { c.pitch = 0 }
                     model.changeNote(clip, c)
+                    model.markAudioNotes([d.key], primary: d.key)
                 }
             }
     }
@@ -341,8 +412,26 @@ struct NoteEditor: View {
     private func strip(_ analysis: NoteAnalysis) -> some View {
         let edit = model.noteEdit(clip)
         let note = model.selectedAudioNote.flatMap { k in analysis.notes.first { $0.key == k } }
+        let marked = model.selectedAudioNotes
         HStack(spacing: 10) {
-            if let n = note {
+            if marked.count > 1 {
+                let all = marked.sorted()
+                let muted = all.allSatisfy { edit.change($0)?.muted ?? false }
+                Text("\(marked.count) notes marked").font(.system(size: 12, weight: .semibold))
+                Button(muted ? "Unmute" : "Mute") { model.toggleNoteMute(clip, keys: marked) }
+                Button("Tune") {
+                    model.changeNotes(clip, all.compactMap { key in
+                        guard let n = analysis.notes.first(where: { $0.key == key }) else { return nil }
+                        var c = edit.change(key) ?? NoteChange(key: key)
+                        let to = (n.pitch + c.pitch).rounded() - n.pitch
+                        c.pitch = abs(to) < 0.005 ? 0 : to
+                        return c
+                    })
+                }
+                .help("Puts the marked notes on the nearest semitone")
+                Button("Reset") { model.changeNotes(clip, all.map { NoteChange(key: $0) }) }
+                    .disabled(all.allSatisfy { edit.change($0)?.isIdentity ?? true })
+            } else if let n = note {
                 let c = edit.change(n.key) ?? NoteChange(key: n.key)
                 let now = n.pitch + c.pitch
                 let cents = Int(((now - now.rounded()) * 100).rounded())
@@ -352,7 +441,7 @@ struct NoteEditor: View {
                 field("Time", "ms", value: c.shift * 1000) { v in var x = c; x.shift = v / 1000; model.changeNote(clip, x) }
                 field("Length", "%", value: c.stretch * 100) { v in var x = c; x.stretch = max(10, v) / 100; model.changeNote(clip, x) }
                 field("Level", "dB", value: c.gainDb) { v in var x = c; x.gainDb = min(24, max(-60, v)); model.changeNote(clip, x) }
-                Button(c.muted ? "Unmute" : "Mute") { model.toggleNoteMute(clip, key: n.key) }
+                Button(c.muted ? "Unmute" : "Mute") { model.toggleNoteMute(clip, keys: [n.key]) }
                 Button("Tune") {
                     var x = c
                     x.pitch = now.rounded() - n.pitch
@@ -362,7 +451,7 @@ struct NoteEditor: View {
                 .help("Puts the note on the nearest semitone")
                 Button("Reset") { model.changeNote(clip, NoteChange(key: n.key)) }.disabled(c.isIdentity)
             } else {
-                Text("\(analysis.notes.count) notes. Click a note to edit it; drag it up, down or sideways.")
+                Text("\(analysis.notes.count) notes. Click a note to edit it; drag it up, down or sideways. Drag a box to mark several.")
                     .foregroundStyle(Theme.dim)
             }
             Spacer(minLength: 8)

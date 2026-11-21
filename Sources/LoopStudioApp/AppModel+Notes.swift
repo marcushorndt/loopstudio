@@ -47,11 +47,27 @@ extension AppModel {
         applyNoteEdit(a.id, noteEdit(a).with(change))
     }
 
-    /// Delete on the Notes page: the marked note goes silent, or sounds again.
-    func toggleNoteMute(_ a: AudioClip, key: String) {
-        var change = noteEdit(a).change(key) ?? NoteChange(key: key)
-        change.muted.toggle()
-        changeNote(a, change)
+    /// Puts several notes' changes into the clip's edit and renders once.
+    func changeNotes(_ a: AudioClip, _ changes: [NoteChange]) {
+        guard !changes.isEmpty else { return }
+        applyNoteEdit(a.id, changes.reduce(noteEdit(a)) { $0.with($1) })
+    }
+
+    /// Delete on the Notes page: the marked notes go silent; when all of them are silent, they sound again.
+    func toggleNoteMute(_ a: AudioClip, keys: Set<String>) {
+        let edit = noteEdit(a)
+        let mute = keys.contains { !(edit.change($0)?.muted ?? false) }
+        changeNotes(a, keys.sorted().map { key in
+            var c = edit.change(key) ?? NoteChange(key: key)
+            c.muted = mute
+            return c
+        })
+    }
+
+    /// Marks notes on the Notes page; `primary` is the one the strip edits.
+    func markAudioNotes(_ keys: Set<String>, primary: String?) {
+        selectedAudioNotes = keys
+        selectedAudioNote = primary.flatMap { keys.contains($0) ? $0 : nil } ?? (keys.count == 1 ? keys.first : nil)
     }
 
     /// Renders the original with `edit` into a new file and switches the clip to it, in one undo step. An edit

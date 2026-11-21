@@ -1035,8 +1035,11 @@ final class AppModel {
     var notesInProgress: Set<AssetID> = []
     /// A note edit that is rendering: the Notes page shows it already, the clip still plays the last file.
     var pendingNoteEdits: [ClipID: NoteEdit] = [:]
-    /// The note marked on the Notes page: Delete mutes it, or brings it back.
+    /// The note clicked last on the Notes page: the strip edits it.
     var selectedAudioNote: String?
+    /// Every marked note on the Notes page (a click, Shift-clicks or a box drag): a drag moves them all,
+    /// Delete mutes them, or brings them back.
+    var selectedAudioNotes: Set<String> = []
     /// Counts note renders, so only the newest one of a clip lands.
     @ObservationIgnored var noteRenders: [ClipID: Int] = [:]
     /// Tracks in the order the views show them: normal and group tracks, then the busses (returns).
@@ -1663,8 +1666,8 @@ final class AppModel {
     func deleteSelected() {
         // Marked automation points go first: the editor that holds them registered the deletion.
         if let marked = automationMarking { marked.delete(); return }
-        if let key = selectedAudioNote, detailTab == .clip, clipPage == .notes, let id = selectedClip, case .audio(let a)? = project.findClip(id)?.1 {
-            toggleNoteMute(a, key: key)
+        if !selectedAudioNotes.isEmpty, detailTab == .clip, clipPage == .notes, let id = selectedClip, case .audio(let a)? = project.findClip(id)?.1 {
+            toggleNoteMute(a, keys: selectedAudioNotes)
             return
         }
         if !selectedNotes.isEmpty, detailTab == .clip, let id = selectedClip, case .midi(let m)? = project.findClip(id)?.1 {

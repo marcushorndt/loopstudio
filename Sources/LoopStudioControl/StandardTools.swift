@@ -624,6 +624,7 @@ public enum StandardTools {
             ("setDeviceSource (the text of a Patch device; patch_write checks it first)", .setDeviceSource(track: track.id, device: DeviceID(uuid(10)), source: PatchExamples.tremolo, name: "Tremolo")),
             ("setDeviceSidechain (a compressor listens to another track; null: its own input)", .setDeviceSidechain(track: track.id, device: DeviceID(uuid(10)), source: TrackID(uuid(2)))),
             ("setDeviceSidechainTap (where the sidechain taps that track: preFX, postFX or postMixer)", .setDeviceSidechainTap(track: track.id, device: DeviceID(uuid(10)), tap: .postFX)),
+            ("setDeviceMIDIFrom (a Resonator takes the notes of another MIDI track for its root; null: its own track)", .setDeviceMIDIFrom(track: track.id, device: DeviceID(uuid(10)), source: TrackID(uuid(2)))),
             ("insertDevice (an Audio Effect Rack: chains of effects behind 8 macros and a chain selector; \"midirack\" for instruments)",
              .insertDevice(track: track.id, device: { var r = BuiltInEffects.makeSlot("audiorack")!; r.id = DeviceID(uuid(11)); r.rack!.chains[0].id = ChainID(uuid(12)); return r }(), index: nil)),
             ("insertDeviceInChain (a device into a rack's chain; any depth)", .insertDeviceInChain(track: track.id, chain: ChainID(uuid(12)), device: BuiltInEffects.makeSlot("filter")!, index: nil)),

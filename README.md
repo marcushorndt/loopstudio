@@ -79,11 +79,11 @@ plays notes (M).
 **Built-in devices.** Effects: Utility, Auto Filter, Tone EQ, EQ One to EQ Eight, Delay, Tape Echo, Overdrive,
 Reverb, Compressor, Limiter, Multiband Compressor, Live Cut (a port of Livecut with the BBCut
 procedures), Granulator and Resonator (five tuned resonators on a root note and four intervals, which
-the notes of a MIDI track can play). Instruments: Acid Bass (a 303-style mono synth with accent and slide),
+the notes of its own track or, through MIDI From, of any MIDI track can play). Instruments: Acid Bass (a 303-style mono synth with accent and slide),
 808 Drums (twelve synthesized pads) and a DX7 (six-operator FM with the 32 algorithms, which reads the
 original 32-voice SysEx banks). An Audio Effect Rack and a MIDI Rack hold chains behind
 eight macro knobs and a chain selector, with key and velocity zones. Compressors take a sidechain
-source. Every knob automates, learns MIDI, maps to a macro and shows in the agent tools.
+source. Every knob automates, learns MIDI, maps to a macro and shows in the agent tools. Each track header in the arrangement shows the track's level, as in the mixer.
 
 **The Patch device.** A modular device of its own: modules with typed ports, cables and a panel,
 compiled in the app to an op list that runs per frame without allocation. A Script module takes a

@@ -147,7 +147,7 @@ public enum ReadBack {
             pair("\(a.trackName(t)) › \(a.deviceName(t, d)) › bypass", b.bypass(t, d), a.bypass(t, d))
         case .setDeviceName(let t, let d, _):
             pair("\(a.trackName(t)) › device name", b.deviceName(t, d), a.deviceName(t, d))
-        case .setDeviceSidechain(let t, let d, _), .setDeviceSidechainTap(let t, let d, _):
+        case .setDeviceSidechain(let t, let d, _), .setDeviceSidechainTap(let t, let d, _), .setDeviceMIDIFrom(let t, let d, _):
             pair("\(a.trackName(t)) › \(a.deviceName(t, d)) › sidechain", b.sidechain(t, d), a.sidechain(t, d))
         case .setDeviceSource(let t, let d, _, _):
             pair("\(a.trackName(t)) › \(a.deviceName(t, d)) › patch", b.patchSummary(t, d), a.patchSummary(t, d))

@@ -709,3 +709,43 @@ private struct Route {
     plain.loop = false
     #expect(plain.playTick(after: Tick(1500), session: false, fileTicks: Tick(1920)) == Tick(1980))
 }
+
+/// MIDI From: a Resonator on an audio track takes the notes of a MIDI track. Clicks ring at the knob's A3
+/// (218 frames) on their own; with MIDI From on a track that plays A4 they ring at 109 frames, and the root
+/// stays on A4 after the note ends.
+@Test func aResonatorTakesItsRootFromAnotherMIDITrack() throws {
+    var rig = Rig()
+    let clicks = rig.asset(seconds: 2) { $0 % 12_000 == 0 ? 0.8 : 0 }
+    let drums = rig.track("Drums")
+    rig.clip(clicks, on: drums, lengthTick: 7_680)
+    var res = BuiltInEffects.makeSlot("resonator")!
+    res.params = ["note": 57, "color": 1, "decay": 1, "mix": 1, "r2.on": 0, "r3.on": 0, "r4.on": 0, "r5.on": 0, "width": 0]
+    try Command.insertDevice(track: drums, device: res, index: nil).apply(to: &rig.project)
+    let keys = rig.track("Keys", .midi)
+    let note = MIDINote(tick: 0, length: 480, pitch: 69) // a quarter second
+    try Command.insertClip(track: keys, clip: .midi(MIDIClip(start: 0, length: 3_840, notes: [note]))).apply(to: &rig.project)
+
+    func period(_ x: ArraySlice<Float>) -> Int {
+        var best = (lag: 0, score: -Double.infinity)
+        for lag in 80...300 {
+            var s = 0.0
+            for i in x.indices where i + lag < x.endIndex { s += Double(x[i]) * Double(x[i + lag]) }
+            if s > best.score { best = (lag, s) }
+        }
+        return best.lag
+    }
+    let alone = rig.render().left
+    #expect(abs(period(alone[12_100..<16_000]) - 218) <= 2, "the knob's A3")
+    try Command.setDeviceMIDIFrom(track: drums, device: res.id, source: keys).apply(to: &rig.project)
+    let played = rig.render().left
+    #expect(abs(period(played[100..<4_000]) - 109) <= 1, "A4 from the Keys track")
+    #expect(abs(period(played[36_100..<40_000]) - 109) <= 1, "the root stays on A4 after the note ends at 0.25 s")
+    // A muted source still gives its notes, as a muted sidechain source still ducks.
+    try Command.setMute(id: keys, mute: true).apply(to: &rig.project)
+    #expect(abs(period(rig.render().left[100..<4_000]) - 109) <= 1, "a muted Keys track still sets the root")
+    #expect(throws: CommandError.self) { try Command.setDeviceMIDIFrom(track: drums, device: res.id, source: drums).apply(to: &rig.project) }
+    #expect(throws: CommandError.self) { try Command.setDeviceMIDIFrom(track: keys, device: res.id, source: drums).apply(to: &rig.project) }
+    // The source track goes: the Resonator takes its own track's notes again.
+    try Command.removeTrack(id: keys).apply(to: &rig.project)
+    #expect(rig.project.track(drums)?.devices.first?.midiFrom == nil)
+}

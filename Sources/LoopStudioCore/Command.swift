@@ -150,6 +150,8 @@ public enum Command: Codable, Sendable {
     case setDeviceSidechain(track: TrackID, device: DeviceID, source: TrackID?)
     /// Where the sidechain taps that track: before its devices, after them, or after its mixer.
     case setDeviceSidechainTap(track: TrackID, device: DeviceID, tap: SidechainTap)
+    /// The MIDI track whose notes an effect that listens to notes takes (the Resonator's root). `nil`: its own track.
+    case setDeviceMIDIFrom(track: TrackID, device: DeviceID, source: TrackID?)
 
     /// Racks. `rack` is the rack device (any depth on the track).
     case addChain(track: TrackID, rack: DeviceID, chain: RackChain, index: Int?)
@@ -238,6 +240,11 @@ extension Project {
                 for d in tracks[i].devices.indices where tracks[i].devices[d].sidechain == id {
                     restore.append(.setDeviceSidechain(track: tracks[i].id, device: tracks[i].devices[d].id, source: id))
                     tracks[i].devices[d].sidechain = nil
+                }
+                // A device that took the removed track's notes takes its own track's again.
+                for d in tracks[i].devices.indices where tracks[i].devices[d].midiFrom == id {
+                    restore.append(.setDeviceMIDIFrom(track: tracks[i].id, device: tracks[i].devices[d].id, source: id))
+                    tracks[i].devices[d].midiFrom = nil
                 }
                 if tracks[i].sends.contains(where: { $0.target == id }) {
                     restore.append(.setSends(id: tracks[i].id, sends: tracks[i].sends))
@@ -822,6 +829,23 @@ extension Project {
                     device.sidechain = source
                 }
                 return .setDeviceSidechain(track: trackID, device: id, source: old)
+            }
+
+        case .setDeviceMIDIFrom(let trackID, let id, let source):
+            if let source {
+                guard source != trackID else { throw CommandError.invalidValue("MIDI From names another track; nil is the own track") }
+                guard let s = track(source), s.kind == .midi else { throw CommandError.invalidValue("MIDI From must be a MIDI track") }
+            }
+            return try withTrack(trackID) { t in
+                var old: TrackID?
+                try t.withDevice(id) { device in
+                    guard device.format == "builtin", BuiltInEffects.spec(device.identifier)?.notesIn == true else {
+                        throw CommandError.invalidValue("\(device.name) takes no notes")
+                    }
+                    old = device.midiFrom
+                    device.midiFrom = source
+                }
+                return .setDeviceMIDIFrom(track: trackID, device: id, source: old)
             }
 
         case .setDeviceSidechainTap(let trackID, let id, let tap):

@@ -120,6 +120,9 @@ public struct EffectSpec: Sendable, Hashable {
     public var groups: [EffectGroup] = []
     /// The effect can listen to another track (`DeviceSlot.sidechain`): a compressor ducks to it.
     public var sidechain = false
+    /// The effect listens to notes (the Resonator's root): of its own track, or of the MIDI track that
+    /// `DeviceSlot.midiFrom` names.
+    public var notesIn = false
     /// A special panel instead of knobs: "eq" draws the curve of a multi-band EQ.
     public var view = ""
     /// Bands of a multi-band EQ. Zero for every other device.
@@ -254,7 +257,8 @@ public enum BuiltInEffects {
     /// level. Decay is how long a resonance rings, Color how bright it stays (a low-pass in each loop), Width
     /// how far II to V spread from the middle. Harmonic rings with every partial; Hollow keeps the odd ones and
     /// sounds an octave lower, like a clarinet or a closed pipe. With MIDI on, the notes of the track (after its
-    /// instrument, or the keys played into it) set the root; without a note the Note knob does.
+    /// instrument, or the keys played into it), or of the MIDI track MIDI From names, set the root. The root stays
+    /// on the last note; before the first note, and after a turn of the Note knob, the knob sets it.
     static let resonator: EffectSpec = {
         var note = EffectParam("note", "Note", 0, 127, 48, choices: noteNames)
         note.rotary = true
@@ -282,6 +286,7 @@ public enum BuiltInEffects {
             EffectParam("mix", "Dry/Wet", 0, 1, 0.5),
         ]
         var spec = EffectSpec(id: "resonator", name: "Resonator", params: params)
+        spec.notesIn = true
         spec.groups = [
             EffectGroup("Tuning", ["mode", "note", "fine", "midi"]),
             EffectGroup("Ring", ["decay", "color"]),

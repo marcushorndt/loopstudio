@@ -8,6 +8,17 @@ import LoopStudioEngine
 /// undo step. The clip keeps the original and the list of changes (`AudioClip.noteEdit`), so the next edit
 /// starts from the original again, and an undo gives the clip before.
 extension AppModel {
+    /// Opens the clip's Notes page in the clip panel: "Edit Notes" in the clip menu.
+    func openNotes(_ id: ClipID) {
+        guard let (trackID, clip) = project.findClip(id), case .audio(let a) = clip else { return }
+        selectedClip = id
+        selectedTrack = trackID
+        detailTab = .clip
+        detailOpen = true
+        clipPage = .notes
+        analyzeNotes(a)
+    }
+
     /// The file whose notes a clip edits: its original.
     func noteSource(_ a: AudioClip) -> AssetID { a.noteEdit?.source ?? a.asset }
 

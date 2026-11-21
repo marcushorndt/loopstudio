@@ -66,17 +66,23 @@ private func single(_ extra: [String: Double] = [:]) -> DSPEffect {
     #expect(correlation(out[2_400..<14_400], lag: 109) < -0.5)
 }
 
-/// A note of the track sets the root: A4 rings at 109 frames; when it ends, the knob's A3 is back.
-@Test func aHeldNoteSetsTheRoot() {
+/// A note sets the root: A4 rings at 109 frames, and stays after its key is released and over a stop. A turn
+/// of the Note knob gives the root back to the knob (A2 at 436 frames).
+@Test func aNoteSetsTheRootAndTheRootStays() {
     let fx = single()
     let receiver = fx as! any MIDIReceiver
     receiver.sendMIDI(0x90, 69, 100, sampleOffset: 0)
     var out = feed(fx, impulse(seconds: 0.5))
     #expect(abs(period(out[2_400..<14_400], 80, 160) - 109) <= 1)
     receiver.sendMIDI(0x80, 69, 0, sampleOffset: 0)
+    receiver.silenceNotes()
     fx.reset()
     out = feed(fx, impulse(seconds: 0.5))
-    #expect(abs(period(out[2_400..<14_400], 150, 300) - 218) <= 1)
+    #expect(abs(period(out[2_400..<14_400], 80, 160) - 109) <= 1, "the root stays on the last note")
+    fx.configure(["note": 45, "color": 1, "decay": 2, "mix": 1, "r2.on": 0, "r3.on": 0, "r4.on": 0, "r5.on": 0, "width": 0])
+    fx.reset()
+    out = feed(fx, impulse(seconds: 0.5))
+    #expect(abs(period(out[2_400..<14_400], 300, 600) - 436) <= 2, "the knob (A2) takes the root back")
 }
 
 /// The decay knob is the time to fall by 60 dB: half a second later the ringing is far quieter.

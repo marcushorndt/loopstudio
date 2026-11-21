@@ -10,9 +10,10 @@ import LoopStudioCore
 /// as long for the same note. The input is scaled so an impulse gives the same energy at every decay, and a
 /// soft clip keeps a long decay on a sustained note from running away.
 ///
-/// The notes of the track reach it through the MIDI fanout. The last note held sets the root; when it ends,
-/// the Note knob does again. The loop lengths glide to a new note over a few milliseconds, so a change does
-/// not click.
+/// The notes reach it through the MIDI fanout of its own track, or of the track that MIDI From names. The
+/// last note played sets the root and stays after its key is released, also over a stop; a turn of the Note
+/// knob (or MIDI off and on) gives the root back to the knob. The loop lengths glide to a new note over a few
+/// milliseconds, so a change does not click.
 final class ResonatorDSP: DSPEffect, MIDIReceiver, @unchecked Sendable {
     static let voices = 5
     private let capacity: Int
@@ -35,7 +36,7 @@ final class ResonatorDSP: DSPEffect, MIDIReceiver, @unchecked Sendable {
     /// The knob values the loop lengths come from, kept so a note can retune without a configure.
     private var knobNote = 48.0, fine = 0.0, decay = 2.5, listens = true
     private var intervals = [Double](repeating: 0, count: voices)
-    /// The note the track holds, or -1.
+    /// The last note played, or -1: the knob sets the root.
     private(set) var heldNote = -1
     private var glide: Double = 0
 
@@ -52,9 +53,12 @@ final class ResonatorDSP: DSPEffect, MIDIReceiver, @unchecked Sendable {
 
     override func configure(_ p: [String: Double]) {
         hollow = value(p, "mode") >= 0.5
-        knobNote = Double(value(p, "note")).rounded()
+        let knob = Double(value(p, "note")).rounded(), listening = value(p, "midi") >= 0.5
+        // A turn of the Note knob, or MIDI switched on again, gives the root back to the knob.
+        if knob != knobNote || (listening && !listens) { heldNote = -1 }
+        knobNote = knob
         fine = Double(value(p, "fine"))
-        listens = value(p, "midi") >= 0.5
+        listens = listening
         decay = Double(value(p, "decay"))
         color = value(p, "color")
         let width = value(p, "width")
@@ -104,16 +108,16 @@ final class ResonatorDSP: DSPEffect, MIDIReceiver, @unchecked Sendable {
     override func reset() {
         lines.update(repeating: 0, count: capacity * Self.voices)
         for v in 0..<Self.voices { damp[v] = 0; length[v] = target[v] }
-        heldNote = -1
     }
 
     func sendMIDI(_ status: UInt8, _ data1: UInt8, _ data2: UInt8, sampleOffset: Int) {
         let kind = status & 0xF0
-        if kind == 0x90, data2 > 0 { heldNote = Int(data1); retune(snap: false) }
-        else if kind == 0x80 || (kind == 0x90 && data2 == 0), Int(data1) == heldNote { heldNote = -1; retune(snap: false) }
+        // A note off changes nothing: the root stays on the last note.
+        if kind == 0x90, data2 > 0, Int(data1) != heldNote { heldNote = Int(data1); retune(snap: false) }
     }
 
-    func silenceNotes() { heldNote = -1; retune(snap: false) }
+    /// A stop or a jump: the root stays where the last note put it.
+    func silenceNotes() {}
 
     override func process(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
         let c = dampCoefficient, sign: Float = hollow ? -1 : 1

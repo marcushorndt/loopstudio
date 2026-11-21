@@ -80,6 +80,9 @@ struct EffectPlan {
     var sidechainTap: SidechainTap = .postMixer
     /// Frames the sidechain signal waits so it lines up with this effect's input, from delay compensation.
     var sidechainDelay = 0
+    /// The node whose notes an effect that listens to notes takes (`DeviceSlot.midiFrom`). `nil`: its own node.
+    /// Notes need no order: the source's events reach it in the same block.
+    var midiFrom: Int? = nil
     /// How late the sound at this effect's input is against the song clock: the node's `inputShift` plus the
     /// devices in front of it (inside a rack: the chain's devices in front of it). Its automation is read
     /// that much earlier, so a curve moves the sound it was drawn on.
@@ -343,6 +346,20 @@ public struct RenderPlan {
                 guard let source = d.sidechain, source != t.id, project.track(source) != nil, !d.bypassed else { continue }
                 listeners[source, default: []].append(t.id)
             }
+            // A MIDI From source too: it renders first, so its notes of a block reach the device in the same
+            // block, and it plays while muted or not soloed, with its output cut.
+            for d in t.allDevices where !d.bypassed && d.format == "builtin" && BuiltInEffects.spec(d.identifier)?.notesIn == true {
+                guard let source = d.midiFrom, source != t.id, project.track(source) != nil else { continue }
+                listeners[source, default: []].append(t.id)
+            }
+        }
+        // MIDI From: the MIDI tracks whose notes a device on another track takes. Such a track plays its notes
+        // even without an instrument.
+        var noteSources = Set<TrackID>()
+        for t in tracks {
+            for d in t.allDevices where !d.bypassed && d.format == "builtin" {
+                if let source = d.midiFrom, source != t.id, BuiltInEffects.spec(d.identifier)?.notesIn == true { noteSources.insert(source) }
+            }
         }
         // Order: sources before targets (Kahn). Ties keep project order, so the plan is deterministic.
         func ordered(sidechains: Bool) -> [TrackID] {
@@ -548,12 +565,13 @@ public struct RenderPlan {
             let instrument = compiled.instrument, instrumentDevice = compiled.instrumentDevice
             var synth = compiled.synth
             if sidechainsOrdered { chain = sidechained(chain, of: t, index: index, before: index[t.id] ?? masterIndex) }
+            chain = midiSourced(chain, of: t, index: index)
             let instrumentAuto = instrumentDevice.map { autoParams($0, of: t) } ?? [:]
             if t.kind != .midi { synth = nil; compiled.rackSynth = nil } // an instrument on an audio track stays silent
             var midi: [MIDIEvent] = [], sessionMidi: [MIDIEvent] = []
             let midiOut = t.kind == .midi ? midiOutputs[t.id] : nil
             // A music effect (`aumf`) in the chain takes the notes too, with or without an instrument in front.
-            let plays = instrument != nil || synth != nil || compiled.rackSynth != nil || takesMIDI(chain)
+            let plays = instrument != nil || synth != nil || compiled.rackSynth != nil || takesMIDI(chain) || noteSources.contains(t.id)
             if t.kind == .midi && renders && (plays || midiOut != nil) {
                 midi = midiEvents(of: t, session: nil, map: map, rate: rate, endFrame: &endFrame)
                 var ignored: Int64 = 0
@@ -829,6 +847,20 @@ public struct RenderPlan {
                 if rack.chains[c].rackSynth!.device.rawValue == node { rack.chains[c].rackSynth!.mappedKeys.insert(key) }
                 markMapped(&rack.chains[c].rackSynth!, node: node, key: key)
             }
+        }
+    }
+
+    /// Resolves MIDI From of each effect (racks included) to the node whose notes it takes: a MIDI track.
+    private static func midiSourced(_ chain: [EffectPlan], of track: Track, index: [TrackID: Int]) -> [EffectPlan] {
+        chain.map { e in
+            var e = e
+            if var rack = e.rack {
+                for c in rack.chains.indices { rack.chains[c].effects = midiSourced(rack.chains[c].effects, of: track, index: index) }
+                e.rack = rack
+            }
+            guard let device = track.device(e.device), let source = device.midiFrom, source != track.id, let i = index[source] else { return e }
+            e.midiFrom = i
+            return e
         }
     }
 

@@ -629,6 +629,7 @@ struct DeviceCard: View {
                     DeviceRenameField(track: track, device: device)
                 }
                 if let spec, spec.sidechain { sidechainMenu }
+                if let spec, spec.notesIn { midiFromMenu }
                 if let spec, spec.isDynamics { GainReductionMeter(device: device, bands: spec.id == "multiband" ? 3 : 1) }
                 if device.format == "audiounit" { pluginHeader }
                 // A Patch device: the pen opens its text.
@@ -711,6 +712,34 @@ struct DeviceCard: View {
     private func click() {
         let flags = NSEvent.modifierFlags
         model.selectDevice(device.id, toggle: flags.contains(.command), range: flags.contains(.shift))
+    }
+
+    /// Where an effect that listens to notes takes them: its own track, or another MIDI track.
+    private var midiFromMenu: some View {
+        let sources = model.project.tracks.filter { $0.id != track.id && $0.kind == .midi }
+        let current = device.midiFrom.flatMap { model.project.track($0) }
+        return Menu {
+            Button("Own Track" + (device.midiFrom == nil ? "  ✓" : "")) {
+                model.apply(.setDeviceMIDIFrom(track: track.id, device: device.id, source: nil))
+            }
+            if !sources.isEmpty { Divider() }
+            ForEach(sources) { source in
+                Button(source.name + (device.midiFrom == source.id ? "  ✓" : "")) {
+                    model.apply(.setDeviceMIDIFrom(track: track.id, device: device.id, source: source.id))
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "pianokeys").font(.system(size: 9))
+                Text(current.map(\.name) ?? "Own Track").font(.system(size: 10)).lineLimit(1)
+            }
+            .foregroundStyle(current == nil ? Theme.dim : Theme.track(current!.colorIndex))
+            .padding(.horizontal, 5).frame(height: 18)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.radius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).stroke(Theme.line, lineWidth: 1))
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .hint("MIDI From: the notes that set the root. Its own track, or another MIDI track (a muted one too). The root stays on the last note; a turn of the Note knob takes it back.")
     }
 
     /// The source a sidechain effect listens to: its own input, or another track's output.

@@ -79,6 +79,8 @@ public final class Renderer {
         let sidechainLine: DelayLine?
         /// A rack: `effect` is nil, the chains run here. `live` holds its macros and selector.
         let rack: RackRuntime?
+        /// The node whose notes this effect takes (MIDI From); `nil`: the notes of its own node.
+        var midiFrom: Int? = nil
         /// Frames the sound at this effect is late against the song (see `EffectPlan.shift`): its automation
         /// and its tempo clock read that much earlier.
         let shift: Int64
@@ -143,14 +145,16 @@ public final class Renderer {
         var allRacks: [RackRuntime] = []
         var fanouts: [MIDIFanout?] = []
         /// The hosted music effects among `slots`, at any depth; a bypassed slot does not run and takes no notes.
-        func musicEffects(_ slots: [Slot], into out: inout [any MIDIReceiver]) {
+        /// Each with the node whose notes it takes: `nil` for its own node, else the node MIDI From names.
+        func musicEffects(_ slots: [Slot], into out: inout [(receiver: any MIDIReceiver, from: Int?)]) {
             for s in slots where !s.bypassed {
-                if let u = s.unit, u.acceptsMIDI, !u.isInstrument { out.append(u) }
+                if let u = s.unit, u.acceptsMIDI, !u.isInstrument { out.append((u, nil)) }
                 // A built-in effect that listens to notes (the Resonator's root).
-                if let e = s.effect, !(e is DSPInstrument), let m = e as? any MIDIReceiver { out.append(m) }
+                if let e = s.effect, !(e is DSPInstrument), let m = e as? any MIDIReceiver { out.append((m, s.midiFrom)) }
                 if let r = s.rack { for c in r.chains { musicEffects(c.slots, into: &out) } }
             }
         }
+        var listeners: [[any MIDIReceiver]] = []
         /// Every slot by its device, so a rack's macro links find the slot they move (any depth).
         var slotIndex: [UUID: (Slot, EffectSpec?)] = [:]
         // A connection that keeps its ends and its delay keeps its line, so an edit does not insert
@@ -209,6 +213,7 @@ public final class Renderer {
                 let slot = Slot(effect: found.0, unit: nil, bypassed: e.bypassed, auto: e.auto, params: e.params, sidechain: e.sidechain,
                                 sidechainTap: e.sidechainTap, sidechainLine: scLine, mapped: e.mappedKeys, shift: e.shift)
                 slot.needsConfigure = found.running
+                slot.midiFrom = e.midiFrom
                 slotIndex[e.device.rawValue] = (slot, found.0.spec)
                 chain.append(slot)
             }
@@ -248,9 +253,15 @@ public final class Renderer {
         }
         for node in plan.nodes {
             built.append(slots(for: node.effects))
-            var effects: [any MIDIReceiver] = []
+            var effects: [(receiver: any MIDIReceiver, from: Int?)] = []
             musicEffects(built[built.count - 1], into: &effects)
-            fanouts.append(effects.isEmpty ? nil : MIDIFanout(effects))
+            let here = built.count - 1
+            while listeners.count <= here { listeners.append([]) }
+            for (receiver, from) in effects {
+                let target = from ?? here
+                while listeners.count <= target { listeners.append([]) }
+                listeners[target].append(receiver)
+            }
             instruments.append(node.instrument.map { Slot(effect: nil, unit: $0, bypassed: false, auto: node.instrumentAuto, params: [:]) })
             if let s = node.synth, let (slot, synth) = synthSlot(s, auto: node.instrumentAuto) {
                 synths.append(slot)
@@ -269,6 +280,11 @@ public final class Renderer {
             } else {
                 rackSynthList.append(nil); rackSynthSlotList.append(nil)
             }
+        }
+        // A device with MIDI From joins the fanout of the node whose notes it takes, which may come later.
+        for i in plan.nodes.indices {
+            let list = i < listeners.count ? listeners[i] : []
+            fanouts.append(list.isEmpty ? nil : MIDIFanout(list))
         }
         chains = built
         instrumentSlots = instruments

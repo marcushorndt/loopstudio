@@ -459,6 +459,9 @@ final class AppModel {
     @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var meterHold: [Int: Float] = [:]
+    /// When each node's meter was last read. The mixer and the arrangement show the same meter: a second
+    /// read within a frame gets the same values, so the two do not split the peaks between them.
+    @ObservationIgnored private var meterRead: [Int: TimeInterval] = [:]
     @ObservationIgnored let host: PluginHost = {
         let host = PluginHost()
         host.outOfProcess = UserDefaults.standard.object(forKey: "pluginsOutOfProcess") as? Bool ?? true
@@ -2456,6 +2459,9 @@ final class AppModel {
     /// The meter of a track (`nil`: the master), left and right, with a short fall after each peak.
     func meterLevels(track: TrackID?) -> (left: Float, right: Float) {
         guard let plan, let index = plan.trackOrder.firstIndex(where: { $0 == track }) else { return (0, 0) }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let last = meterRead[index], now - last < 0.012 { return (meterHold[2 * index] ?? 0, meterHold[2 * index + 1] ?? 0) }
+        meterRead[index] = now
         let peak = engine.takePeaks(node: index)
         let left = max(peak.left, (meterHold[2 * index] ?? 0) * 0.86)
         let right = max(peak.right, (meterHold[2 * index + 1] ?? 0) * 0.86)

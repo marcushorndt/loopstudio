@@ -140,6 +140,7 @@ struct ArrangementClipMenu: View {
         AppAction.renameTrack.button(model, title: "Rename Clip") { model.clipRenameRequest = clip.id }
         switch clip {
         case .audio(let a):
+            Button("Edit Notes (Pitch)…") { model.openNotes(a.id) }
             Button(a.loop ? "Loop Off" : "Loop On") { model.apply(.setClipLoop(clip: a.id, loop: !a.loop)) }
             Button(a.warpMode == .off ? "Warp On" : "Warp Off") { model.apply(.setClipWarp(clip: a.id, mode: a.warpMode == .off ? model.warpModeToTurnOn(a) : .off, markers: a.warpMarkers)) }
             Button(a.muted ? "Activate Clip" : "Deactivate Clip") { model.toggleClipMute(a) }

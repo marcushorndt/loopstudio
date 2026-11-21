@@ -797,6 +797,8 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
     /// Where on that track the sidechain taps the sound. `nil`: after the mixer, the oldest behaviour.
     public var sidechainTap: SidechainTap?
     public var tap: SidechainTap { sidechainTap ?? .postMixer }
+    /// The MIDI track whose notes an effect that listens to notes (the Resonator) takes. `nil`: its own track.
+    public var midiFrom: TrackID?
     /// View state: the card is folded to its title. Saved with the project, like the arm state; no undo.
     public var folded: Bool?
     /// The chains and macros of a rack ("audiorack", "midirack"). `nil` for every other device. See `Rack`.
@@ -819,7 +821,7 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
         self.source = source
     }
 
-    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params, pluginParams, sidechain, sidechainTap, folded, rack, source }
+    enum CodingKeys: String, CodingKey { case id, format, identifier, name, bypassed, state, params, pluginParams, sidechain, sidechainTap, midiFrom, folded, rack, source }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -833,6 +835,7 @@ public struct DeviceSlot: Hashable, Codable, Sendable, Identifiable {
         pluginParams = try c.decodeIfPresent([PluginParam].self, forKey: .pluginParams)
         sidechain = try c.decodeIfPresent(TrackID.self, forKey: .sidechain)
         sidechainTap = try c.decodeIfPresent(SidechainTap.self, forKey: .sidechainTap)
+        midiFrom = try c.decodeIfPresent(TrackID.self, forKey: .midiFrom)
         folded = try c.decodeIfPresent(Bool.self, forKey: .folded)
         rack = try c.decodeIfPresent(Rack.self, forKey: .rack)
         source = try c.decodeIfPresent(String.self, forKey: .source)

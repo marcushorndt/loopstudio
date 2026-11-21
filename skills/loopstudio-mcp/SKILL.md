@@ -109,6 +109,10 @@ the clicks of the person, so undo only your own changes, and only when the perso
   and remove the other instrument with `device_remove`.
 - An Audio Unit goes in with `command_apply` and `insertDevice`. Its parameters exist only after the app
   has loaded the plugin. "The plugin has not reported its parameters yet" means: wait, then read again.
+- The Resonator takes its root from notes. By default the notes come from its own track. With
+  `command_apply` and `setDeviceMIDIFrom` (`source`: a MIDI track id, or null for its own track), a
+  Resonator on an audio track plays the notes of a MIDI track, also of a muted one. The root stays on
+  the last note after its key is released; a new value of the `note` knob takes the root back.
 - `audio_devices`, `midi_endpoints` and `io_resolve` only read. They show the sound cards, the MIDI ports
   and how the project's ports map to the hardware.
 

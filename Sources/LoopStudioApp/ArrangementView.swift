@@ -226,7 +226,7 @@ private struct ArrangementHeader: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .top, spacing: 6) {
             RoundedRectangle(cornerRadius: 2).fill(Theme.track(track.colorIndex)).frame(width: 6)
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
@@ -246,6 +246,12 @@ private struct ArrangementHeader: View {
                 }
             }
             Spacer()
+            // The track's level, left and right, as in Live's track header: post fader, with a peak hold.
+            TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
+                StereoMeter(levels: model.meterLevels(track: track.kind == .master ? nil : track.id))
+                    .frame(width: 7, height: max(14, model.laneHeight(track) - 30)) // above the automation chevron
+            }
+            .padding(.trailing, 2)
         }
         .padding(6).frame(height: model.laneHeight(track), alignment: .top)
         .overlay(alignment: .bottomLeading) { MainLaneChooser(track: track).padding(.leading, 14).padding(.bottom, 3) }

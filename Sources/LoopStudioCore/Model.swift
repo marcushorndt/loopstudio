@@ -16,6 +16,9 @@ public struct Asset: Hashable, Codable, Sendable, Identifiable {
     /// The tempo the analysis found (the file name, the loop length or the beats). It stays when the source
     /// tempo is changed by hand or by Fit, so the clip panel can show it and go back to it.
     public var detectedTempo: Double?
+    /// A note render (`NoteEdit`): the original it was rendered from. A render that no clip plays any more
+    /// is removed from the project on save.
+    public var renderOf: AssetID?
 
     public init(id: AssetID = AssetID(), sha256: String, name: String, frames: Int64,
                 sampleRate: Double, channels: Int, sourceTempo: Double? = nil) {

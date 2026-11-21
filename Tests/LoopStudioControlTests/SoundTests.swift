@@ -243,6 +243,19 @@ private func chordFile() throws -> String {
     #expect(moved["change"]?["pitch"]?.doubleValue == 1)
     #expect(moved["note"]?.stringValue?.hasPrefix("F") == true)
 
+    // A copy of the moved note, a fifth below its model: the list then shows it with copyOf.
+    let copied = try await studio.client.call("audio_notes_edit", ["clip": .string(clip), "copy": .array([.object(["of": .string(key), "shift": .number(0)])])])
+    #expect(!copied.isError, Comment(rawValue: copied.text))
+    let copyKey = try #require(copied.data["madeCopies"]?.arrayValue?.first?.stringValue)
+    #expect(copyKey.hasPrefix("copy-") && copied.data["copies"]?.doubleValue == 1)
+    let withCopy = try await studio.client.call("audio_notes", ["clip": .string(clip)])
+    let copy = try #require(withCopy.data["notes"]?.arrayValue?.first { $0["key"]?.stringValue == copyKey })
+    #expect(copy["copyOf"]?.stringValue == key && copy["change"]?["pitch"]?.doubleValue == 1)
+    let removed = try await studio.client.call("audio_notes_edit", ["clip": .string(clip), "remove": .array([.string(copyKey)])])
+    #expect(removed.data["copies"]?.doubleValue == 0, Comment(rawValue: removed.text))
+    let notACopy = try await studio.client.call("audio_notes_edit", ["clip": .string(clip), "remove": .array([.string(key)])])
+    #expect(notACopy.isError, "a found note is muted, not removed")
+
     let reset = try await studio.client.call("audio_notes_edit", ["clip": .string(clip), "reset": .bool(true)])
     #expect(!reset.isError, Comment(rawValue: reset.text))
     #expect(reset.data["asset"]?.stringValue == original)

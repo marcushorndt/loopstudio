@@ -63,3 +63,17 @@ func writeTestWAV(seconds: Double, rate: Double = 48_000, amplitude: Float = 0.5
     other.sha256 = String(repeating: "0", count: 64)
     #expect(AssetStore.fileURL(for: other, in: package) == nil)
 }
+
+/// The side files beside an audio file (`.notes` sorts before `.wav`) are never taken for the audio, and
+/// `files(for:)` lists the audio with its side files.
+@Test func sideFilesAreNotTheAudio() throws {
+    let package = Temp.directory()
+    let asset = try AssetStore.importFile(writeTestWAV(seconds: 0.5), into: package)
+    let notes = AssetStore.sidecarURL(sha256: asset.sha256, ext: "notes", in: package)
+    let warp = AssetStore.sidecarURL(sha256: asset.sha256, ext: "warp", in: package)
+    try Data("x".utf8).write(to: notes)
+    try Data("y".utf8).write(to: warp)
+    #expect(AssetStore.fileURL(for: asset, in: package)?.lastPathComponent == "\(asset.sha256).wav")
+    #expect(Set(AssetStore.files(for: asset, in: package).map(\.lastPathComponent))
+            == ["\(asset.sha256).wav", "\(asset.sha256).notes", "\(asset.sha256).warp"])
+}

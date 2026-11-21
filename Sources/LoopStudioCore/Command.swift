@@ -1163,7 +1163,7 @@ extension Track {
 }
 
 extension Clip {
-    func usesAsset(_ id: AssetID) -> Bool {
+    public func usesAsset(_ id: AssetID) -> Bool {
         // The original of an edited clip is in use too: every new edit renders from it.
         if case .audio(let a) = self { return a.asset == id || a.noteEdit?.source == id }
         return false

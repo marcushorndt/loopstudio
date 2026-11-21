@@ -68,7 +68,11 @@ pitch, as long as it sounds and as thick as it is loud. Drag a note up or down (
 cents), sideways in time, or by its right end to stretch it. A double click or Tune puts a note on
 the nearest semitone; Delete silences it. A note that only changes its level keeps every detail of
 the recording; a moved note is built again from its partials, with its formants kept. Each edit
-renders a new file from the original, and the clip switches to it in one undo step.
+renders a new file from the original, and the clip switches to it in one undo step. A box drag marks
+several notes, the arrow keys move them, and ⌘D copies them; a copy sounds its note once more, and its
+Reset puts it back where it was made. The notes found in a file, and the warp of its last warped clip,
+are kept beside the file in the project, as Live keeps its `.asd` files. A rendered file that no clip
+plays any more leaves the project when it is saved.
 
 **MIDI clips.** A piano roll with an adaptive grid and snap, a velocity lane, control lanes
 (sustain, mod wheel, pitch bend, pressure, program) with ramps or steps, a draw mode (B) that draws

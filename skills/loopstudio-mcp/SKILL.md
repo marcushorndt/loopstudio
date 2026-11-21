@@ -127,13 +127,20 @@ An audio clip's notes can change one by one, as on the clip's Notes page (after 
 2. Call `audio_notes_edit` with the clip and `changes`: a list of `{key, pitch, shift, stretch, gainDb,
    muted}`. `pitch` is in semitones (a fraction is cents), `shift` in seconds, `stretch` a length factor.
    A field you leave out keeps the note's current change. `tune` puts notes on the nearest semitone
-   (`"all"` or a list of keys). `reset` clears every change first.
+   (`"all"` or a list of keys). `reset` clears every change and every copy first.
+3. To sound a note once more, give `copy`: a list of `{of, shift}`. `of` is a note key or a copy key;
+   `shift` is in seconds after the model's current place (default: right after the note). The answer
+   lists the new keys in `madeCopies`. A copy key starts with `copy-`. `audio_notes` lists a copy with
+   `copyOf`, and its `change` is its place against that found note. A copy takes changes like a note.
+   `remove` takes copies out by key; a found note cannot be removed, so mute it.
 
 The edit renders a new file from the original and switches the clip to it in one undo step. A change
 always counts against the recording, not against the last edit. Without any change left, the clip plays
 its original again. A note that only changes its level keeps the recording; a moved note is built again
 from its partials. Drums, noise and speech give few or no notes, and a dense full mix gives many short
-notes. The first `audio_notes` call on a long file takes some seconds (about 15 s for 2 minutes).
+notes. The first `audio_notes` call on a long file takes some seconds (about 15 s for 2 minutes). The
+project then keeps the notes beside the audio (`audio/<hash>.notes`), so later calls and the app read them
+at once. A rendered file that no clip plays any more is removed from the project when it is saved.
 
 ## 8. Long calls
 

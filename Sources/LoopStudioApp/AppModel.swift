@@ -1563,6 +1563,7 @@ final class AppModel {
     func tryApply(_ command: Command, key: String? = nil, grouped: Bool = false) throws {
         let inverse = try command.apply(to: &project)
         journalAppend(command)
+        rememberWarp(after: command)
         if grouped, undoGroup != nil {
             undoGroup?.append(inverse)
             lastKey = nil
@@ -1670,7 +1671,7 @@ final class AppModel {
         // Marked automation points go first: the editor that holds them registered the deletion.
         if let marked = automationMarking { marked.delete(); return }
         if !selectedAudioNotes.isEmpty, detailTab == .clip, clipPage == .notes, let id = selectedClip, case .audio(let a)? = project.findClip(id)?.1 {
-            toggleNoteMute(a, keys: selectedAudioNotes)
+            deleteAudioNotes(a, keys: selectedAudioNotes)
             return
         }
         if !selectedNotes.isEmpty, detailTab == .clip, let id = selectedClip, case .midi(let m)? = project.findClip(id)?.1 {
@@ -2176,7 +2177,7 @@ final class AppModel {
     /// Imports a file with the heavy work on a worker, so a long file does not freeze the window: the hash,
     /// the copy and the decode run there, then the asset joins the project here. `name`: the asset's name,
     /// when it is not the file's.
-    func importAudio(_ url: URL, name: String? = nil) async -> Asset? {
+    func importAudio(_ url: URL, name: String? = nil, renderOf: AssetID? = nil) async -> Asset? {
         let package = packageURL, rate = sampleRate, rule = project.autoLoop
         status = "Importing \(url.lastPathComponent)…"
         let result = await Task.detached(priority: .userInitiated) { () -> Result<Imported, Error> in
@@ -2189,7 +2190,7 @@ final class AppModel {
             return nil
         case .success(let imported):
             if status.hasPrefix("Importing ") { status = "Imported \(url.lastPathComponent)" }
-            return register(imported, from: url, name: name)
+            return register(imported, from: url, name: name, renderOf: renderOf)
         }
     }
 
@@ -2205,13 +2206,14 @@ final class AppModel {
     }
 
     /// Puts an imported file into the project: a file the project has already (the same hash) is that asset.
-    func register(_ imported: Imported, from url: URL, name: String?) -> Asset? {
+    func register(_ imported: Imported, from url: URL, name: String?, renderOf: AssetID? = nil) -> Asset? {
         if let existing = project.assets.first(where: { $0.sha256 == imported.asset.sha256 }) {
             if bank.buffer(for: existing.id) == nil { bank.insert(imported.pcm, for: existing.id); waveforms[existing.id] = imported.waveform }
             return existing
         }
         var asset = imported.asset
         asset.name = name ?? url.deletingPathExtension().lastPathComponent
+        asset.renderOf = renderOf
         // The demo loops are made at 120 BPM.
         if url.path.contains("/LoopStudio/Demo Samples/") { asset.sourceTempo = 120 }
         let add = Command.addAsset(asset: asset)
@@ -2286,7 +2288,7 @@ final class AppModel {
             for url in urls {
                 guard let self, let asset = await self.importAudio(url), self.project.track(track) != nil else { continue }
                 var length = self.lengthTicks(of: asset, from: 0)
-                let clip = self.project.makeAudioClip(asset: asset.id, start: 0, length: length)
+                let clip = self.newAudioClip(asset: asset, start: 0, length: length)
                 length = clip.length
                 self.apply(.setSlot(track: track, index: at, slot: SessionSlot(clip: .audio(clip))))
                 self.selectedClip = clip.id
@@ -2305,7 +2307,7 @@ final class AppModel {
             for url in urls {
                 guard let self, let asset = await self.importAudio(url), self.project.track(track) != nil else { continue }
                 let length = self.lengthTicks(of: asset, from: start)
-                let clip = self.project.makeAudioClip(asset: asset.id, start: start, length: length)
+                let clip = self.newAudioClip(asset: asset, start: start, length: length)
                 self.apply(.insertClip(track: track, clip: .audio(clip)))
                 self.selectedClip = clip.id
                 start = start + length
@@ -2324,7 +2326,7 @@ final class AppModel {
                 guard let t = self.project.tracks.last else { continue }
                 self.apply(.setTrackName(id: t.id, name: url.deletingPathExtension().lastPathComponent))
                 guard let asset = await self.importAudio(url), self.project.track(t.id) != nil else { continue }
-                let clip = self.project.makeAudioClip(asset: asset.id, start: 0, length: self.lengthTicks(of: asset, from: 0))
+                let clip = self.newAudioClip(asset: asset, start: 0, length: self.lengthTicks(of: asset, from: 0))
                 self.apply(.setSlot(track: t.id, index: 0, slot: SessionSlot(clip: .audio(clip))))
                 self.selectedClip = clip.id
             }
@@ -2609,6 +2611,7 @@ final class AppModel {
     func save() -> Bool {
         captureStates()
         captureSessionState()
+        pruneNoteRenders(keepUndo: true)
         do {
             try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
             try ProjectPackage.write(projectForSaving(), to: packageURL)
@@ -2627,6 +2630,33 @@ final class AppModel {
             return false
         }
         return true
+    }
+
+    /// Every note edit renders a whole new file. A render that no clip plays, and (with `keepUndo`) that no
+    /// undo or redo step can bring back, leaves the project with its side files. Returns how many went.
+    @discardableResult
+    func pruneNoteRenders(keepUndo: Bool) -> Int {
+        let history: String = keepUndo
+            ? (try? JSONEncoder().encode(undoStack + redoStack + (undoGroup ?? []))).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            : ""
+        var gone = 0
+        // A render says so; one from before that field has the exact name of a render of another asset.
+        let names = Set(project.assets.map { "\($0.name) (notes)" })
+        for asset in project.assets where asset.renderOf != nil || names.contains(asset.name) {
+            let used = project.allTracks.contains { t in
+                t.clips.contains { $0.usesAsset(asset.id) } || t.slots.contains { $0?.clip.usesAsset(asset.id) ?? false }
+            }
+            guard !used, !history.contains(asset.id.rawValue.uuidString) else { continue }
+            let files = AssetStore.files(for: asset, in: packageURL)
+            guard (try? Command.removeAsset(id: asset.id).apply(to: &project)) != nil else { continue }
+            // Another asset of the same file (the same hash) keeps the file.
+            if !project.assets.contains(where: { $0.sha256 == asset.sha256 }) {
+                for url in files { try? FileManager.default.removeItem(at: url) }
+            }
+            waveforms[asset.id] = nil
+            gone += 1
+        }
+        return gone
     }
 
     func projectPackages() -> [URL] {
@@ -2682,6 +2712,10 @@ final class AppModel {
             let pending = (try? Journal.read(url: journalURL))?.commands ?? []
             let replay = pending.isEmpty ? nil : Journal.replay(pending, onto: loaded.project)
             reset(to: replay?.project ?? loaded.project, at: url)
+            moveOldNoteFiles()
+            // No undo step reaches back past the open: every render no clip plays can go.
+            // The files are gone already: the project file must stop naming them soon.
+            if pruneNoteRenders(keepUndo: false) > 0 { dirty = true; scheduleSave() }
             loadAllAudio()
             if let replay {
                 dirty = true
@@ -2722,9 +2756,6 @@ final class AppModel {
             try fm.createDirectory(at: url, withIntermediateDirectories: true)
             let audio = packageURL.appendingPathComponent("audio", isDirectory: true)
             if fm.fileExists(atPath: audio.path) { try fm.copyItem(at: audio, to: url.appendingPathComponent("audio", isDirectory: true)) }
-            // The notes found in the audio go along, so the copy does not search them again.
-            let analysis = packageURL.appendingPathComponent("analysis", isDirectory: true)
-            if fm.fileExists(atPath: analysis.path) { try? fm.copyItem(at: analysis, to: url.appendingPathComponent("analysis", isDirectory: true)) }
             var copy = projectForSaving()
             copy.name = url.deletingPathExtension().lastPathComponent
             try ProjectPackage.write(copy, to: url)
@@ -2889,7 +2920,7 @@ final class AppModel {
             let trackID = project.tracks[index].id
             for (row, sample) in samples.enumerated() {
                 guard let sample, let asset = importAudioNow(DemoSamples.url(sample)) else { continue }
-                var clip = project.makeAudioClip(asset: asset.id, start: 0, length: lengthTicks(of: asset, from: 0))
+                var clip = newAudioClip(asset: asset, start: 0, length: lengthTicks(of: asset, from: 0))
                 if sample == "Crash" || sample == "Clap" { clip.loop = false }
                 var slot = SessionSlot(clip: .audio(clip))
                 if index == 0, row < 3 {

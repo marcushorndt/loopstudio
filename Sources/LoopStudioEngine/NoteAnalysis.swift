@@ -489,9 +489,21 @@ public final class NoteAnalysis: @unchecked Sendable {
     }
 
     /// The file with the edit's changes. `nil` when nothing changes.
+    /// What the Notes page shows: every found note under its own key, and every copy under the copy's key
+    /// with the found note it copies. A copy of a note the analysis no longer has is left out.
+    public func items(_ edit: NoteEdit) -> [(key: String, note: DetectedNote)] {
+        let byKey = Dictionary(notes.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+        return notes.map { ($0.key, $0) } + edit.copies.compactMap { c in byKey[c.source].map { (c.key, $0) } }
+    }
+
     public func render(_ pcm: PCMBuffer, edit: NoteEdit) -> PCMBuffer? {
         let edited: [(DetectedNote, NoteChange)] = notes.compactMap { n in edit.change(n.key).map { (n, $0) } }
-        guard !edited.isEmpty else { return nil }
+        let byKey = Dictionary(notes.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+        // A copy sounds its source's partials once more, at its own place; the source itself stays.
+        let copied: [(DetectedNote, NoteChange)] = edit.copies.compactMap { c in
+            byKey[c.source].map { ($0, edit.current(c.key)) }
+        }
+        guard !edited.isEmpty || !copied.isEmpty else { return nil }
         let count = pcm.frames
         let out = PCMBuffer(channels: pcm.channels, frames: count, sampleRate: pcm.sampleRate)
         for c in 0..<pcm.channels {
@@ -555,6 +567,9 @@ public final class NoteAnalysis: @unchecked Sendable {
                     synthesize(note, amps: parts[n].amps, change: change, keepFormants: edit.keepFormants, into: dst, count: count)
                 }
             }
+            }
+            for (note, change) in copied where !change.muted {
+                synthesize(note, amps: ownParts(note, channel: c).amps, change: change, keepFormants: edit.keepFormants, into: dst, count: count)
             }
         }
         return out

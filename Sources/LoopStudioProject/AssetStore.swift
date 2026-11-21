@@ -3,7 +3,7 @@ import CryptoKit
 import Foundation
 import LoopStudioCore
 
-/// Audio files inside a project package: `audio/<sha256>.<extension>`.
+/// Audio files inside a project package: `audio/<sha256>.<extension>`, with their side files beside them.
 /// The name is the content hash, so the same file imported twice is stored once, and a project
 /// moved between machines (or file systems with different name rules) keeps working.
 public enum AssetStore {
@@ -46,7 +46,27 @@ public enum AssetStore {
         let folder = package.appendingPathComponent("audio", isDirectory: true)
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return nil }
         // The hash is a 64-character hex string; match it exactly so a name like "<hash>x" is not taken.
-        guard let name = names.sorted().first(where: { $0 == asset.sha256 || $0.hasPrefix(asset.sha256 + ".") }) else { return nil }
+        // The side files beside it (`<hash>.notes`, `<hash>.warp`) are never the audio.
+        guard let name = names.sorted().first(where: { name in
+            (name == asset.sha256 || name.hasPrefix(asset.sha256 + "."))
+                && !sidecarExtensions.contains((name as NSString).pathExtension.lowercased())
+        }) else { return nil }
         return folder.appendingPathComponent(name)
+    }
+
+    /// What the app learns about an audio file is kept beside it, as Live keeps its `.asd` files: the notes
+    /// it found (`.notes`) and the warp of the clip warped last (`.warp`).
+    public static let sidecarExtensions: Set<String> = ["notes", "warp"]
+
+    /// The side file of an asset: `audio/<hash>.<ext>`.
+    public static func sidecarURL(sha256: String, ext: String, in package: URL) -> URL {
+        package.appendingPathComponent("audio", isDirectory: true).appendingPathComponent("\(sha256).\(ext)")
+    }
+
+    /// The stored file of an asset and its side files.
+    public static func files(for asset: Asset, in package: URL) -> [URL] {
+        (fileURL(for: asset, in: package).map { [$0] } ?? [])
+            + sidecarExtensions.sorted().map { sidecarURL(sha256: asset.sha256, ext: $0, in: package) }
+                .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 }

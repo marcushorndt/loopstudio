@@ -1,6 +1,7 @@
 import Foundation
 import LoopStudioCore
 import LoopStudioEngine
+import LoopStudioProject
 
 /// Note editing in audio, after Melodyne's polyphonic mode: the analysis finds the notes of a file (also the
 /// notes of a chord), and each one can move, stretch, change its level or go silent. An edit renders the
@@ -54,10 +55,22 @@ extension AppModel {
         }
     }
 
-    /// Where the package keeps the notes found in a file: `analysis/<hash>.notes`, beside `audio/`. The audio
-    /// folder itself would not do: an asset is found there by the prefix of its hash.
+    /// Where the package keeps the notes found in a file: `audio/<hash>.notes`, beside the file.
     func noteFile(sha256: String) -> URL {
-        packageURL.appendingPathComponent("analysis", isDirectory: true).appendingPathComponent("\(sha256).notes")
+        AssetStore.sidecarURL(sha256: sha256, ext: "notes", in: packageURL)
+    }
+
+    /// Projects from the first days kept the notes in `analysis/`: they move beside their audio.
+    func moveOldNoteFiles() {
+        let fm = FileManager.default
+        let old = packageURL.appendingPathComponent("analysis", isDirectory: true)
+        guard let names = try? fm.contentsOfDirectory(atPath: old.path) else { return }
+        for name in names where name.hasSuffix(".notes") {
+            let target = packageURL.appendingPathComponent("audio", isDirectory: true).appendingPathComponent(name)
+            if fm.fileExists(atPath: target.path) { try? fm.removeItem(at: old.appendingPathComponent(name)) }
+            else { try? fm.moveItem(at: old.appendingPathComponent(name), to: target) }
+        }
+        if ((try? fm.contentsOfDirectory(atPath: old.path)) ?? []).isEmpty { try? fm.removeItem(at: old) }
     }
 
     /// Puts one note's change into the clip's edit and renders it.
@@ -80,6 +93,49 @@ extension AppModel {
             c.muted = mute
             return c
         })
+    }
+
+    /// Delete on the Notes page: marked copies go; the marked found notes go silent, or sound again.
+    func deleteAudioNotes(_ a: AudioClip, keys: Set<String>) {
+        var edit = noteEdit(a)
+        let copies = keys.filter { edit.copy($0) != nil }, found = keys.subtracting(copies)
+        for key in copies { edit = edit.removing(copy: key) }
+        if !found.isEmpty {
+            let mute = found.contains { !(edit.change($0)?.muted ?? false) }
+            for key in found.sorted() {
+                var c = edit.current(key)
+                c.muted = mute
+                edit = edit.with(c)
+            }
+        }
+        markAudioNotes(found, primary: selectedAudioNote)
+        applyNoteEdit(a.id, edit)
+    }
+
+    /// ⌘D on the Notes page: a copy of every marked note, right after the group (the group's length later),
+    /// as ⌘D copies MIDI notes. The copies are marked then, so another ⌘D goes on.
+    func duplicateAudioNotes() {
+        guard let a = markedAudioClip, let analysis = noteAnalyses[noteSource(a)] else { return }
+        var edit = noteEdit(a)
+        let items = Dictionary(analysis.items(edit).map { ($0.key, $0.note) }, uniquingKeysWith: { x, _ in x })
+        let marked = selectedAudioNotes.sorted().filter { items[$0] != nil }
+        guard !marked.isEmpty else { return }
+        // Where each marked note sounds now, in seconds of the file.
+        let spans = marked.map { key -> (Double, Double) in
+            let n = items[key]!, c = edit.current(key)
+            let start = analysis.seconds(frame: Double(n.startFrame)) + c.shift
+            return (start, start + Double(n.frames) * Double(analysis.hop) / analysis.sampleRate * c.stretch)
+        }
+        let shift = (spans.map(\.1).max() ?? 0) - (spans.map(\.0).min() ?? 0)
+        var made: Set<String> = []
+        for key in marked {
+            let new = NoteCopy.newKey()
+            edit = edit.adding(copyOf: key, shift: shift, newKey: new)
+            made.insert(new)
+        }
+        markAudioNotes(made, primary: nil)
+        applyNoteEdit(a.id, edit)
+        status = "\(made.count) note\(made.count == 1 ? "" : "s") copied"
     }
 
     /// Marks notes on the Notes page; `primary` is the one the strip edits.
@@ -122,7 +178,7 @@ extension AppModel {
             // A newer edit of the same clip replaces this one.
             guard noteRenders[clipID] == render else { try? FileManager.default.removeItem(at: url); return }
             guard written else { pendingNoteEdits[clipID] = nil; status = "Cannot render the notes"; return }
-            let asset = await importAudio(url, name: "\(source.name) (notes)")
+            let asset = await importAudio(url, name: "\(source.name) (notes)", renderOf: source.id)
             try? FileManager.default.removeItem(at: url)
             guard noteRenders[clipID] == render else { return }
             pendingNoteEdits[clipID] = nil

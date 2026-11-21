@@ -67,10 +67,9 @@ extension AppModel {
             // duplicates the track, as ⌘D does in Live.
             if let marking = automationMarking { marking.duplicate() }
             else if !selectedNotes.isEmpty { copySelection(); pasteClipboard() }
-            // On the Notes page ⌘D must not copy the clip behind it. Audio notes have no copies yet.
-            else if markedAudioClip != nil || (noteEditorFocus && detailTab == .clip && clipPage == .notes) {
-                status = "Audio notes cannot be duplicated yet."
-            }
+            // On the Notes page ⌘D copies the marked notes, never the clip behind it.
+            else if markedAudioClip != nil { duplicateAudioNotes() }
+            else if noteEditorFocus && detailTab == .clip && clipPage == .notes { status = "Mark notes to copy them." }
             else if let id = selectedDevice, let (track, _) = deviceLocation(id) { duplicateDevice(track.id, id) }
             else if trackFocused, selectedClips.isEmpty, selectedClip == nil, selectedScene == nil, let t = selectedTrack { duplicateTrack(t) }
             else { duplicateSelection() }
@@ -346,7 +345,7 @@ extension AppModel {
         let perTick = 60 / max(1, tempo) / Double(Tick.perQuarter)
         let edit = noteEdit(a)
         let changes: [NoteChange] = selectedAudioNotes.sorted().compactMap { key in
-            guard let n = analysis.notes.first(where: { $0.key == key }) else { return nil }
+            guard let n = analysis.items(edit).first(where: { $0.key == key })?.note else { return nil }
             var c = edit.change(key) ?? NoteChange(key: key)
             c.pitch += Double(pitch)
             c.shift += Double(time) * perTick

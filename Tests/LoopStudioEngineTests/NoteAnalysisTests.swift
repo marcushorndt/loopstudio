@@ -170,3 +170,22 @@ private func level(_ b: PCMBuffer, _ f: Double, at: Int) -> Double {
     other[4] = 99 // the version
     #expect(NoteAnalysis.read(other) == nil)
 }
+
+/// A copy of the third, a fourth up: the file then holds C, E, G and the copy's A, and the third stays.
+/// Removed again, the edit is empty and renders nothing.
+@Test func aCopySoundsItsNoteOnceMore() throws {
+    let source = chord([60, 64, 67])
+    let a = NoteAnalysis.analyze(source)
+    let e = try #require(a.notes.first { Int($0.pitch.rounded()) == 64 })
+    var edit = NoteEdit(source: AssetID()).adding(copyOf: e.key, shift: 0, newKey: "copy-a")
+    var moved = edit.current("copy-a")
+    moved.pitch = 5
+    edit = edit.with(moved)
+    #expect(a.items(edit).map(\.key).last == "copy-a")
+    let out = try #require(a.render(source, edit: edit))
+    #expect(pitches(NoteAnalysis.analyze(out)) == [60, 64, 67, 69])
+    // Reset puts the copy back where it was made: on the third, no pitch change.
+    #expect(edit.reset("copy-a").current("copy-a").pitch == 0)
+    #expect(edit.removing(copy: "copy-a").isEmpty)
+    #expect(a.render(source, edit: edit.removing(copy: "copy-a")) == nil)
+}

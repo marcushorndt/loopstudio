@@ -152,3 +152,21 @@ private func level(_ b: PCMBuffer, _ f: Double, at: Int) -> Double {
     }
     #expect(sqrt(error / signal) < 0.005)
 }
+
+/// The analysis as a file: read back, it holds the same notes and renders the same sound. Another version or a
+/// cut file reads as nothing, so the notes are found again.
+@Test func theAnalysisFileGivesTheSameNotesBack() throws {
+    let pcm = chord([60, 64, 67])
+    let a = NoteAnalysis.analyze(pcm)
+    let data = a.fileData()
+    let b = try #require(NoteAnalysis.read(data))
+    #expect(b.notes == a.notes && b.frames == a.frames && b.hop == a.hop && b.channels == a.channels)
+    let e3 = try #require(a.notes.first { Int($0.pitch.rounded()) == 64 })
+    let edit = NoteEdit(source: AssetID(), changes: [NoteChange(key: e3.key, pitch: 1)])
+    let x = try #require(a.render(pcm, edit: edit)), y = try #require(b.render(pcm, edit: edit))
+    #expect(x.frames == y.frames && (0..<x.frames).allSatisfy { x.channel(0)[$0] == y.channel(0)[$0] })
+    #expect(NoteAnalysis.read(data.prefix(data.count - 3)) == nil)
+    var other = data
+    other[4] = 99 // the version
+    #expect(NoteAnalysis.read(other) == nil)
+}

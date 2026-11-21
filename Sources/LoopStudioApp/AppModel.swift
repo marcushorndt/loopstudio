@@ -2718,6 +2718,9 @@ final class AppModel {
             try fm.createDirectory(at: url, withIntermediateDirectories: true)
             let audio = packageURL.appendingPathComponent("audio", isDirectory: true)
             if fm.fileExists(atPath: audio.path) { try fm.copyItem(at: audio, to: url.appendingPathComponent("audio", isDirectory: true)) }
+            // The notes found in the audio go along, so the copy does not search them again.
+            let analysis = packageURL.appendingPathComponent("analysis", isDirectory: true)
+            if fm.fileExists(atPath: analysis.path) { try? fm.copyItem(at: analysis, to: url.appendingPathComponent("analysis", isDirectory: true)) }
             var copy = projectForSaving()
             copy.name = url.deletingPathExtension().lastPathComponent
             try ProjectPackage.write(copy, to: url)

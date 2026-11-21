@@ -51,6 +51,11 @@ public final class NoteAnalysis: @unchecked Sendable {
     /// The time of a frame's centre. Frame t's window starts half a window before `t * hop`.
     public func seconds(frame: Double) -> Double { frame * Double(hop) / sampleRate }
 
+    /// An analysis read back from its file (`NoteAnalysisFile.swift`).
+    convenience init(stored sampleRate: Double, size: Int, hop: Int, notes: [DetectedNote], channels: Int, frames: Int) {
+        self.init(sampleRate: sampleRate, size: size, hop: hop, notes: notes, channels: channels, frames: frames)
+    }
+
     private init(sampleRate: Double, size: Int, hop: Int, notes: [DetectedNote], channels: Int, frames: Int) {
         self.sampleRate = sampleRate
         self.size = size

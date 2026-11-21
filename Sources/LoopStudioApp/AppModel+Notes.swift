@@ -33,13 +33,31 @@ extension AppModel {
         guard noteAnalyses[id] == nil, !notesInProgress.contains(id), let pcm = bank.buffer(for: id) else { return }
         notesInProgress.insert(id)
         let name = project.asset(id)?.name ?? "the file"
+        let file = project.asset(id).map { noteFile(sha256: $0.sha256) }
         status = "Finding the notes in \(name)…"
         Task {
-            let analysis = await Task.detached(priority: .userInitiated) { NoteAnalysis.analyze(pcm) }.value
+            let (analysis, stored) = await Task.detached(priority: .userInitiated) { () -> (NoteAnalysis, Bool) in
+                // The notes found earlier, in the package: no new search.
+                if let file, let data = try? Data(contentsOf: file), let known = NoteAnalysis.read(data), known.sampleRate == pcm.sampleRate {
+                    return (known, true)
+                }
+                let found = NoteAnalysis.analyze(pcm)
+                if let file {
+                    try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try? found.fileData().write(to: file, options: .atomic)
+                }
+                return (found, false)
+            }.value
             notesInProgress.remove(id)
             noteAnalyses[id] = analysis
-            status = "\(name): \(analysis.notes.count) note\(analysis.notes.count == 1 ? "" : "s") found"
+            if !stored { status = "\(name): \(analysis.notes.count) note\(analysis.notes.count == 1 ? "" : "s") found" }
         }
+    }
+
+    /// Where the package keeps the notes found in a file: `analysis/<hash>.notes`, beside `audio/`. The audio
+    /// folder itself would not do: an asset is found there by the prefix of its hash.
+    func noteFile(sha256: String) -> URL {
+        packageURL.appendingPathComponent("analysis", isDirectory: true).appendingPathComponent("\(sha256).notes")
     }
 
     /// Puts one note's change into the clip's edit and renders it.

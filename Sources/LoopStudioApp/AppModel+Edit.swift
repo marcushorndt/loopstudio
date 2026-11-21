@@ -292,6 +292,12 @@ extension AppModel {
     /// slot row holds the stop buttons.
     func moveSelection(rows: Int, tracks: Int) {
         // Marked notes in the open clip take the arrow keys: up and down transpose, left and right move in time.
+        if markedAudioClip != nil {
+            // Shift (the extend keys come here in the arrangement): an octave, or longer and shorter.
+            if NSEvent.modifierFlags.contains(.shift) { nudgeAudioNotes(pitch: -rows * 12, length: Int64(tracks) * noteStep) }
+            else { nudgeAudioNotes(pitch: -rows, time: Int64(tracks) * noteStep) }
+            return
+        }
         if markedMIDIClip != nil {
             nudgeNotes(pitch: -rows, time: Int64(tracks) * noteStep, toGrid: snapNotes)
             return
@@ -322,6 +328,35 @@ extension AppModel {
     var otherNoteStep: Int64 { snapNotes ? fineNoteStep : max(1, noteGrid) }
     private var fineNoteStep: Int64 { Tick.perQuarter / 32 }
 
+    /// The open audio clip on its Notes page, when notes in it are marked.
+    var markedAudioClip: AudioClip? {
+        guard !selectedAudioNotes.isEmpty, detailTab == .clip, clipPage == .notes, let id = selectedClip,
+              case .audio(let a)? = project.findClip(id)?.1 else { return nil }
+        return a
+    }
+
+    /// The arrow keys on the Notes page: every marked note by semitones, by ticks of the clip's own time (the
+    /// file's tempo when warped, else the song's), and longer or shorter by ticks. One render for all of them.
+    func nudgeAudioNotes(pitch: Int = 0, time: Int64 = 0, length: Int64 = 0) {
+        guard let a = markedAudioClip, let analysis = noteAnalyses[noteSource(a)] else { return }
+        let tempo = a.warpMode == .off ? bpm : (project.asset(a.asset)?.sourceTempo ?? bpm)
+        let perTick = 60 / max(1, tempo) / Double(Tick.perQuarter)
+        let edit = noteEdit(a)
+        let changes: [NoteChange] = selectedAudioNotes.sorted().compactMap { key in
+            guard let n = analysis.notes.first(where: { $0.key == key }) else { return nil }
+            var c = edit.change(key) ?? NoteChange(key: key)
+            c.pitch += Double(pitch)
+            c.shift += Double(time) * perTick
+            if length != 0 {
+                let seconds = Double(n.frames) * Double(analysis.hop) / analysis.sampleRate
+                let now = seconds * c.stretch
+                c.stretch = max(0.02, now + Double(length) * perTick) / seconds
+            }
+            return c
+        }
+        changeNotes(a, changes)
+    }
+
     /// The open MIDI clip, when notes in it are marked.
     var markedMIDIClip: MIDIClip? {
         guard !selectedNotes.isEmpty, let id = selectedClip, case .midi(let m)? = project.findClip(id)?.1 else { return nil }
@@ -333,6 +368,7 @@ extension AppModel {
     /// A held key repeats into one undo step per key. With `toGrid`, a group off the grid lands on the next
     /// grid line in the pressed direction first, then walks the grid.
     func nudgeNotes(pitch: Int = 0, time: Int64 = 0, length: Int64 = 0, toGrid: Bool = false) {
+        if markedMIDIClip == nil, markedAudioClip != nil { nudgeAudioNotes(pitch: pitch, time: time, length: length); return }
         guard let m = markedMIDIClip else { return }
         let marked = m.notes.filter { selectedNotes.contains($0) }
         guard !marked.isEmpty else { return }

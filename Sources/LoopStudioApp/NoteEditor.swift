@@ -8,7 +8,8 @@ import SwiftUI
 /// change its pitch (in semitones; with Option free), sideways to move it in time, and its right end to make it
 /// longer or shorter. A double click puts a note on the nearest semitone. A drag over empty space marks the notes
 /// in its box (with Shift it adds them), Shift-click marks one more; a drag of a marked note moves them all.
-/// Delete silences the marked notes, or brings them back. The page shows the file's own time line.
+/// Delete silences the marked notes, or brings them back. The arrow keys move the marked notes: up and down a
+/// semitone (Shift: an octave), left and right a grid step (Command: the other step, Shift: shorter, longer). The page shows the file's own time line.
 ///
 /// Zoom as in the piano roll: a pinch or Command and scroll zooms in time around the pointer, Option and scroll
 /// (or a pinch with Option) zooms the rows. A plain scroll moves the view once it is zoomed. The buttons in the

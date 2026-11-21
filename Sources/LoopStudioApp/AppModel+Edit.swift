@@ -28,7 +28,7 @@ extension AppModel {
         switch action {
         case .undo: canUndo
         case .redo: canRedo
-        case .deleteSelection: !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil) || !selectedNotes.isEmpty
+        case .deleteSelection: selectedAudioNote != nil || !selectedClips.isEmpty || selectedClip != nil || (trackFocused && selectedTrack != nil) || !selectedNotes.isEmpty
             || rangeSelection != nil || selectedDevice != nil || automationMarking != nil
         case .deleteTime: rangeSelection != nil
             || selectedScene != nil || selectedDevice != nil

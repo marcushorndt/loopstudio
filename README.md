@@ -62,6 +62,14 @@ song in Complex. `docs/warp.md` describes the design. Tempo ramps bend time. A s
 zoom. Recording from a sound card input with latency compensation, from another track, or the
 master (resampling); takes that start and end on the bar; a count-in; a metronome.
 
+**Notes in audio.** The Notes page of an audio clip works like Melodyne's polyphonic mode: the
+analysis finds the notes in the file, also the notes of a chord, and shows each one as a blob at its
+pitch, as long as it sounds and as thick as it is loud. Drag a note up or down (semitones, Option for
+cents), sideways in time, or by its right end to stretch it. A double click or Tune puts a note on
+the nearest semitone; Delete silences it. A note that only changes its level keeps every detail of
+the recording; a moved note is built again from its partials, with its formants kept. Each edit
+renders a new file from the original, and the clip switches to it in one undo step.
+
 **MIDI clips.** A piano roll with an adaptive grid and snap, a velocity lane, control lanes
 (sustain, mod wheel, pitch bend, pressure, program) with ramps or steps, a draw mode (B) that draws
 notes and automation steps, band marking, arrow keys that move notes on the grid, grooves that

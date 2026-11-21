@@ -6,8 +6,9 @@ public enum LoopStudioServer {
     public static func make(session: any EditSession = ProjectSession(), extraTools: [Tool] = [], note: String = "") -> MCPServer {
         var registry = StandardTools.registry(session: session)
         for tool in StandardTools.namedTools(session: session) { registry.add(tool) }
+        for tool in StandardTools.noteTools(session: session) { registry.add(tool) }
         for tool in extraTools { registry.add(tool) }
-        var instructions = StandardTools.instructions + "\n" + StandardTools.namedToolsNote
+        var instructions = StandardTools.instructions + "\n" + StandardTools.namedToolsNote + "\n" + StandardTools.noteToolsNote
         if !note.isEmpty { instructions += "\n" + note }
         return MCPServer(instructions: instructions, registry: registry, resources: StandardTools.resources(session: session))
     }

@@ -67,6 +67,8 @@ To open a project at start, add `"--project", "/path/to/MyProject.loopstudio"` t
 | `track_add`, `track_rename`, `track_set`, `track_remove` | changes | Named track edits. A track is an id, a name, `master` or its position from 1. |
 | `device_add`, `device_remove`, `device_move`, `device_bypass`, `param_set` | changes | Named device edits. A device is an id, a name or its position; a parameter its key or name. |
 | `clip_create`, `clip_set`, `clip_remove`, `notes_set` | changes | Named clip edits. A clip is an id, a name or `<track>/slot N`. |
+| `audio_notes` | reads | The notes in an audio clip's file (also the notes of a chord): key, name, pitch with cents, start and end in seconds, peak level, and the note's change. |
+| `audio_notes_edit` | changes | Changes notes by key (pitch, shift, stretch, gainDb, muted), `tune` to the nearest semitone, `reset`. Renders a new file from the original and switches the clip in one undo step. |
 | `send_set`, `tempo_set`, `loop_set` | changes | Sends, the tempo at the start, the loop region. |
 
 Every changing tool returns a **receipt**: the command, the revision before and after, and the touched values read back from the project after the change ("Drums › Delay › Feedback: 0.40 to 0.55"). The receipt is the proof; the arguments are not. A name that matches several things is an error that lists them, so ask instead of guessing.

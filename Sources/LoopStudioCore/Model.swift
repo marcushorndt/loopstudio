@@ -280,6 +280,9 @@ public struct AudioClip: Hashable, Codable, Sendable, Identifiable {
     /// Length of one cycle of the clip automation. `nil`: linked to the clip length (it loops with the clip).
     /// Set, it runs on its own: a 16-bar curve over a 1-bar loop.
     public var automationLength: Tick?
+    /// Notes changed in the file, Melodyne-like. `nil`: none. With it, `asset` is the file rendered from
+    /// `noteEdit.source` with the changes.
+    public var noteEdit: NoteEdit?
 
     public init(id: ClipID = ClipID(), asset: AssetID, start: Tick = 0, length: Tick, offset: Tick = 0,
                 loop: Bool = false, gainDb: Double = 0,

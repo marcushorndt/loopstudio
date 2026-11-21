@@ -178,7 +178,7 @@ private struct ClipPanel: View {
         if case .dummy = clip { EmptyView() } else {
             Picker("", selection: Binding(get: { model.page(for: clip) }, set: { model.clipPage = $0 })) {
                 if case .midi = clip { Text("Notes").tag(ClipPage.content) } else { Text("Sample").tag(ClipPage.content) }
-                if case .audio = clip { Text("Gain").tag(ClipPage.gain) }
+                if case .audio = clip { Text("Gain").tag(ClipPage.gain); Text("Notes").tag(ClipPage.notes) }
                 Text("Automation").tag(ClipPage.automation)
             }
             .pickerStyle(.segmented).labelsHidden().fixedSize().controlSize(.small)
@@ -193,6 +193,8 @@ private struct ClipPanel: View {
             ClipLanesPanel(clip: clip, track: track, tint: tint)
         case (_, .midi(let m)):
             PianoRoll(clip: m, tint: tint)
+        case (.notes, .audio(let a)):
+            NoteEditor(clip: a, tint: tint)
         case (let page, .audio(let a)):
             if let peaks = model.waveforms[a.asset], let asset = model.project.asset(a.asset) {
                 if page == .gain {

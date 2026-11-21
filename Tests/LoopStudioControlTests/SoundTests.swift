@@ -191,3 +191,61 @@ private struct ClientHelper {
     let curve = values.compactMap { $0.doubleValue }
     #expect(curve[0] < -100 && curve[2] > -20, "silent before the launch, the tone after it: \(curve)")
 }
+
+/// C, E and G together (six harmonics each) for 1.2 s, as a stereo file.
+private func chordFile() throws -> String {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("chord-\(UUID().uuidString).wav")
+    let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 2, interleaved: false)!
+    let n = AVAudioFrameCount(1.5 * 48_000), sounding = Int(1.2 * 48_000)
+    let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: n)!
+    buffer.frameLength = n
+    for i in 0..<sounding {
+        let fade = Float(min(1, Double(i) / 480, Double(sounding - i) / 480))
+        var v: Float = 0
+        for note in [60.0, 64, 67] {
+            let f = 440 * pow(2, (note - 69) / 12)
+            for h in 1...6 { v += Float(sin(2 * .pi * f * Double(h) * Double(i) / 48_000)) / Float(h) }
+        }
+        for c in 0..<2 { buffer.floatChannelData![c][i] = 0.1 * v * fade }
+    }
+    let file = try AVAudioFile(forWriting: url, settings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48_000,
+                                                          AVNumberOfChannelsKey: 2, AVLinearPCMBitDepthKey: 24])
+    try file.write(from: buffer)
+    return url.path
+}
+
+/// The notes of a chord in an audio clip: listed, one moved, the clip on a new file that keeps the original, and a
+/// reset back to the original file.
+@Test func audioNotesListAndEdit() async throws {
+    var studio = try await Studio.make()
+    let imported = try await studio.client.call("asset_import", ["path": .string(try chordFile())])
+    let original = try #require(imported.data["asset"]?.stringValue)
+    let dropped = try await studio.client.call("sample_drop", ["track": .string(studio.track), "asset": .string(original)])
+    let clip = try #require(dropped.data["clip"]?.stringValue)
+
+    let listed = try await studio.client.call("audio_notes", ["clip": .string(clip)])
+    #expect(!listed.isError, Comment(rawValue: listed.text))
+    let notes = listed.data["notes"]?.arrayValue ?? []
+    #expect(notes.compactMap { $0["note"]?.stringValue }.sorted() == ["C3", "E3", "G3"] || notes.compactMap { $0["note"]?.stringValue }.sorted() == ["C4", "E4", "G4"],
+            Comment(rawValue: listed.text))
+    let e = try #require(notes.first { ($0["pitch"]?.doubleValue ?? 0).rounded() == 64 })
+    let key = try #require(e["key"]?.stringValue)
+
+    let edited = try await studio.client.call("audio_notes_edit", ["clip": .string(clip), "changes": .array([.object(["key": .string(key), "pitch": .number(1)])])])
+    #expect(!edited.isError, Comment(rawValue: edited.text))
+    #expect(edited.data["changed"]?.doubleValue == 1)
+    let rendered = try #require(edited.data["asset"]?.stringValue)
+    #expect(rendered != original)
+
+    // The list reads the original, with the change on the moved note.
+    let again = try await studio.client.call("audio_notes", ["clip": .string(clip)])
+    let moved = try #require(again.data["notes"]?.arrayValue?.first { $0["key"]?.stringValue == key })
+    #expect(moved["change"]?["pitch"]?.doubleValue == 1)
+    #expect(moved["note"]?.stringValue?.hasPrefix("F") == true)
+
+    let reset = try await studio.client.call("audio_notes_edit", ["clip": .string(clip), "reset": .bool(true)])
+    #expect(!reset.isError, Comment(rawValue: reset.text))
+    #expect(reset.data["asset"]?.stringValue == original)
+    let unknown = try await studio.client.call("audio_notes_edit", ["clip": .string(clip), "changes": .array([.object(["key": .string("1-2"), "pitch": .number(1)])])])
+    #expect(unknown.isError)
+}

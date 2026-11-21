@@ -64,7 +64,8 @@ final class MIDIInputTiming: Sendable {
 enum ViewMode: String { case session, arrangement }
 enum DetailTab { case clip, devices }
 /// What the main area of the clip inspector shows.
-enum ClipPage { case content, gain, automation }
+/// The pages of the clip editor. `notes`: an audio clip's notes, after Melodyne (AppModel+Notes.swift).
+enum ClipPage { case content, gain, notes, automation }
 enum SidebarTab: String, CaseIterable { case audio, effects, instruments, projects, assistant }
 
 
@@ -1025,6 +1026,16 @@ final class AppModel {
 
     /// Automation mode: the first lane's curve over a track's clips takes the clicks there.
     var automationEdit = false
+    /// The notes found in an audio file, per asset (the original of a clip with note edits).
+    var noteAnalyses: [AssetID: NoteAnalysis] = [:]
+    /// The files whose notes are being found now.
+    var notesInProgress: Set<AssetID> = []
+    /// A note edit that is rendering: the Notes page shows it already, the clip still plays the last file.
+    var pendingNoteEdits: [ClipID: NoteEdit] = [:]
+    /// The note marked on the Notes page: Delete mutes it, or brings it back.
+    var selectedAudioNote: String?
+    /// Counts note renders, so only the newest one of a clip lands.
+    @ObservationIgnored var noteRenders: [ClipID: Int] = [:]
     /// Tracks in the order the views show them: normal and group tracks, then the busses (returns).
     /// The session keeps busses at the right edge, the arrangement keeps them at the bottom.
     var orderedTracks: [Track] {
@@ -1209,7 +1220,7 @@ final class AppModel {
     func page(for clip: Clip) -> ClipPage {
         switch clip {
         case .dummy: return .automation
-        case .midi: return clipPage == .gain ? .content : clipPage
+        case .midi: return clipPage == .gain || clipPage == .notes ? .content : clipPage
         case .audio: return clipPage
         }
     }
@@ -1649,6 +1660,10 @@ final class AppModel {
     func deleteSelected() {
         // Marked automation points go first: the editor that holds them registered the deletion.
         if let marked = automationMarking { marked.delete(); return }
+        if let key = selectedAudioNote, detailTab == .clip, clipPage == .notes, let id = selectedClip, case .audio(let a)? = project.findClip(id)?.1 {
+            toggleNoteMute(a, key: key)
+            return
+        }
         if !selectedNotes.isEmpty, detailTab == .clip, let id = selectedClip, case .midi(let m)? = project.findClip(id)?.1 {
             setNotes(id, m.notes.filter { !selectedNotes.contains($0) })
             selectedNotes = []
